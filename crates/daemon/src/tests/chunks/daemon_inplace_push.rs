@@ -44,9 +44,10 @@ fn daemon_inplace_push_preserves_destination_inodes() {
     // Backdate destination files so mtime differs from source, ensuring
     // quick-check does not skip the transfer.
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(dest_dir.join("alpha.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(dest_dir.join("alpha.txt"), old_time)
         .expect("backdate dest alpha.txt");
-    filetime::set_file_mtime(dest_dir.join("beta.txt"), old_time).expect("backdate dest beta.txt");
+    ::test_support::file_times::set_file_mtime(dest_dir.join("beta.txt"), old_time)
+        .expect("backdate dest beta.txt");
 
     // Record inode numbers before the push - these must be preserved by inplace.
     let inode_alpha_before = fs::metadata(dest_dir.join("alpha.txt"))

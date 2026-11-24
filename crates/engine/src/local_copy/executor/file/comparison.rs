@@ -427,7 +427,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
     use tempfile::TempDir;
     use test_support::create_tempdir;
 
@@ -807,7 +808,8 @@ mod tests {
         let src_time = FileTime::from_unix_time(1_700_000_000, 0);
         let newer = FileTime::from_unix_time(1_700_000_100, 0);
         set_file_mtime(&source, src_time).expect("set source mtime");
-        filetime::set_symlink_file_times(&destination, newer, newer).expect("set symlink mtime");
+        ::test_support::file_times::set_symlink_file_times(&destination, newer, newer)
+            .expect("set symlink mtime");
 
         let src_meta = fs::metadata(&source).expect("source metadata");
         let dst_meta = fs::symlink_metadata(&destination).expect("dest lstat");

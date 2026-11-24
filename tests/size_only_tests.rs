@@ -9,9 +9,10 @@
 
 mod integration;
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 use integration::helpers::*;
 use std::fs;
+use test_support::file_times::set_file_times;
 
 /// Test that files with the same size but different content are NOT transferred.
 /// This is the key behavior of --size-only: it only compares file sizes.

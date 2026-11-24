@@ -34,9 +34,10 @@
 
 mod integration;
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 use integration::helpers::*;
 use std::fs;
+use test_support::file_times::set_file_times;
 
 // ============ Helper Functions ============
 

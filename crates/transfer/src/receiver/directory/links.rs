@@ -1368,9 +1368,11 @@ impl ReceiverContext {
                         if let Ok(meta) = std::fs::metadata(&leader_path) {
                             let _ = std::fs::set_permissions(&link_path, meta.permissions());
                             if let Ok(mtime) = meta.modified() {
-                                let _ = filetime::set_file_mtime(
+                                let _ = fast_io::set_path_times(
                                     &link_path,
-                                    filetime::FileTime::from_system_time(mtime),
+                                    None,
+                                    Some(filetime::FileTime::from_system_time(mtime)),
+                                    true,
                                 );
                             }
                         }

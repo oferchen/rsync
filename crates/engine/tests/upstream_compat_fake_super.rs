@@ -145,7 +145,11 @@ fn mode_tree(root: &Path) -> bool {
         let path = src.join(name);
         fs::write(&path, name).expect("write source");
         fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("chmod source");
-        filetime::set_file_mtime(&path, FileTime::from_unix_time(1_577_836_800, 0)).expect("mtime");
+        ::test_support::file_times::set_file_mtime(
+            &path,
+            FileTime::from_unix_time(1_577_836_800, 0),
+        )
+        .expect("mtime");
     }
     true
 }
@@ -154,7 +158,11 @@ fn mode_tree(root: &Path) -> bool {
 fn backdate(dst: &Path) {
     for entry in fs::read_dir(dst).expect("read dst") {
         let path = entry.expect("entry").path();
-        filetime::set_file_mtime(&path, FileTime::from_unix_time(1_546_300_800, 0)).expect("mtime");
+        ::test_support::file_times::set_file_mtime(
+            &path,
+            FileTime::from_unix_time(1_546_300_800, 0),
+        )
+        .expect("mtime");
     }
 }
 
@@ -209,7 +217,7 @@ fn corrupt_fixture(root: &Path, corrupt: &str) {
     }
     fs::write(root.join("src/f"), b"data").expect("write src");
     fs::write(root.join("dst/f"), b"old").expect("write dst");
-    filetime::set_file_mtime(
+    ::test_support::file_times::set_file_mtime(
         root.join("dst/f"),
         FileTime::from_unix_time(1_546_300_800, 0),
     )
@@ -311,7 +319,7 @@ fn plant_mid_delta(root: &Path) {
     fresh_src_dst(root);
     let basis = vec![b'a'; 50_000_000];
     fs::write(root.join("dst/m-big"), &basis).expect("write basis");
-    filetime::set_file_mtime(
+    ::test_support::file_times::set_file_mtime(
         root.join("dst/m-big"),
         FileTime::from_unix_time(1_546_300_800, 0),
     )
@@ -511,9 +519,10 @@ fn a_device_placeholder_operand_updates_an_existing_device() {
         }
         let mtime = FileTime::from_unix_time(1_546_300_800, 0);
         for name in ["block", "block2", "block3"] {
-            filetime::set_file_mtime(root.join("src").join(name), mtime).expect("mtime");
+            ::test_support::file_times::set_file_mtime(root.join("src").join(name), mtime)
+                .expect("mtime");
         }
-        filetime::set_file_mtime(
+        ::test_support::file_times::set_file_mtime(
             root.join("src/block3"),
             FileTime::from_unix_time(1_546_300_801, 0),
         )
@@ -807,7 +816,7 @@ fn set_tree_times(dir: &Path, secs: i64) {
     let time = FileTime::from_unix_time(secs, 0);
     for entry in fs::read_dir(dir).expect("read dir") {
         let path = entry.expect("entry").path();
-        filetime::set_symlink_file_times(&path, time, time).expect("set times");
+        ::test_support::file_times::set_symlink_file_times(&path, time, time).expect("set times");
     }
 }
 
@@ -857,7 +866,8 @@ fn special_sequence(root: &Path, driver: &dyn Fn(&Path) -> Outcome) -> Vec<(Outc
         format!("20644 1,5 {uid}:{gid}").as_bytes(),
     )
     .expect("change rdev");
-    filetime::set_file_mtime(&cdev, FileTime::from_unix_time(1_577_836_800, 0)).expect("mtime");
+    ::test_support::file_times::set_file_mtime(&cdev, FileTime::from_unix_time(1_577_836_800, 0))
+        .expect("mtime");
     pass(&mut runs);
     runs
 }

@@ -1460,7 +1460,8 @@ fn source_identity_changed(recorded: &fs::Metadata, current: &fs::Metadata) -> b
 #[cfg(all(test, unix))]
 mod sender_remove_guard_tests {
     use super::{is_destination_inode, source_identity_changed};
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
     use std::fs;
 
     #[test]

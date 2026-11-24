@@ -321,7 +321,8 @@ fn delete_delay_processes_deletions_even_after_successful_transfer() {
     // Both files are 11 bytes, so without a distinct mtime the transfer would be
     // skipped (upstream rsync also skips when size+mtime match).
     let past = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(target_root.join("file.txt"), past).expect("set old mtime");
+    ::test_support::file_times::set_file_mtime(target_root.join("file.txt"), past)
+        .expect("set old mtime");
 
     // Create simple source (written AFTER destination so mtime is newer)
     fs::write(ctx.source.join("file.txt"), b"new content").expect("write source");

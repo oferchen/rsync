@@ -840,7 +840,7 @@ fn owner_with_permissions_and_times() {
     assert_eq!(metadata.uid(), test_uid);
     assert_eq!(metadata.gid(), test_gid);
     assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&metadata);
     assert_eq!(dest_mtime, mtime);
     assert_eq!(summary.files_copied(), 1);
 }
@@ -924,7 +924,8 @@ fn owner_preserved_with_existing_destination() {
     let one_hour_ago = filetime::FileTime::from_system_time(
         std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
     );
-    filetime::set_file_mtime(&destination, one_hour_ago).expect("backdate dest mtime");
+    ::test_support::file_times::set_file_mtime(&destination, one_hour_ago)
+        .expect("backdate dest mtime");
 
     let source_uid = 16000;
     let dest_uid = 17000;

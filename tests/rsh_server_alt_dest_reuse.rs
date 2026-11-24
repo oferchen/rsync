@@ -62,7 +62,7 @@ fn seed(root: &Path) {
     for file in [root.join("src/f"), root.join("alt/f")] {
         fs::write(&file, PAYLOAD).expect("write payload");
         fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).expect("chmod payload");
-        filetime::set_file_mtime(&file, mtime).expect("set mtime");
+        test_support::file_times::set_file_mtime(&file, mtime).expect("set mtime");
     }
 }
 

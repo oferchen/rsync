@@ -1972,7 +1972,7 @@ mod itemize_order_tests {
             std::fs::write(&path, b"x").unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             let t = filetime::FileTime::from_unix_time(1_600_000_000, 0);
-            filetime::set_file_times(&path, t, t).unwrap();
+            test_support::file_times::set_file_times(&path, t, t).unwrap();
             dir
         };
         let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o600);
@@ -2046,7 +2046,7 @@ mod itemize_order_tests {
         let path = dest.join("f.txt");
         std::fs::write(&path, b"payload").unwrap();
         let matching = filetime::FileTime::from_unix_time(1_600_000_000, 0);
-        filetime::set_file_times(&path, matching, matching).unwrap();
+        test_support::file_times::set_file_times(&path, matching, matching).unwrap();
 
         let mut entry = FileEntry::new_file("f.txt".into(), b"payload".len() as u64, 0o644);
         entry.set_mtime(1_600_000_000, 0);
@@ -2103,7 +2103,7 @@ mod itemize_order_tests {
             requested(&|p, config| {
                 config.file_selection.size_only = true;
                 let stale = filetime::FileTime::from_unix_time(1_500_000_000, 0);
-                filetime::set_file_times(p, stale, stale).unwrap();
+                test_support::file_times::set_file_times(p, stale, stale).unwrap();
             }),
             0,
             "--size-only skips on a size match regardless of mtime"
@@ -2112,11 +2112,11 @@ mod itemize_order_tests {
         // Restore the matching mtime the size-only case perturbed, then confirm
         // the plain mtime gate DOES transfer when only the mtime differs - so the
         // -r skip above is genuinely the size+mtime match, not a dead gate.
-        filetime::set_file_times(&path, matching, matching).unwrap();
+        test_support::file_times::set_file_times(&path, matching, matching).unwrap();
         assert_eq!(
             requested(&|p, _| {
                 let stale = filetime::FileTime::from_unix_time(1_500_000_000, 0);
-                filetime::set_file_times(p, stale, stale).unwrap();
+                test_support::file_times::set_file_times(p, stale, stale).unwrap();
             }),
             1,
             "-r with a differing mtime (same size) must transfer"
@@ -2158,7 +2158,7 @@ mod itemize_order_tests {
         let dest_nsec_after = |checksum: bool| -> i64 {
             std::fs::write(&path, content).unwrap();
             let t = filetime::FileTime::from_unix_time(1_700_000_000, 123_456_789);
-            filetime::set_file_times(&path, t, t).unwrap();
+            test_support::file_times::set_file_times(&path, t, t).unwrap();
             let mut config = itemize_client_config();
             config.flags.times = true;
             config.flags.checksum = checksum;
@@ -2214,7 +2214,7 @@ mod itemize_order_tests {
         std::fs::write(&probe, b"probe").unwrap();
         let old = filetime::FileTime::from_unix_time(SENDER_ATIME, 0);
         let mtime = filetime::FileTime::from_unix_time(IDENTICAL_MTIME, 0);
-        filetime::set_file_times(&probe, old, mtime).unwrap();
+        test_support::file_times::set_file_times(&probe, old, mtime).unwrap();
         let set_ok = std::fs::metadata(&probe).unwrap().atime() == SENDER_ATIME;
         let _ = std::fs::read(&probe).unwrap();
         let bumped = std::fs::metadata(&probe).unwrap().atime() != SENDER_ATIME;
@@ -2239,7 +2239,7 @@ mod itemize_order_tests {
         let path = dir.path().join("identical");
         let content = b"same\n";
         std::fs::write(&path, content).unwrap();
-        filetime::set_file_times(
+        test_support::file_times::set_file_times(
             &path,
             filetime::FileTime::from_unix_time(dest_atime.0, dest_atime.1),
             filetime::FileTime::from_unix_time(IDENTICAL_MTIME, 0),
@@ -2410,7 +2410,7 @@ mod itemize_order_tests {
         let path = dir.path().join("f.txt");
         std::fs::write(&path, b"x").unwrap();
         // Destination: mtime matches the entry, atime does not.
-        filetime::set_file_times(
+        test_support::file_times::set_file_times(
             &path,
             filetime::FileTime::from_unix_time(1_600_000_000, 0),
             filetime::FileTime::from_unix_time(1_700_000_000, 0),
@@ -2479,7 +2479,7 @@ mod itemize_order_tests {
         let dir = test_support::create_tempdir();
         let path = dir.path().join("f.txt");
         std::fs::write(&path, b"x").unwrap();
-        filetime::set_file_times(
+        test_support::file_times::set_file_times(
             &path,
             filetime::FileTime::from_unix_time(1_600_000_000, 0),
             filetime::FileTime::from_unix_time(1_600_000_000, 0),
@@ -2801,8 +2801,11 @@ mod itemize_order_tests {
         let dir = test_support::create_tempdir();
         let path = dir.path().join("sub");
         std::fs::create_dir(&path).unwrap();
-        filetime::set_file_mtime(&path, filetime::FileTime::from_unix_time(1_600_000_000, 0))
-            .unwrap();
+        test_support::file_times::set_file_mtime(
+            &path,
+            filetime::FileTime::from_unix_time(1_600_000_000, 0),
+        )
+        .unwrap();
         let meta = std::fs::symlink_metadata(&path).unwrap();
 
         let mut entry = FileEntry::new_directory("sub".into(), 0o755);
@@ -2870,7 +2873,7 @@ mod itemize_order_tests {
         let dir = test_support::create_tempdir();
         let path = dir.path().join("f.txt");
         std::fs::write(&path, b"x").unwrap();
-        filetime::set_file_mtime(
+        test_support::file_times::set_file_mtime(
             &path,
             filetime::FileTime::from_unix_time(1_600_000_000, 500),
         )
@@ -3804,7 +3807,7 @@ mod uptodate_notice_tests {
         let path = dest.join(name);
         std::fs::write(&path, vec![b'x'; size]).expect("seed dest file");
         let stamp = filetime::FileTime::from_unix_time(SEED_MTIME, 0);
-        filetime::set_file_mtime(&path, stamp).expect("pin dest mtime");
+        test_support::file_times::set_file_mtime(&path, stamp).expect("pin dest mtime");
         let mut entry = FileEntry::new_file(name.into(), size as u64, 0o644);
         entry.set_mtime(SEED_MTIME, 0);
         entry

@@ -69,7 +69,7 @@ fn delay_updates_atomic_rename_and_cleanup() {
     fs::write(from.join("foo"), b"AAAA").expect("write source");
     fs::write(to.join("foo"), b"ZZ").expect("write stale dest");
     let old = filetime::FileTime::from_unix_time(946_684_800, 0); // 2000-01-01
-    filetime::set_file_mtime(to.join("foo"), old).expect("backdate dest");
+    test_support::file_times::set_file_mtime(to.join("foo"), old).expect("backdate dest");
 
     let out = OcRsyncCliRunner::new()
         .args(["-aiv", "--delay-updates"])

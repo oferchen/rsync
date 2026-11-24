@@ -20,7 +20,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 
 const ORACLE_VERSION: &str = "3.5.1";
 /// Every fixture entry's mtime: 2023-11-14 22:13:20 UTC, nanoseconds zero.

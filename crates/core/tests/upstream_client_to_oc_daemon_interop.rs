@@ -585,7 +585,7 @@ fn test_pull_preserves_mtime() {
     // Set file to a specific time in the past (1 hour ago)
     let past_time = SystemTime::now() - Duration::from_secs(3600);
     let filetime = filetime::FileTime::from_system_time(past_time);
-    filetime::set_file_mtime(&test_file, filetime).expect("set mtime");
+    test_support::file_times::set_file_mtime(&test_file, filetime).expect("set mtime");
 
     let original_mtime = fs::metadata(&test_file)
         .expect("read metadata")

@@ -465,7 +465,7 @@ fn execute_with_temp_dir_preserves_modification_time() {
 
     assert_eq!(summary.files_copied(), 1);
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, past_time);
 }
 

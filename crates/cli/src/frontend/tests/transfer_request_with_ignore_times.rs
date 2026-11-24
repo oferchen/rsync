@@ -3,7 +3,8 @@ use super::*;
 
 #[test]
 fn transfer_request_with_ignore_times_forces_copy_despite_matching_timestamps() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");

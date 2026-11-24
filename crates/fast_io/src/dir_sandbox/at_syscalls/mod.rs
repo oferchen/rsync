@@ -53,6 +53,7 @@ pub use create::{
 pub(crate) use create::{fake_super_placeholder_at, mknodat_with_retry};
 pub use lstat::{lstat_via_sandbox_or_fallback, stat_via_sandbox_or_fallback};
 pub use metadata::{AtMetadata, fstatat_follow, fstatat_nofollow};
+pub(crate) use metadata_ops::utimensat_path;
 pub use metadata_ops::{
     fchmodat, fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback,
     secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at, secure_chown_at_dirfd,

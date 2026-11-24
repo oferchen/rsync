@@ -22,11 +22,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
-use filetime::{FileTime, set_symlink_file_times};
+use filetime::FileTime;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
 use protocol::flist::{FileEntry, FileListReader, compare_file_entries};
 use protocol::{CompatibilityFlags, ProtocolVersion, read_varint};
 use tempfile::TempDir;
+use test_support::file_times::set_symlink_file_times;
 use test_support::{UpstreamVersion, oc_rsync_bin, require_upstream_rsync};
 
 /// Fixed mtime for every fixture entry, so the lists carry identical times.

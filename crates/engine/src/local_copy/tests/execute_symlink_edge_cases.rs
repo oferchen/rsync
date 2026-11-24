@@ -711,7 +711,8 @@ fn three_way_symlink_cycle() {
 #[cfg(unix)]
 #[test]
 fn symlink_preserves_target_timestamp_not_link() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
     use std::os::unix::fs::symlink;
 
     let temp = tempdir().expect("tempdir");
@@ -753,7 +754,7 @@ fn symlink_preserves_target_timestamp_not_link() {
     // Target should have its mtime preserved
     let dest_target = dest_root.join("src").join("target.txt");
     let target_meta = fs::metadata(&dest_target).expect("target meta");
-    let target_mtime = FileTime::from_last_modification_time(&target_meta);
+    let target_mtime = ::test_support::file_times::mtime_of(&target_meta);
     assert_eq!(target_mtime, old_time);
 }
 
@@ -821,8 +822,8 @@ fn symlink_omit_link_times_option() {
 
     // Backdate source files so times differ from "now" without sleeping
     let past = filetime::FileTime::from_unix_time(1_600_000_000, 0);
-    filetime::set_file_mtime(&target, past).expect("backdate target");
-    filetime::set_symlink_file_times(&link, past, past).expect("backdate link");
+    ::test_support::file_times::set_file_mtime(&target, past).expect("backdate target");
+    ::test_support::file_times::set_symlink_file_times(&link, past, past).expect("backdate link");
 
     let dest_root = temp.path().join("dest");
     let operands = vec![

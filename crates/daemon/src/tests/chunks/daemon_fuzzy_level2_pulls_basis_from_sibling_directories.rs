@@ -155,5 +155,5 @@ fn fuzzy2_backdate_file(path: &Path) {
         .expect("time subtraction");
 
     let ft = filetime::FileTime::from_system_time(one_day_ago);
-    filetime::set_file_mtime(path, ft).expect("set mtime");
+    ::test_support::file_times::set_file_mtime(path, ft).expect("set mtime");
 }

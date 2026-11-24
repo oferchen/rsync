@@ -161,7 +161,8 @@ pub fn write_stale_dest<P: AsRef<Path>>(path: P, contents: &[u8]) {
     let path = path.as_ref();
     fs::write(path, contents).expect("write destination fixture");
     let stale = filetime::FileTime::from_unix_time(1_500_000_000, 0);
-    filetime::set_file_times(path, stale, stale).expect("backdate destination fixture");
+    test_support::file_times::set_file_times(path, stale, stale)
+        .expect("backdate destination fixture");
 }
 
 /// Binary command builder for integration tests.

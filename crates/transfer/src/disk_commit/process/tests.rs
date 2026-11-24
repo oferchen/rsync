@@ -1215,7 +1215,8 @@ fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
     // metadata_opts (default: preserve_times on) would copy it to the backup
     // subdirectory.
     let seeded = filetime::FileTime::from_unix_time(1_000_000_000, 0);
-    filetime::set_file_mtime(dest_dir.join("sub"), seeded).expect("seed dest sub mtime");
+    test_support::file_times::set_file_mtime(dest_dir.join("sub"), seeded)
+        .expect("seed dest sub mtime");
 
     let config = BackupConfig {
         dir_cache: Default::default(),
@@ -1242,9 +1243,8 @@ fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
         backup_sub.join("payload.bin").exists(),
         "the fixture must actually place a backup under the new subdirectory"
     );
-    let backup_mtime = filetime::FileTime::from_last_modification_time(
-        &fs::metadata(&backup_sub).expect("stat backup sub"),
-    );
+    let backup_mtime =
+        test_support::file_times::mtime_of(&fs::metadata(&backup_sub).expect("stat backup sub"));
     assert_ne!(
         backup_mtime, seeded,
         "preserve_times(false) must reach the backup-dir attribute copy; a \

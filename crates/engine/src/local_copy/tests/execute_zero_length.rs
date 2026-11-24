@@ -164,7 +164,7 @@ fn execute_empty_file_preserves_timestamp() {
 
     assert_eq!(summary.files_copied(), 1);
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(
         dest_mtime.unix_seconds(),
         source_mtime.unix_seconds(),
@@ -210,7 +210,7 @@ fn execute_empty_file_preserves_both_permissions_and_timestamp() {
         "permissions should be preserved"
     );
 
-    let dest_time = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_time = ::test_support::file_times::mtime_of(&dest_metadata);
     assert_eq!(
         dest_time.unix_seconds(),
         source_time.unix_seconds(),

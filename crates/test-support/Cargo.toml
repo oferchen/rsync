@@ -12,6 +12,9 @@ description = "Shared test utilities for the oc-rsync workspace"
 [dependencies]
 socket2 = { workspace = true }
 tempfile = { workspace = true }
+# `file_times`: the timestamp helpers tests use in place of filetime's
+# deprecated setters and readers.
+filetime = { workspace = true }
 
 # `sigterm-flag-stub` installs the production daemon signal handlers so the
 # reap contract is measured against the real SIGTERM disposition.
@@ -41,10 +44,7 @@ quic = ["dep:rcgen", "dep:base64", "daemon?/quic"]
 # `oc_daemon`: serve the oc-rsync daemon library to client tests.
 daemon = ["dep:daemon"]
 
-# The binary-freshness guard compares mtimes, so its tests must set them
-# explicitly rather than rely on filesystem timestamp granularity.
 [dev-dependencies]
-filetime = { workspace = true }
 
 # `OcRsyncCliRunner::umask` pins the spawned child's umask via `pre_exec`, so
 # tests asserting mode bits do not silently inherit the caller's umask.

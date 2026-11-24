@@ -28,7 +28,7 @@ const DEST_MTIME: i64 = 1_546_300_800;
 
 fn set_mtime(path: &Path, seconds: i64) {
     let time = FileTime::from_unix_time(seconds, 0);
-    filetime::set_file_times(path, time, time).expect("set mtime");
+    test_support::file_times::set_file_times(path, time, time).expect("set mtime");
 }
 
 /// Three groups: `a1`, `a2`, `d1/a3`; `b1`, `b2`, `d1/b3`; `c1`, `c2`.

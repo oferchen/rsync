@@ -446,7 +446,7 @@ fn update_combined_with_times_preserves_mtime() {
     assert_eq!(summary.files_copied(), 1);
 
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     // Note: Some filesystems don't preserve full nanosecond precision
     assert_eq!(dest_mtime.unix_seconds(), source_mtime.unix_seconds());
 }

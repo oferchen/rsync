@@ -2122,7 +2122,7 @@ fn execute_fifo_preserves_type_under_times_and_perms() {
 #[cfg(unix)]
 #[test]
 fn execute_link_dest_hardlinks_matching_special() {
-    use filetime::{FileTime, set_symlink_file_times};
+    use ::test_support::file_times::set_symlink_file_times;
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
     let temp = create_tempdir();
@@ -2139,7 +2139,7 @@ fn execute_link_dest_hardlinks_matching_special() {
     // Match the basis mtime to the source so unchanged_attrs holds and the node
     // reaches match_level 3 (hard-link) rather than a recreate.
     let src_meta = fs::symlink_metadata(&source_fifo).expect("src meta");
-    let ftime = FileTime::from_last_modification_time(&src_meta);
+    let ftime = ::test_support::file_times::mtime_of(&src_meta);
     set_symlink_file_times(&basis_fifo, ftime, ftime).expect("sync basis times");
 
     let dest_dir = temp.path().join("dest");

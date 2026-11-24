@@ -119,16 +119,16 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
 
     // Read back the source mtime so we can stamp the destination with it -
     // this makes quick-check see identical mtime + size and skip the files.
-    let source_alpha_mtime = filetime::FileTime::from_last_modification_time(
+    let source_alpha_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(source_dir.join("alpha.txt")).expect("stat source alpha"),
     );
-    let source_beta_mtime = filetime::FileTime::from_last_modification_time(
+    let source_beta_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(source_dir.join("beta.txt")).expect("stat source beta"),
     );
 
-    filetime::set_file_mtime(dest_dir.join("alpha.txt"), source_alpha_mtime)
+    ::test_support::file_times::set_file_mtime(dest_dir.join("alpha.txt"), source_alpha_mtime)
         .expect("set dest alpha.txt mtime");
-    filetime::set_file_mtime(dest_dir.join("beta.txt"), source_beta_mtime)
+    ::test_support::file_times::set_file_mtime(dest_dir.join("beta.txt"), source_beta_mtime)
         .expect("set dest beta.txt mtime");
 
     // Sanity: destination still has the OLD content but now has matching mtime

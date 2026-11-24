@@ -25,7 +25,8 @@ fn execute_with_remove_source_files_deletes_source() {
 
 #[test]
 fn execute_with_remove_source_files_preserves_unchanged_source() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
 
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
@@ -589,7 +590,7 @@ fn execute_preserves_modification_time_when_enabled() {
 
     assert_eq!(summary.files_copied(), 1);
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, past_time);
 }
 
@@ -604,7 +605,7 @@ fn execute_with_whole_file_always_copies() {
     fs::write(&destination, content).expect("write identical dest");
 
     let source_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&source).expect("source metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&source).expect("source metadata"));
     set_file_mtime(&destination, source_mtime).expect("set dest mtime");
 
     let operands = vec![
@@ -775,7 +776,7 @@ fn execute_overwrites_existing_file_with_different_content() {
     fs::write(&destination, b"old").expect("write dest");
 
     // Backdate dest so source is newer without requiring a sleep
-    filetime::set_file_mtime(
+    ::test_support::file_times::set_file_mtime(
         &destination,
         filetime::FileTime::from_unix_time(1_600_000_000, 0),
     )
@@ -965,7 +966,7 @@ fn execute_does_not_preserve_timestamps_by_default() {
     assert_eq!(summary.files_copied(), 1);
 
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
 
     assert_ne!(dest_mtime, past_time);
 }
@@ -1007,9 +1008,9 @@ fn execute_preserves_timestamps_across_multiple_files() {
     let dest_file2 = dest_root.join("source").join("file2.txt");
 
     let dest_mtime1 =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file1).expect("file1 metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file1).expect("file1 metadata"));
     let dest_mtime2 =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file2).expect("file2 metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file2).expect("file2 metadata"));
 
     assert_eq!(dest_mtime1, time1);
     assert_eq!(dest_mtime2, time2);
@@ -1043,7 +1044,7 @@ fn execute_preserves_very_old_timestamps() {
     assert_eq!(summary.files_copied(), 1);
 
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, very_old);
 }
 
@@ -1350,7 +1351,7 @@ fn execute_preserves_both_times_and_permissions() {
     assert_eq!(summary.files_copied(), 1);
 
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
     assert_eq!(dest_mtime, past_time);
 
     #[cfg(unix)]
@@ -1512,7 +1513,7 @@ fn execute_summary_reports_zero_for_no_changes() {
     fs::write(&destination, content).expect("write dest");
 
     let source_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&source).expect("source metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&source).expect("source metadata"));
     set_file_mtime(&destination, source_mtime).expect("set dest mtime");
 
     let operands = vec![

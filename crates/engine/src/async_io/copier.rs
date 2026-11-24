@@ -186,9 +186,11 @@ impl AsyncFileCopier {
                     let _ = std::fs::set_permissions(&dest_path, perms);
                 }
                 if let Some(Some(mtime)) = mtime {
-                    let _ = filetime::set_file_mtime(
+                    let _ = fast_io::set_path_times(
                         &dest_path,
-                        filetime::FileTime::from_system_time(mtime),
+                        None,
+                        Some(filetime::FileTime::from_system_time(mtime)),
+                        true,
                     );
                 }
             })

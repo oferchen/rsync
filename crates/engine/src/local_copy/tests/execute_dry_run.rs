@@ -63,9 +63,8 @@ fn dry_run_preserves_source_unmodified() {
     let destination = temp.path().join("dest.txt");
     let original_content = b"source content unchanged";
     fs::write(&source, original_content).expect("write source");
-    let original_mtime = filetime::FileTime::from_last_modification_time(
-        &fs::metadata(&source).expect("source metadata"),
-    );
+    let original_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&source).expect("source metadata"));
 
     let operands = vec![
         source.clone().into_os_string(),
@@ -81,9 +80,8 @@ fn dry_run_preserves_source_unmodified() {
         original_content,
         "source content must be unchanged after dry run"
     );
-    let post_mtime = filetime::FileTime::from_last_modification_time(
-        &fs::metadata(&source).expect("source metadata"),
-    );
+    let post_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&source).expect("source metadata"));
     assert_eq!(
         original_mtime, post_mtime,
         "source mtime must be unchanged after dry run"
@@ -98,9 +96,8 @@ fn dry_run_preserves_existing_destination_unmodified() {
     fs::write(&source, b"new content").expect("write source");
     let original_dest = b"old destination content";
     fs::write(&destination, original_dest).expect("write dest");
-    let original_mtime = filetime::FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let original_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
 
     let operands = vec![
         source.into_os_string(),
@@ -116,9 +113,8 @@ fn dry_run_preserves_existing_destination_unmodified() {
         original_dest,
         "destination content must be unchanged after dry run"
     );
-    let post_mtime = filetime::FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let post_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(
         original_mtime, post_mtime,
         "destination mtime must be unchanged after dry run"
@@ -605,13 +601,12 @@ fn dry_run_with_times_does_not_set_timestamps() {
     let destination = temp.path().join("dest.txt");
     fs::write(&source, b"times").expect("write source");
     let past = filetime::FileTime::from_unix_time(1_600_000_000, 0);
-    filetime::set_file_mtime(&source, past).expect("set source mtime");
+    ::test_support::file_times::set_file_mtime(&source, past).expect("set source mtime");
 
     // Pre-create destination to verify it is not modified.
     fs::write(&destination, b"original").expect("write dest");
-    let dest_mtime_before = filetime::FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime_before =
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
 
     let operands = vec![
         source.into_os_string(),
@@ -625,9 +620,8 @@ fn dry_run_with_times_does_not_set_timestamps() {
     )
     .expect("dry run succeeds");
 
-    let dest_mtime_after = filetime::FileTime::from_last_modification_time(
-        &fs::metadata(&destination).expect("dest metadata"),
-    );
+    let dest_mtime_after =
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(
         dest_mtime_before, dest_mtime_after,
         "destination mtime must not change during dry run"
@@ -957,7 +951,8 @@ fn dry_run_with_backup_does_not_create_backup_files() {
     let one_hour_ago = filetime::FileTime::from_system_time(
         std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
     );
-    filetime::set_file_mtime(&destination, one_hour_ago).expect("backdate dest mtime");
+    ::test_support::file_times::set_file_mtime(&destination, one_hour_ago)
+        .expect("backdate dest mtime");
 
     let operands = vec![
         source.into_os_string(),

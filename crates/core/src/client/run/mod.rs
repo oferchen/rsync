@@ -1511,7 +1511,8 @@ mod run_client_tests {
 
     #[test]
     fn run_client_update_skips_newer_destination() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::FileTime;
+        use test_support::file_times::set_file_times;
 
         let tmp = test_support::create_tempdir();
         let source = tmp.path().join("source-update.txt");
@@ -1607,8 +1608,9 @@ mod run_client_tests {
     #[cfg(unix)]
     #[test]
     fn run_client_preserves_file_metadata() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::FileTime;
         use std::os::unix::fs::PermissionsExt;
+        use test_support::file_times::set_file_times;
 
         let tmp = test_support::create_tempdir();
         let source = tmp.path().join("source-metadata.txt");
@@ -1624,8 +1626,8 @@ mod run_client_tests {
 
         let source_metadata = fs::metadata(&source).expect("source metadata");
         assert_eq!(source_metadata.permissions().mode() & 0o777, mode);
-        let src_atime = FileTime::from_last_access_time(&source_metadata);
-        let src_mtime = FileTime::from_last_modification_time(&source_metadata);
+        let src_atime = test_support::file_times::atime_of(&source_metadata);
+        let src_mtime = test_support::file_times::mtime_of(&source_metadata);
         assert_eq!(src_atime, atime);
         assert_eq!(src_mtime, mtime);
 
@@ -1639,8 +1641,8 @@ mod run_client_tests {
 
         let dest_metadata = fs::metadata(&destination).expect("dest metadata");
         assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
-        let dest_atime = FileTime::from_last_access_time(&dest_metadata);
-        let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+        let dest_atime = test_support::file_times::atime_of(&dest_metadata);
+        let dest_mtime = test_support::file_times::mtime_of(&dest_metadata);
         // upstream: rsync.c:588-589 - without --atimes/-U the access time is left
         // unchanged (ATTRS_SKIP_ATIME); permissions and mtime are preserved.
         assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
@@ -1651,8 +1653,9 @@ mod run_client_tests {
     #[cfg(unix)]
     #[test]
     fn run_client_preserves_directory_metadata() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::FileTime;
         use std::os::unix::fs::PermissionsExt;
+        use test_support::file_times::set_file_times;
 
         let tmp = test_support::create_tempdir();
         let source_dir = tmp.path().join("source-dir");
@@ -1680,8 +1683,8 @@ mod run_client_tests {
         let dest_metadata = fs::metadata(&destination_dir).expect("dest metadata");
         assert!(dest_metadata.is_dir());
         assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
-        let dest_atime = FileTime::from_last_access_time(&dest_metadata);
-        let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+        let dest_atime = test_support::file_times::atime_of(&dest_metadata);
+        let dest_mtime = test_support::file_times::mtime_of(&dest_metadata);
         // upstream: rsync.c:588-589 - directories always skip atime (S_ISDIR sets
         // ATTRS_SKIP_ATIME); permissions and mtime are preserved.
         assert_ne!(dest_atime, atime, "directory atime must never be preserved");
@@ -1692,8 +1695,9 @@ mod run_client_tests {
     #[cfg(unix)]
     #[test]
     fn run_client_updates_existing_directory_metadata() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::FileTime;
         use std::os::unix::fs::PermissionsExt;
+        use test_support::file_times::set_file_times;
 
         let tmp = test_support::create_tempdir();
         let source_dir = tmp.path().join("source-tree");
@@ -1736,8 +1740,8 @@ mod run_client_tests {
         let copied_metadata = fs::metadata(&copied_nested).expect("dest metadata");
         assert!(copied_metadata.is_dir());
         assert_eq!(copied_metadata.permissions().mode() & 0o777, source_mode);
-        let copied_atime = FileTime::from_last_access_time(&copied_metadata);
-        let copied_mtime = FileTime::from_last_modification_time(&copied_metadata);
+        let copied_atime = test_support::file_times::atime_of(&copied_metadata);
+        let copied_mtime = test_support::file_times::mtime_of(&copied_metadata);
         // upstream: rsync.c:588-589 - directories always skip atime; the existing
         // directory's permissions and mtime are updated to the source values.
         assert_ne!(
@@ -1845,7 +1849,8 @@ mod run_client_tests {
     fn sequential_runs_respect_ignore_times() {
         use std::time::Duration;
 
-        use filetime::{FileTime, set_file_times};
+        use filetime::FileTime;
+        use test_support::file_times::set_file_times;
 
         let temp = test_support::create_tempdir();
         let source = temp.path().join("source.txt");

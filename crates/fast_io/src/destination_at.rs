@@ -212,7 +212,7 @@ pub fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {
 
 /// Sets a destination path's modification time, leaving its access time,
 /// anchored on the pinned destination. The leaf is followed, as
-/// `filetime::set_file_mtime` follows it.
+/// [`crate::set_path_times`] follows it.
 ///
 /// # Errors
 ///
@@ -239,7 +239,7 @@ pub fn set_mtime(path: &Path, mtime: filetime::FileTime) -> io::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        filetime::set_file_mtime(path, mtime)
+        crate::set_path_times(path, None, Some(mtime), true)
     }
 }
 

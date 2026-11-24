@@ -79,7 +79,7 @@ fn atimes_flag_preserves_source_access_time() {
     // restored atime cannot accidentally equal the mtime.
     let atime = filetime::FileTime::from_unix_time(SRC_ATIME_SECS, 0);
     let mtime = filetime::FileTime::from_unix_time(SRC_ATIME_SECS + 86_400, 0);
-    filetime::set_file_times(&src, atime, mtime).expect("set source times");
+    test_support::file_times::set_file_times(&src, atime, mtime).expect("set source times");
 
     // Sanity: the source atime is the fixed value and differs from the wall
     // clock (so "now" would be an obviously-wrong result).

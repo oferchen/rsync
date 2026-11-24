@@ -14,6 +14,8 @@ camino = "1"
 clap = { workspace = true, features = ["derive"] }
 branding = { path = "../crates/branding" }
 filetime = { workspace = true }
+# `touch` sets file times through the I/O owner rather than its own FFI.
+fast_io = { path = "../crates/fast_io", default-features = false }
 toml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

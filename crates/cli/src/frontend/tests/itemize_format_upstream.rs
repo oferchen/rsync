@@ -91,7 +91,8 @@ fn itemize_output_format_is_eleven_chars_plus_space_plus_filename() {
 
 #[test]
 fn itemize_updated_file_shows_change_indicators() {
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_mtime;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("updated.txt");
@@ -138,7 +139,8 @@ fn itemize_updated_file_shows_change_indicators() {
 
 #[test]
 fn itemize_unchanged_file_with_times_shows_no_output() {
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_mtime;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("same.txt");
@@ -361,7 +363,8 @@ fn itemize_new_symlink_shows_cl_plus_pattern() {
 #[cfg(unix)]
 #[test]
 fn itemize_chmod_shows_permission_indicator() {
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_mtime;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("perms.txt");

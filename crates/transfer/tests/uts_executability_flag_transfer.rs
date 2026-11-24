@@ -25,7 +25,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 use test_support::{
     LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };

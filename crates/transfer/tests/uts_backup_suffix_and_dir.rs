@@ -46,8 +46,9 @@
 use std::fs;
 use std::path::Path;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
 use tempfile::TempDir;
+use test_support::file_times::set_file_mtime;
 use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// A fixed old timestamp used to backdate destination files so rsync's

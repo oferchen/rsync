@@ -22,7 +22,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 use test_support::{
     LSH_STUB_BIN, LshRunnerStub, UpstreamVersion, create_tempdir, oc_rsync_bin, require_binaries,
     require_upstream_rsync,

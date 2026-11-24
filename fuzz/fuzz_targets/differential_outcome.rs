@@ -323,8 +323,10 @@ fn backdate_file(path: &Path) {
     let two_hours_ago = SystemTime::now()
         .checked_sub(Duration::from_secs(7200))
         .unwrap_or(SystemTime::UNIX_EPOCH);
-    let ft = filetime::FileTime::from_system_time(two_hours_ago);
-    let _ = filetime::set_file_mtime(path, ft);
+    let _ = std::fs::File::options()
+        .write(true)
+        .open(path)
+        .and_then(|file| file.set_modified(two_hours_ago));
 }
 
 fn run_one(input: DifferentialInput) {

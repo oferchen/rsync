@@ -381,13 +381,13 @@ impl EntryMetadata {
 
 impl EntryMetadata {
     /// Modification time as a [`filetime::FileTime`], matching
-    /// [`filetime::FileTime::from_last_modification_time`].
+    /// [`crate::modified_filetime`] on the underlying stat.
     #[must_use]
     pub fn modified_filetime(&self) -> filetime::FileTime {
         match self {
             #[cfg(unix)]
             Self::Overlaid(overlay) => overlay.real.modified_filetime(),
-            Self::Std(metadata) => filetime::FileTime::from_last_modification_time(metadata),
+            Self::Std(metadata) => crate::modified_filetime(metadata),
             #[cfg(unix)]
             Self::At(metadata) => {
                 filetime::FileTime::from_unix_time(metadata.mtime(), metadata.mtime_nsec() as u32)
@@ -395,13 +395,13 @@ impl EntryMetadata {
         }
     }
     /// Access time as a [`filetime::FileTime`], matching
-    /// [`filetime::FileTime::from_last_access_time`].
+    /// [`crate::accessed_filetime`] on the underlying stat.
     #[must_use]
     pub fn accessed_filetime(&self) -> filetime::FileTime {
         match self {
             #[cfg(unix)]
             Self::Overlaid(overlay) => overlay.real.accessed_filetime(),
-            Self::Std(metadata) => filetime::FileTime::from_last_access_time(metadata),
+            Self::Std(metadata) => crate::accessed_filetime(metadata),
             #[cfg(unix)]
             Self::At(metadata) => {
                 filetime::FileTime::from_unix_time(metadata.atime(), metadata.atime_nsec() as u32)
@@ -610,7 +610,7 @@ mod tests {
     /// nanoseconds so such a slip cannot pass.
     fn assert_variants_agree(root: &Path, leaf: &str) {
         let path = root.join(leaf);
-        filetime::set_symlink_file_times(
+        test_support::file_times::set_symlink_file_times(
             &path,
             FileTime::from_unix_time(ATIME.0, ATIME.1),
             FileTime::from_unix_time(MTIME.0, MTIME.1),
@@ -653,12 +653,12 @@ mod tests {
             );
             assert_eq!(
                 meta.modified_filetime(),
-                FileTime::from_last_modification_time(&raw),
+                test_support::file_times::mtime_of(&raw),
                 "{leaf}"
             );
             assert_eq!(
                 meta.accessed_filetime(),
-                FileTime::from_last_access_time(&raw),
+                test_support::file_times::atime_of(&raw),
                 "{leaf}"
             );
             let (kind, want) = (meta.file_type(), raw.file_type());

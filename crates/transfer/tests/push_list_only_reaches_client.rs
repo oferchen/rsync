@@ -26,8 +26,9 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use filetime::{FileTime, set_file_mtime, set_symlink_file_times};
+use filetime::FileTime;
 use platform::env::EnvGuard;
+use test_support::file_times::{set_file_mtime, set_symlink_file_times};
 use test_support::inetd_server::{InetdCommand, InetdServer};
 use test_support::{
     CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, UpstreamVersion, create_tempdir,

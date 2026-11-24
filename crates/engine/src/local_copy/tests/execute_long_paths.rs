@@ -481,8 +481,7 @@ fn execute_preserves_mtime_for_files_with_long_paths() {
     }
     dest_file = dest_file.join("timed.txt");
 
-    let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("meta"));
+    let dest_mtime = ::test_support::file_times::mtime_of(&fs::metadata(&dest_file).expect("meta"));
     assert_eq!(dest_mtime, past_time);
 }
 

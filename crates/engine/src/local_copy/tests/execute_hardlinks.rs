@@ -69,7 +69,7 @@ fn execute_with_link_dest_uses_reference_inode() {
     let source_metadata = fs::metadata(&source_file).expect("source metadata");
     let source_mtime = source_metadata.modified().expect("source modified time");
     let timestamp = FileTime::from_system_time(source_mtime);
-    filetime::set_file_times(&baseline_file, timestamp, timestamp)
+    ::test_support::file_times::set_file_times(&baseline_file, timestamp, timestamp)
         .expect("synchronise baseline timestamps");
 
     let dest_dir = temp.path().join("dest");

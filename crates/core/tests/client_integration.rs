@@ -350,12 +350,24 @@ fn test_atimes_preservation() {
         let src_dir_atime = FileTime::from_unix_time(1_500_000_000, 0);
         let src_dir_mtime = FileTime::from_unix_time(1_550_000_000, 0);
 
-        filetime::set_file_times(source_root.join("alpha.txt"), src_atime, src_mtime)
-            .expect("set alpha timestamps");
-        filetime::set_file_times(source_root.join("subdir/beta.txt"), src_atime, src_mtime)
-            .expect("set beta timestamps");
-        filetime::set_file_times(source_root.join("subdir"), src_dir_atime, src_dir_mtime)
-            .expect("set subdir timestamps");
+        test_support::file_times::set_file_times(
+            source_root.join("alpha.txt"),
+            src_atime,
+            src_mtime,
+        )
+        .expect("set alpha timestamps");
+        test_support::file_times::set_file_times(
+            source_root.join("subdir/beta.txt"),
+            src_atime,
+            src_mtime,
+        )
+        .expect("set beta timestamps");
+        test_support::file_times::set_file_times(
+            source_root.join("subdir"),
+            src_dir_atime,
+            src_dir_mtime,
+        )
+        .expect("set subdir timestamps");
 
         let mut source_arg = source_root.into_os_string();
         source_arg.push(std::path::MAIN_SEPARATOR.to_string());
@@ -385,8 +397,8 @@ fn test_atimes_preservation() {
             let dest_path = dest_root.join(name);
             let meta =
                 fs::metadata(&dest_path).unwrap_or_else(|e| panic!("metadata for {name}: {e}"));
-            let dest_atime = FileTime::from_last_access_time(&meta);
-            let dest_mtime = FileTime::from_last_modification_time(&meta);
+            let dest_atime = test_support::file_times::atime_of(&meta);
+            let dest_mtime = test_support::file_times::mtime_of(&meta);
 
             assert_time_close(dest_atime, src_atime, &format!("{name} atime"));
             assert_time_close(dest_mtime, src_mtime, &format!("{name} mtime"));
@@ -394,8 +406,8 @@ fn test_atimes_preservation() {
 
         // Verify subdirectory timestamps.
         let subdir_meta = fs::metadata(dest_root.join("subdir")).expect("subdir metadata");
-        let subdir_atime = FileTime::from_last_access_time(&subdir_meta);
-        let subdir_mtime = FileTime::from_last_modification_time(&subdir_meta);
+        let subdir_atime = test_support::file_times::atime_of(&subdir_meta);
+        let subdir_mtime = test_support::file_times::mtime_of(&subdir_meta);
 
         // upstream: rsync.c:588-589 - `!atimes_ndx || S_ISDIR` always sets
         // ATTRS_SKIP_ATIME for directories, so a directory's access time is

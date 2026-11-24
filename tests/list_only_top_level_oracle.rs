@@ -22,7 +22,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 
 /// 2020-01-02 03:04:05 UTC.
 const FIXTURE_MTIME: i64 = 1_577_934_245;

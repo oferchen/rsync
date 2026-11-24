@@ -106,8 +106,9 @@ fn local_copy_emits_no_nonupstream_perfile_debug_lines() {
     // "skipping <f>: already up-to-date" debug line.
     for name in ["a.txt", "b.txt"] {
         let src_meta = fs::metadata(source.join(name)).expect("source metadata");
-        let mtime = filetime::FileTime::from_last_modification_time(&src_meta);
-        filetime::set_file_mtime(dest.join("source").join(name), mtime).expect("align mtime");
+        let mtime = ::test_support::file_times::mtime_of(&src_meta);
+        ::test_support::file_times::set_file_mtime(dest.join("source").join(name), mtime)
+            .expect("align mtime");
     }
 
     // Up-to-date rerun: the quick-check now skips every file.

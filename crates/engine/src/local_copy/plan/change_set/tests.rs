@@ -485,7 +485,8 @@ fn for_file_times_not_changed_existing_no_write() {
 /// by the upstream `compare` testsuite (`-ain --modify-window=2`).
 #[test]
 fn for_file_within_window_mtime_drift_reports_no_time_change() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let existing_path = temp.path().join("existing.txt");
@@ -530,7 +531,8 @@ fn for_file_within_window_mtime_drift_reports_no_time_change() {
 
 #[test]
 fn change_set_detects_size_and_time_changes() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let existing_path = temp.path().join("existing.txt");
@@ -566,7 +568,8 @@ fn change_set_detects_size_and_time_changes() {
 #[cfg(unix)]
 #[test]
 fn change_set_detects_permission_changes_for_existing_destination() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -678,7 +681,8 @@ fn change_set_detects_group_override_mismatch() {
 #[cfg(unix)]
 #[test]
 fn for_existing_directory_flags_time_change_when_mtimes_differ() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src_dir = temp.path().join("src");
@@ -714,7 +718,8 @@ fn for_existing_directory_flags_time_change_when_mtimes_differ() {
 #[cfg(unix)]
 #[test]
 fn for_existing_directory_ignores_sub_second_mtime_drift() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src_dir = temp.path().join("src");
@@ -750,7 +755,8 @@ fn for_existing_directory_ignores_sub_second_mtime_drift() {
 #[cfg(unix)]
 #[test]
 fn for_existing_directory_no_change_when_mtimes_match() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src_dir = temp.path().join("src");
@@ -783,7 +789,8 @@ fn for_existing_directory_no_change_when_mtimes_match() {
 #[cfg(unix)]
 #[test]
 fn for_existing_directory_omit_dir_times_suppresses_time_flag() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src_dir = temp.path().join("src");
@@ -814,7 +821,8 @@ fn for_existing_directory_omit_dir_times_suppresses_time_flag() {
 #[cfg(unix)]
 #[test]
 fn for_recreated_symlink_sets_checksum_and_time_when_mtimes_differ() {
-    use filetime::{FileTime, set_symlink_file_times};
+    use ::test_support::file_times::set_symlink_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -855,7 +863,8 @@ fn for_recreated_symlink_sets_checksum_and_time_when_mtimes_differ() {
 #[cfg(unix)]
 #[test]
 fn for_recreated_symlink_ignores_sub_second_mtime_drift() {
-    use filetime::{FileTime, set_symlink_file_times};
+    use ::test_support::file_times::set_symlink_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -900,7 +909,8 @@ fn for_recreated_symlink_ignores_sub_second_mtime_drift() {
 #[cfg(unix)]
 #[test]
 fn for_recreated_symlink_omit_link_times_still_reports_time() {
-    use filetime::{FileTime, set_symlink_file_times};
+    use ::test_support::file_times::set_symlink_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().expect("tempdir");
@@ -945,7 +955,8 @@ fn for_recreated_symlink_omit_link_times_still_reports_time() {
 #[cfg(unix)]
 #[test]
 fn for_recreated_device_sets_checksum_and_time_when_content_differs() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src = temp.path().join("src");
@@ -1012,7 +1023,8 @@ fn for_recreated_device_reports_transfer_time_when_times_not_preserved() {
 #[cfg(unix)]
 #[test]
 fn for_recreated_device_no_change_when_content_and_time_match() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src = temp.path().join("src");
@@ -1054,7 +1066,8 @@ fn for_recreated_device_no_change_when_content_and_time_match() {
 #[cfg(unix)]
 #[test]
 fn for_file_atimes_differing_access_time_sets_u_glyph() {
-    use filetime::{FileTime, set_file_atime, set_file_mtime};
+    use ::test_support::file_times::{set_file_atime, set_file_mtime};
+    use filetime::FileTime;
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src = temp.path().join("src");

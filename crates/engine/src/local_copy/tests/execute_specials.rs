@@ -192,7 +192,8 @@ fn execute_copies_socket_preserving_permissions() {
 ))]
 #[test]
 fn execute_copies_socket_preserving_timestamps() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::FileTypeExt;
 
     let temp = tempdir().expect("tempdir");
@@ -525,7 +526,8 @@ fn execute_archive_mode_copies_fifo_preserving_mode_and_mtime() {
     // a permanent deadlock, not a slow test.
     let atime = FileTime::from_unix_time(1_700_050_000, 0);
     let mtime = FileTime::from_unix_time(1_700_060_000, 0);
-    filetime::set_symlink_file_times(&fifo, atime, mtime).expect("set fifo times");
+    ::test_support::file_times::set_symlink_file_times(&fifo, atime, mtime)
+        .expect("set fifo times");
 
     fs::write(source_root.join("file.txt"), b"archive").expect("write file");
 
@@ -554,7 +556,7 @@ fn execute_archive_mode_copies_fifo_preserving_mode_and_mtime() {
     );
     assert_eq!(fifo_meta.permissions().mode() & 0o777, 0o640);
     assert_eq!(
-        FileTime::from_last_modification_time(&fifo_meta).unix_seconds(),
+        ::test_support::file_times::mtime_of(&fifo_meta).unix_seconds(),
         1_700_060_000,
         "archive mode must carry the FIFO's mtime, not stamp it with now()"
     );

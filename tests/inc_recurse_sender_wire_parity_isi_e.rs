@@ -73,7 +73,8 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
+use test_support::file_times::set_file_times;
 
 /// Upstream rsync 3.4.1 capability string with `'i'` (INC_RECURSE) set
 /// and no leading CLI `-v` (verbose). See module docs for why `v` is

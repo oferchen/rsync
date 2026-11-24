@@ -100,7 +100,7 @@ fn backdate_tree(root: &Path) {
     entries.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
     entries.push(root.to_path_buf());
     for path in entries {
-        filetime::set_symlink_file_times(&path, stamp, stamp).expect("backdate");
+        test_support::file_times::set_symlink_file_times(&path, stamp, stamp).expect("backdate");
     }
 }
 

@@ -45,7 +45,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use filetime::{FileTime, set_file_mtime, set_symlink_file_times};
+use ::test_support::file_times::{set_file_mtime, set_symlink_file_times};
+use filetime::FileTime;
 use tempfile::tempdir;
 use test_support::{Deadlined, run_deadlined};
 

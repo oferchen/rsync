@@ -102,7 +102,7 @@ fn seed_fuzzy_pair(root: &Path) -> (std::path::PathBuf, std::path::PathBuf, u64)
     // Backdate the basis so its mtime differs from the source; without a
     // same-name quick-check hit, only the fuzzy path can reuse it.
     let old = filetime::FileTime::from_unix_time(981_213_462, 0);
-    filetime::set_file_mtime(&basis, old).expect("backdate basis");
+    test_support::file_times::set_file_mtime(&basis, old).expect("backdate basis");
 
     (from, to, body.len() as u64)
 }

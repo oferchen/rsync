@@ -19,7 +19,8 @@ fn backup_flag_creates_default_suffix_backups() {
     let one_hour_ago = filetime::FileTime::from_system_time(
         std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
     );
-    filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago).expect("backdate dest");
+    test_support::file_times::set_file_mtime(dest_root.join("file.txt"), one_hour_ago)
+        .expect("backdate dest");
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -59,7 +60,7 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
     let one_hour_ago = filetime::FileTime::from_system_time(
         std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
     );
-    filetime::set_file_mtime(dest_dir.join("source/nested/file.txt"), one_hour_ago)
+    test_support::file_times::set_file_mtime(dest_dir.join("source/nested/file.txt"), one_hour_ago)
         .expect("backdate dest");
 
     let (code, stdout, stderr) = run_with_args([
@@ -111,7 +112,8 @@ fn backup_suffix_flag_overrides_default_suffix() {
     let one_hour_ago = filetime::FileTime::from_system_time(
         std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
     );
-    filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago).expect("backdate dest");
+    test_support::file_times::set_file_mtime(dest_root.join("file.txt"), one_hour_ago)
+        .expect("backdate dest");
 
     // upstream: options.c:811,2447-2449 - `--suffix` sets the suffix string but does
     // NOT enable backups on its own; `--backup` must be given explicitly.

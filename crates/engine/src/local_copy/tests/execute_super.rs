@@ -611,7 +611,8 @@ fn super_mode_with_times_preserves_timestamps() {
     ctx.write_source("file.txt", b"times test");
 
     let mtime = filetime::FileTime::from_unix_time(1_700_000_000, 0);
-    filetime::set_file_mtime(ctx.source.join("file.txt"), mtime).expect("set mtime");
+    ::test_support::file_times::set_file_mtime(ctx.source.join("file.txt"), mtime)
+        .expect("set mtime");
 
     let operands = ctx.operands_with_trailing_separator();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -626,7 +627,7 @@ fn super_mode_with_times_preserves_timestamps() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime = filetime::FileTime::from_last_modification_time(
+    let dest_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(ctx.dest.join("file.txt")).expect("dest metadata"),
     );
     assert_eq!(dest_mtime, mtime);
@@ -640,7 +641,8 @@ fn no_super_with_times_still_preserves_timestamps() {
     ctx.write_source("file.txt", b"no-super times");
 
     let mtime = filetime::FileTime::from_unix_time(1_700_050_000, 0);
-    filetime::set_file_mtime(ctx.source.join("file.txt"), mtime).expect("set mtime");
+    ::test_support::file_times::set_file_mtime(ctx.source.join("file.txt"), mtime)
+        .expect("set mtime");
 
     let operands = ctx.operands_with_trailing_separator();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -655,7 +657,7 @@ fn no_super_with_times_still_preserves_timestamps() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime = filetime::FileTime::from_last_modification_time(
+    let dest_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(ctx.dest.join("file.txt")).expect("dest metadata"),
     );
     assert_eq!(dest_mtime, mtime);
@@ -909,8 +911,10 @@ fn super_mode_with_update_skips_newer_destination() {
 
     let old_time = filetime::FileTime::from_unix_time(1_000_000_000, 0);
     let new_time = filetime::FileTime::from_unix_time(2_000_000_000, 0);
-    filetime::set_file_mtime(ctx.source.join("file.txt"), old_time).expect("set source mtime");
-    filetime::set_file_mtime(ctx.dest.join("file.txt"), new_time).expect("set dest mtime");
+    ::test_support::file_times::set_file_mtime(ctx.source.join("file.txt"), old_time)
+        .expect("set source mtime");
+    ::test_support::file_times::set_file_mtime(ctx.dest.join("file.txt"), new_time)
+        .expect("set dest mtime");
 
     let operands = ctx.operands_with_trailing_separator();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -936,8 +940,10 @@ fn super_mode_with_checksum_copies_differing_files() {
 
     // Make timestamps match to verify checksum comparison is used
     let mtime = filetime::FileTime::from_unix_time(1_700_000_000, 0);
-    filetime::set_file_mtime(ctx.source.join("file.txt"), mtime).expect("set source mtime");
-    filetime::set_file_mtime(ctx.dest.join("file.txt"), mtime).expect("set dest mtime");
+    ::test_support::file_times::set_file_mtime(ctx.source.join("file.txt"), mtime)
+        .expect("set source mtime");
+    ::test_support::file_times::set_file_mtime(ctx.dest.join("file.txt"), mtime)
+        .expect("set dest mtime");
 
     let operands = ctx.operands_with_trailing_separator();
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

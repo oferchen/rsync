@@ -16,8 +16,9 @@
 //! - `flist.c:2913-2917` - an empty remainder becomes the real `.` entry
 //!   (`DOTDIR_NAME`), which is how `src/./` still stamps the root.
 #![cfg(unix)]
+use ::test_support::file_times::set_file_mtime;
 use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};

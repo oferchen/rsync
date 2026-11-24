@@ -28,9 +28,10 @@
 
 #![cfg(unix)]
 
-use filetime::{FileTime, set_file_atime, set_file_times};
+use filetime::FileTime;
 use metadata::{MetadataOptions, apply_file_metadata_with_options};
 use std::fs;
+use test_support::file_times::{set_file_atime, set_file_times};
 
 /// Source atime used by the upstream `atimes.test` fixture
 /// (`touch -a -t 200102031717.42`).
@@ -69,8 +70,8 @@ fn atimes_round_trip_preserves_source_atime() {
     apply_file_metadata_with_options(&dest, &source_meta, &opts).expect("apply atimes metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // Some filesystems coarsen atime to second resolution even when mtime
     // is nanosecond-accurate. Assert exact equality at second granularity

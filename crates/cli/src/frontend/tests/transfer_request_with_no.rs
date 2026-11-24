@@ -65,8 +65,9 @@ fn transfer_request_with_no_perms_overrides_archive() {
 #[cfg(unix)]
 #[test]
 fn transfer_request_with_no_times_overrides_archive() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::time::SystemTime;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source-no-times.txt");

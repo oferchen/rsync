@@ -40,7 +40,7 @@ enum Direction {
 
 fn set_mtime(path: &Path, seconds: i64) {
     let time = FileTime::from_unix_time(seconds, 0);
-    filetime::set_symlink_file_times(path, time, time).expect("set mtime");
+    test_support::file_times::set_symlink_file_times(path, time, time).expect("set mtime");
 }
 
 /// `src/` holds `a`, `l -> a` and `sub/f`. The destination a run starts from
@@ -91,7 +91,7 @@ fn walk(root: &Path, relative: &Path, lines: &mut Vec<String>) {
     let path = root.join(relative);
     let meta = fs::symlink_metadata(&path).expect("lstat");
     let mode = meta.permissions().mode() & 0o7777;
-    let mtime = FileTime::from_last_modification_time(&meta).unix_seconds();
+    let mtime = test_support::file_times::mtime_of(&meta).unix_seconds();
     let target = fs::read_link(&path).unwrap_or_default();
     lines.push(format!(
         "{} {mode:o} {mtime} {}",

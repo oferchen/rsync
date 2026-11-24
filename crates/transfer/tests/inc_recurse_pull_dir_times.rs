@@ -11,7 +11,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 use test_support::{
     LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };
@@ -68,7 +69,7 @@ fn pull_restores_mtime_of_every_released_segments_directory() {
         .iter()
         .filter(|dir| {
             let meta = fs::metadata(dest.join(dir)).expect("dest dir exists");
-            FileTime::from_last_modification_time(&meta).unix_seconds() != DIR_MTIME
+            test_support::file_times::mtime_of(&meta).unix_seconds() != DIR_MTIME
         })
         .collect();
     assert!(stale.is_empty(), "directories left un-stamped: {stale:?}");

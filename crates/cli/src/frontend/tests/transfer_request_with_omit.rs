@@ -5,7 +5,8 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
@@ -37,8 +38,8 @@ fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
 
     let dir_metadata = std::fs::metadata(&dest_dir).expect("dest dir metadata");
     let file_metadata = std::fs::metadata(&dest_file).expect("dest file metadata");
-    let dest_dir_mtime = FileTime::from_last_modification_time(&dir_metadata);
-    let dest_file_mtime = FileTime::from_last_modification_time(&file_metadata);
+    let dest_dir_mtime = test_support::file_times::mtime_of(&dir_metadata);
+    let dest_file_mtime = test_support::file_times::mtime_of(&file_metadata);
 
     assert_ne!(dest_dir_mtime, dir_mtime);
     assert_eq!(dest_file_mtime, dir_mtime);
@@ -47,9 +48,10 @@ fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
 #[cfg(unix)]
 #[test]
 fn transfer_request_with_omit_link_times_skips_symlink_timestamp() {
-    use filetime::{FileTime, set_file_times, set_symlink_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::symlink;
+    use test_support::file_times::{set_file_times, set_symlink_file_times};
 
     let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
@@ -82,8 +84,8 @@ fn transfer_request_with_omit_link_times_skips_symlink_timestamp() {
 
     let dest_target_metadata = fs::metadata(&dest_target).expect("dest target metadata");
     let dest_link_metadata = fs::symlink_metadata(&dest_link).expect("dest link metadata");
-    let dest_target_mtime = FileTime::from_last_modification_time(&dest_target_metadata);
-    let dest_link_mtime = FileTime::from_last_modification_time(&dest_link_metadata);
+    let dest_target_mtime = test_support::file_times::mtime_of(&dest_target_metadata);
+    let dest_link_mtime = test_support::file_times::mtime_of(&dest_link_metadata);
 
     assert_eq!(dest_target_mtime, timestamp);
     assert_ne!(dest_link_mtime, timestamp);

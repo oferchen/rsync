@@ -242,8 +242,10 @@ fn daemon_push_incremental_update_lifecycle() {
 
     // Backdate destination so quick-check detects the change
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(module_dir.join("config.txt"), old_time).expect("backdate config.txt");
-    filetime::set_file_mtime(module_dir.join("stable.txt"), old_time).expect("backdate stable.txt");
+    ::test_support::file_times::set_file_mtime(module_dir.join("config.txt"), old_time)
+        .expect("backdate config.txt");
+    ::test_support::file_times::set_file_mtime(module_dir.join("stable.txt"), old_time)
+        .expect("backdate stable.txt");
 
     // Modify source: update config.txt, add new file
     fs::write(source_dir.join("config.txt"), b"version=2\nupdated=true\n")

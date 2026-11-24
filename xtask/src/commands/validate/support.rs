@@ -79,7 +79,7 @@ fn portable_touch(args: &[&str]) -> TaskResult<String> {
     let path = Path::new(path);
     let ft = FileTime::from_unix_time(epoch, 0);
 
-    // `touch` creates a missing file; `filetime` requires it to exist. A `-h`
+    // `touch` creates a missing file; `set_path_times` requires it to exist. A `-h`
     // request targets a symlink, which cannot be conjured, so only materialise
     // regular targets.
     if !no_deref && !path.exists() {
@@ -90,13 +90,13 @@ fn portable_touch(args: &[&str]) -> TaskResult<String> {
     let result = if no_deref {
         // The fixtures only pair `-h` with a full backdate (both times), never
         // with `-m`/`-a`; set both on the link itself to match.
-        filetime::set_symlink_file_times(path, ft, ft)
+        fast_io::set_path_times(path, Some(ft), Some(ft), false)
     } else if mtime_only {
-        filetime::set_file_mtime(path, ft)
+        fast_io::set_path_times(path, None, Some(ft), true)
     } else if atime_only {
-        filetime::set_file_atime(path, ft)
+        fast_io::set_path_times(path, Some(ft), None, true)
     } else {
-        filetime::set_file_times(path, ft, ft)
+        fast_io::set_path_times(path, Some(ft), Some(ft), true)
     };
     result
         .map(|()| String::new())

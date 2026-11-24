@@ -844,10 +844,18 @@ fn copy_dest_directory_and_symlink_record_local_change_not_new() {
     set_file_mtime(source_dir.join("sub"), timestamp).expect("src dir mtime");
     set_file_mtime(copy_dest_dir.join("sub"), timestamp).expect("basis dir mtime");
     // Symlink mtimes match the basis (symtimes preserved under `-t`).
-    filetime::set_symlink_file_times(source_dir.join("link"), timestamp, timestamp)
-        .expect("src link mtime");
-    filetime::set_symlink_file_times(copy_dest_dir.join("link"), timestamp, timestamp)
-        .expect("basis link mtime");
+    ::test_support::file_times::set_symlink_file_times(
+        source_dir.join("link"),
+        timestamp,
+        timestamp,
+    )
+    .expect("src link mtime");
+    ::test_support::file_times::set_symlink_file_times(
+        copy_dest_dir.join("link"),
+        timestamp,
+        timestamp,
+    )
+    .expect("basis link mtime");
 
     // Trailing-slash source so contents land directly under destination_dir.
     let mut source_operand = source_dir.clone().into_os_string();

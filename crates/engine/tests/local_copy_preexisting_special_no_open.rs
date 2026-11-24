@@ -21,7 +21,7 @@
 //! the entries.
 //!
 //! IMPORTANT for anyone editing the fixture: set the FIFO's mtime with
-//! `utimensat` (here via `touch`), NEVER `filetime::set_file_mtime` -
+//! `utimensat` (here via `touch`), NEVER `::test_support::file_times::set_file_mtime` -
 //! `filetime` opens the path `O_RDONLY` to get an fd for `futimens`, which
 //! itself blocks on a FIFO with no writer and would hang this test in *setup*,
 //! before the code under test ever runs. `set_symlink_file_times` uses

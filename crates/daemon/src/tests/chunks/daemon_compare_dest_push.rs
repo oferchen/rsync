@@ -46,12 +46,13 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
 
     // Backdate reference files so quick-check does not falsely match changed.txt
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
         .expect("backdate ref unchanged");
-    filetime::set_file_mtime(ref_dir.join("changed.txt"), old_time).expect("backdate ref changed");
+    ::test_support::file_times::set_file_mtime(ref_dir.join("changed.txt"), old_time)
+        .expect("backdate ref changed");
 
     // Match source unchanged.txt mtime to the reference so compare-dest sees it as identical
-    filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
         .expect("backdate source unchanged");
 
     let dest_dir = temp.path().join("dest");
@@ -173,11 +174,11 @@ fn daemon_link_dest_push_creates_hardlinks() {
 
     // Backdate reference so quick-check uses size+mtime comparison
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
         .expect("backdate ref unchanged");
 
     // Match source unchanged.txt mtime to reference
-    filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
         .expect("backdate source unchanged");
 
     let dest_dir = temp.path().join("dest");
@@ -318,12 +319,13 @@ fn daemon_copy_dest_push_copies_from_reference() {
 
     // Backdate reference files so quick-check uses size+mtime
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(ref_dir.join("unchanged.txt"), old_time)
         .expect("backdate ref unchanged");
-    filetime::set_file_mtime(ref_dir.join("changed.txt"), old_time).expect("backdate ref changed");
+    ::test_support::file_times::set_file_mtime(ref_dir.join("changed.txt"), old_time)
+        .expect("backdate ref changed");
 
     // Match source unchanged.txt mtime to reference
-    filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
         .expect("backdate source unchanged");
 
     let dest_dir = temp.path().join("dest");

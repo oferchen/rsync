@@ -720,7 +720,7 @@ fn cross_device_file_backup_preserves_mode_and_mtime() {
         "cross-device file backup did not preserve mode"
     );
     assert_eq!(
-        FileTime::from_last_modification_time(&meta),
+        ::test_support::file_times::mtime_of(&meta),
         backup_mtime,
         "cross-device file backup did not preserve mtime"
     );
@@ -907,7 +907,7 @@ fn cross_device_symlink_backup_preserves_target_and_mtime() {
     let existing_link = dest_root.join("link");
     symlink("old_target", &existing_link).expect("create dest symlink");
     let backup_mtime = FileTime::from_unix_time(1_600_000_000, 0);
-    filetime::set_symlink_file_times(&existing_link, backup_mtime, backup_mtime)
+    ::test_support::file_times::set_symlink_file_times(&existing_link, backup_mtime, backup_mtime)
         .expect("set dest symlink mtime");
 
     let backup_dir = ctx.dest.join("backups");
@@ -955,7 +955,7 @@ fn cross_device_symlink_backup_preserves_target_and_mtime() {
         PathBuf::from("old_target")
     );
     assert_eq!(
-        FileTime::from_last_modification_time(&meta),
+        ::test_support::file_times::mtime_of(&meta),
         backup_mtime,
         "cross-device symlink backup did not preserve mtime"
     );
@@ -3192,7 +3192,8 @@ fn backup_dir_clears_nondir_obstruction() {
 #[cfg(unix)]
 #[test]
 fn backup_without_backup_dir_omits_directory_mtime() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -3218,9 +3219,8 @@ fn backup_without_backup_dir_omits_directory_mtime() {
         .expect("copy succeeds");
 
     let dest_empty = dest_root.join("source").join("e");
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&dest_empty).expect("dest subdir meta"),
-    );
+    let dest_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_empty).expect("dest subdir meta"));
     assert_ne!(
         dest_mtime, dir_mtime,
         "a plain --backup must imply omit-dir-times, leaving the empty dir's mtime unpreserved"
@@ -3236,7 +3236,8 @@ fn backup_without_backup_dir_omits_directory_mtime() {
 #[cfg(unix)]
 #[test]
 fn backup_dir_preserves_directory_mtime() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -3262,9 +3263,8 @@ fn backup_dir_preserves_directory_mtime() {
         .expect("copy succeeds");
 
     let dest_empty = dest_root.join("source").join("e");
-    let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&dest_empty).expect("dest subdir meta"),
-    );
+    let dest_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_empty).expect("dest subdir meta"));
     assert_eq!(
         dest_mtime, dir_mtime,
         "with --backup-dir the implication does not apply, so the source dir mtime is preserved"
@@ -3285,7 +3285,7 @@ fn write_stale_dest<P: AsRef<Path>>(path: P, contents: &[u8]) {
     let path = path.as_ref();
     fs::write(path, contents).expect("write dest");
     let stale = FileTime::from_unix_time(1_500_000_000, 0);
-    filetime::set_file_times(path, stale, stale).expect("backdate dest fixture");
+    ::test_support::file_times::set_file_times(path, stale, stale).expect("backdate dest fixture");
 }
 
 /// Ages every file already in `dir` so a following sync sees a genuinely
@@ -3307,7 +3307,7 @@ fn backdate_tree(dir: &Path) {
         if path.is_dir() {
             backdate_tree(&path);
         } else {
-            let _ = filetime::set_file_times(&path, stale, stale);
+            let _ = ::test_support::file_times::set_file_times(&path, stale, stale);
         }
     }
 }
@@ -3329,8 +3329,8 @@ fn setup_size_and_mtime_equal_but_content_differs(ctx: &test_helpers::CopyTestCo
     fs::write(&existing, b"bbbbbbbb").expect("write dest");
 
     let same = FileTime::from_unix_time(1_500_000_000, 0);
-    filetime::set_file_times(&source_file, same, same).expect("pin source times");
-    filetime::set_file_times(&existing, same, same).expect("pin dest times");
+    ::test_support::file_times::set_file_times(&source_file, same, same).expect("pin source times");
+    ::test_support::file_times::set_file_times(&existing, same, same).expect("pin dest times");
 
     existing
 }
@@ -4016,7 +4016,8 @@ fn backup_confinement_symlink_fixture() -> BackupConfinementFixture {
     let existing = fx.dest.join("source/link");
     std::os::unix::fs::symlink("old_target", &existing).expect("dest symlink");
     let stale = FileTime::from_unix_time(1_500_000_000, 0);
-    filetime::set_symlink_file_times(&existing, stale, stale).expect("backdate the dest symlink");
+    ::test_support::file_times::set_symlink_file_times(&existing, stale, stale)
+        .expect("backdate the dest symlink");
     fx
 }
 

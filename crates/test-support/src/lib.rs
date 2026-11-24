@@ -13,6 +13,7 @@ pub mod clean_fname;
 pub mod cli;
 pub mod deadline;
 pub mod dir_diff;
+pub mod file_times;
 pub mod forked_server;
 #[cfg(unix)]
 pub mod hang_report;

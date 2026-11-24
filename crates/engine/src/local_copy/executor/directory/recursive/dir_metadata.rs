@@ -101,7 +101,7 @@ pub(super) fn apply_final_directory_metadata(
     // and mtimes after the delayed-update and deletion phases complete.
     let mtime = metadata_options
         .times()
-        .then(|| filetime::FileTime::from_last_modification_time(metadata));
+        .then(|| fast_io::modified_filetime(metadata));
     if mtime.is_some() || restore_mode.is_some() {
         context.record_finalized_directory(destination, mtime, restore_mode);
     }

@@ -1920,9 +1920,9 @@ fn execute_append_disables_sparse_writes() {
 
     // Create a partial destination for append mode
     fs::write(&dest, [0xFF]).expect("write partial dest");
-    filetime::set_file_mtime(&dest, filetime::FileTime::from_unix_time(1, 0))
+    ::test_support::file_times::set_file_mtime(&dest, filetime::FileTime::from_unix_time(1, 0))
         .expect("set dest mtime");
-    filetime::set_file_mtime(&source, filetime::FileTime::from_unix_time(2, 0))
+    ::test_support::file_times::set_file_mtime(&source, filetime::FileTime::from_unix_time(2, 0))
         .expect("set source mtime");
 
     let plan =

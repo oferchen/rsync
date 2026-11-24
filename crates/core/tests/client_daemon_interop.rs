@@ -26,7 +26,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 
 use common::{
     DaemonBinary, TestDaemon, UPSTREAM_3_0_9, UPSTREAM_3_1_3, UPSTREAM_3_4_1, create_test_file,

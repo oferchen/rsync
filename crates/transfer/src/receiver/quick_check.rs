@@ -1900,8 +1900,9 @@ mod modify_window_tests {
     use std::fs;
     use std::os::unix::fs::MetadataExt;
 
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
     use protocol::flist::FileEntry;
+    use test_support::file_times::set_file_mtime;
 
     use super::{ModifyWindow, quick_check_matches};
 
@@ -2053,8 +2054,9 @@ mod modify_window_tests {
 mod update_modify_window_tests {
     use std::fs;
 
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
     use protocol::flist::FileEntry;
+    use test_support::file_times::set_file_mtime;
 
     use super::{ModifyWindow, dest_mtime_newer};
 
@@ -2150,9 +2152,10 @@ mod alt_dest_match_level_tests {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
 
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
     use metadata::MetadataOptions;
     use protocol::flist::FileEntry;
+    use test_support::file_times::set_file_mtime;
 
     use super::{BasisTrust, ModifyWindow, try_reference_dest};
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
@@ -2305,8 +2308,11 @@ mod alt_dest_match_level_tests {
         fs::create_dir_all(&dest_dir).expect("mk dest");
 
         let ref_path = write_basis(&ref_dir, "payload.bin", b"atime", 0o644, MTIME);
-        filetime::set_file_atime(&ref_path, FileTime::from_unix_time(MTIME - 100, 0))
-            .expect("set basis atime");
+        test_support::file_times::set_file_atime(
+            &ref_path,
+            FileTime::from_unix_time(MTIME - 100, 0),
+        )
+        .expect("set basis atime");
         let mut entry = source_entry("payload.bin", 5, 0o644, MTIME);
         entry.set_atime(MTIME);
 
@@ -2480,9 +2486,10 @@ mod non_regular_alt_dest_tests {
     use std::os::unix::fs::{MetadataExt, symlink};
     use std::path::{Path, PathBuf};
 
-    use filetime::{FileTime, set_symlink_file_times};
+    use filetime::FileTime;
     use metadata::MetadataOptions;
     use protocol::flist::FileEntry;
+    use test_support::file_times::set_symlink_file_times;
 
     use super::{NonRegularBasis, try_reference_dest_non};
     use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};

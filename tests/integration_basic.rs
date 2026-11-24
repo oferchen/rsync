@@ -4,9 +4,10 @@
 
 mod integration;
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 use integration::helpers::*;
 use std::fs;
+use test_support::file_times::set_file_times;
 
 #[test]
 fn copy_single_file_to_directory() {
@@ -203,7 +204,11 @@ fn update_flag_skips_newer_files() {
     // Make dest newer than source
     let src_mtime = fs::metadata(&src_file).unwrap().modified().unwrap();
     let newer_time = src_mtime + std::time::Duration::from_secs(10);
-    filetime::set_file_mtime(&dest_file, filetime::FileTime::from_system_time(newer_time)).unwrap();
+    test_support::file_times::set_file_mtime(
+        &dest_file,
+        filetime::FileTime::from_system_time(newer_time),
+    )
+    .unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -227,7 +232,11 @@ fn update_flag_transfers_when_source_newer() {
     // Make source newer than dest by backdating dest
     let src_mtime = fs::metadata(&src_file).unwrap().modified().unwrap();
     let older_time = src_mtime - std::time::Duration::from_secs(10);
-    filetime::set_file_mtime(&dest_file, filetime::FileTime::from_system_time(older_time)).unwrap();
+    test_support::file_times::set_file_mtime(
+        &dest_file,
+        filetime::FileTime::from_system_time(older_time),
+    )
+    .unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -249,7 +258,11 @@ fn preserve_modification_times_with_times_flag() {
 
     // Set a specific mtime on source
     let target_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
-    filetime::set_file_mtime(&src_file, filetime::FileTime::from_system_time(target_time)).unwrap();
+    test_support::file_times::set_file_mtime(
+        &src_file,
+        filetime::FileTime::from_system_time(target_time),
+    )
+    .unwrap();
 
     let dest_file = test_dir.path().join("dest.txt");
 

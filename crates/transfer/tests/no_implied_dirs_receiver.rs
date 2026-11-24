@@ -46,7 +46,7 @@ fn source(root: &Path) {
     fs::write(src.join("sub/f"), b"data").expect("write f");
     fs::write(src.join("sub/deep/g"), b"d2").expect("write g");
     for dir in ["sub", "sub/deep"] {
-        filetime::set_file_mtime(
+        test_support::file_times::set_file_mtime(
             src.join(dir),
             filetime::FileTime::from_unix_time(1_600_000_000, 0),
         )
@@ -246,7 +246,7 @@ fn a_recursed_operand_leaves_its_implied_parent_alone() {
         let dest = tmp.path().join("dest");
         let dest_sub = dest.join("sub");
         fs::create_dir_all(&dest_sub).expect("mkdir dest/sub");
-        filetime::set_file_mtime(
+        test_support::file_times::set_file_mtime(
             &dest_sub,
             filetime::FileTime::from_unix_time(1_500_000_000, 0),
         )

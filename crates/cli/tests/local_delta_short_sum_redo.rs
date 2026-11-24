@@ -15,7 +15,8 @@
 
 use std::process::Command;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 use test_support::oc_rsync_bin;
 
 /// Raising byte 171 and lowering byte 172, then lowering byte 258 and raising

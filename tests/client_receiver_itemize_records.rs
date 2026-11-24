@@ -36,7 +36,7 @@ const DEST_MTIME: i64 = 1_546_300_800;
 
 fn set_mtime(path: &Path, seconds: i64) {
     let time = FileTime::from_unix_time(seconds, 0);
-    filetime::set_symlink_file_times(path, time, time).expect("set mtime");
+    test_support::file_times::set_symlink_file_times(path, time, time).expect("set mtime");
 }
 
 /// `src/` holds `a`, `l -> a`, `p`, `u`, the FIFO `fifo`, the hard-linked

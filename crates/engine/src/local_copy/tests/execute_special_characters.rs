@@ -1635,7 +1635,7 @@ fn copy_file_with_special_characters_with_times_preservation() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_mtime = FileTime::from_last_modification_time(
+    let dest_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join(filename)).expect("dest metadata"),
     );
     assert_eq!(dest_mtime, past_time);

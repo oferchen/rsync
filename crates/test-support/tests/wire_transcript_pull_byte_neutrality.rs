@@ -122,17 +122,18 @@ fn backdate_tree(root: &Path) {
             let path = entry.expect("dir entry").path();
             let meta = fs::symlink_metadata(&path).expect("lstat fixture entry");
             if meta.file_type().is_symlink() {
-                filetime::set_symlink_file_times(&path, stamp, stamp).expect("backdate symlink");
+                test_support::file_times::set_symlink_file_times(&path, stamp, stamp)
+                    .expect("backdate symlink");
             } else if meta.is_dir() {
                 stack.push(path);
             } else {
-                filetime::set_file_mtime(&path, stamp).expect("backdate file");
+                test_support::file_times::set_file_mtime(&path, stamp).expect("backdate file");
             }
         }
         dirs.push(dir);
     }
     for dir in dirs.iter().rev() {
-        filetime::set_file_mtime(dir, stamp).expect("backdate dir");
+        test_support::file_times::set_file_mtime(dir, stamp).expect("backdate dir");
     }
 }
 /// Run one PULL transfer of `src` into a fresh destination and return the full

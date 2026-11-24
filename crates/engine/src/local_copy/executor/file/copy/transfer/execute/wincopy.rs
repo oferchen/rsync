@@ -225,7 +225,7 @@ fn normalize_copied_metadata(
 ) -> Result<(), LocalCopyError> {
     if !options.times() {
         let now = filetime::FileTime::now();
-        filetime::set_file_mtime(destination, now)
+        fast_io::set_path_times(destination, None, Some(now), true)
             .map_err(|e| LocalCopyError::io("normalize copied mtime", destination, e))?;
     }
     Ok(())

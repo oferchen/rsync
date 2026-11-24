@@ -3,12 +3,13 @@ use super::*;
 use crate::id_lookup::{map_gid, map_uid};
 #[cfg(unix)]
 use crate::ownership;
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(unix)]
 use std::path::Path;
+use test_support::file_times::set_file_times;
 
 #[cfg(unix)]
 fn current_mode(path: &Path) -> u32 {
@@ -39,8 +40,8 @@ fn file_permissions_and_times_are_preserved() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     // upstream: rsync.c:725-726 - without --atimes the destination access time
     // is left unchanged (ATTRS_SKIP_ATIME); it must NOT be clobbered with the
     // source atime. The default options preserve times but not atimes.
@@ -210,7 +211,7 @@ fn file_times_respect_toggle() {
     .expect("apply metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_ne!(dest_mtime, mtime);
 }
 
@@ -259,8 +260,8 @@ fn directory_permissions_and_times_are_preserved() {
     apply_directory_metadata(&dest, &metadata).expect("apply dir metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     // upstream: rsync.c:725-726 - `!atimes_ndx || S_ISDIR` always sets
     // ATTRS_SKIP_ATIME for directories, so a directory's access time is never
     // written (not even under --atimes).
@@ -279,8 +280,8 @@ fn directory_permissions_and_times_are_preserved() {
 #[cfg(unix)]
 #[test]
 fn symlink_times_are_preserved_without_following_target() {
-    use filetime::set_symlink_file_times;
     use std::os::unix::fs::symlink;
+    use test_support::file_times::set_symlink_file_times;
 
     let temp = test_support::create_tempdir();
     let target = temp.path().join("target.txt");
@@ -299,7 +300,7 @@ fn symlink_times_are_preserved_without_following_target() {
     apply_symlink_metadata(&dest_link, &metadata).expect("apply symlink metadata");
 
     let dest_meta = fs::symlink_metadata(&dest_link).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     // upstream: rsync.c:725-726 - without --atimes the symlink's access time is
     // left unchanged; only its mtime is written (via lutimes, without following
     // the target).
@@ -720,7 +721,7 @@ fn apply_metadata_from_file_entry_with_timestamps() {
     apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(
         dest_mtime,
         FileTime::from_unix_time(1_700_000_000, 123_456_789)
@@ -758,7 +759,7 @@ fn apply_metadata_sets_times_before_readonly_chmod() {
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     // The mtime must have been written even though the final mode is read-only.
     assert_eq!(
-        FileTime::from_last_modification_time(&dest_meta),
+        test_support::file_times::mtime_of(&dest_meta),
         FileTime::from_unix_time(1_700_000_000, 123_456_789),
         "mtime must survive: times are set before the read-only chmod"
     );
@@ -1163,8 +1164,8 @@ fn epoch_timestamp_zero_seconds_is_preserved() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - without --atimes the access time is left
     // unchanged; only the epoch mtime must round-trip.
@@ -1193,7 +1194,7 @@ fn epoch_timestamp_with_nanoseconds_is_preserved() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     assert_eq!(
         dest_mtime, epoch_time,
@@ -1223,10 +1224,9 @@ fn epoch_timestamp_round_trip_file() {
     let meta2 = fs::metadata(&file2).expect("metadata file2");
     apply_file_metadata(&file3, &meta2).expect("apply to file3");
 
-    let time1 = FileTime::from_last_modification_time(&meta1);
-    let time2 = FileTime::from_last_modification_time(&meta2);
-    let time3 =
-        FileTime::from_last_modification_time(&fs::metadata(&file3).expect("metadata file3"));
+    let time1 = test_support::file_times::mtime_of(&meta1);
+    let time2 = test_support::file_times::mtime_of(&meta2);
+    let time3 = test_support::file_times::mtime_of(&fs::metadata(&file3).expect("metadata file3"));
 
     assert_eq!(time1, epoch_time);
     assert_eq!(time2, epoch_time);
@@ -1248,7 +1248,7 @@ fn epoch_timestamp_directory_preserved() {
     apply_directory_metadata(&dest_dir, &metadata).expect("apply directory metadata");
 
     let dest_meta = fs::metadata(&dest_dir).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     assert_eq!(
         dest_mtime, epoch_time,
@@ -1259,8 +1259,8 @@ fn epoch_timestamp_directory_preserved() {
 #[cfg(unix)]
 #[test]
 fn epoch_timestamp_symlink_preserved() {
-    use filetime::set_symlink_file_times;
     use std::os::unix::fs::symlink;
+    use test_support::file_times::set_symlink_file_times;
 
     let temp = test_support::create_tempdir();
     let target = temp.path().join("epoch-target.txt");
@@ -1277,7 +1277,7 @@ fn epoch_timestamp_symlink_preserved() {
     apply_symlink_metadata(&dest_link, &metadata).expect("apply symlink metadata");
 
     let dest_meta = fs::symlink_metadata(&dest_link).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     assert_eq!(
         dest_mtime, epoch_time,
@@ -1300,7 +1300,7 @@ fn epoch_timestamp_from_file_entry() {
     apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry with epoch");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     assert_eq!(
         dest_mtime,
@@ -1327,7 +1327,7 @@ fn epoch_timestamp_from_file_entry_with_nanoseconds() {
     apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry with epoch nsec");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     assert_eq!(
         dest_mtime,
@@ -1368,7 +1368,7 @@ fn epoch_timestamp_edge_case_one_nanosecond() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // Some filesystems may not support nanosecond precision,
     // so we check that we at least preserved the second (0)
@@ -1391,7 +1391,7 @@ fn attrs_flags_empty_applies_mtime_normally() {
         .expect("apply with empty flags");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
@@ -1403,7 +1403,7 @@ fn attrs_flags_skip_mtime_prevents_mtime_application() {
     let dest = temp.path().join("attrs-skip-mtime.txt");
     fs::write(&dest, b"data").expect("write dest");
 
-    let original_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest).expect("meta"));
+    let original_mtime = test_support::file_times::mtime_of(&fs::metadata(&dest).expect("meta"));
 
     let mut entry = FileEntry::new_file("attrs-skip-mtime.txt".into(), 4, 0o644);
     entry.set_mtime(1_600_000_000, 0);
@@ -1413,7 +1413,7 @@ fn attrs_flags_skip_mtime_prevents_mtime_application() {
         .expect("apply with SKIP_MTIME");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime, original_mtime);
 }
 
@@ -1436,7 +1436,7 @@ fn attrs_flags_skip_crtime_prevents_crtime_application() {
         .expect("apply with SKIP_CRTIME");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
@@ -1549,7 +1549,7 @@ fn attrs_flags_skip_all_times_prevents_all_time_application() {
     let dest = temp.path().join("attrs-skip-all.txt");
     fs::write(&dest, b"data").expect("write dest");
 
-    let original_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest).expect("meta"));
+    let original_mtime = test_support::file_times::mtime_of(&fs::metadata(&dest).expect("meta"));
 
     let mut entry = FileEntry::new_file("attrs-skip-all.txt".into(), 4, 0o644);
     entry.set_mtime(1_600_000_000, 0);
@@ -1563,7 +1563,7 @@ fn attrs_flags_skip_all_times_prevents_all_time_application() {
         .expect("apply with SKIP_ALL_TIMES");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime, original_mtime);
 }
 
@@ -1575,7 +1575,7 @@ fn attrs_flags_skip_mtime_with_atime_still_applies_atime() {
     let dest = temp.path().join("attrs-skip-mtime-keep-atime.txt");
     fs::write(&dest, b"data").expect("write dest");
 
-    let original_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest).expect("meta"));
+    let original_mtime = test_support::file_times::mtime_of(&fs::metadata(&dest).expect("meta"));
 
     let mut entry = FileEntry::new_file("attrs-skip-mtime-keep-atime.txt".into(), 4, 0o644);
     entry.set_mtime(1_600_000_000, 0);
@@ -1588,10 +1588,10 @@ fn attrs_flags_skip_mtime_with_atime_still_applies_atime() {
         .expect("apply with SKIP_MTIME only");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime, original_mtime);
 
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
     assert_eq!(dest_atime.unix_seconds(), 1_650_000_000);
 }
 
@@ -1614,8 +1614,8 @@ fn attrs_flags_delegating_function_matches_direct_call() {
     apply_metadata_with_attrs_flags(&dest2, &entry, &opts, None, AttrsFlags::empty())
         .expect("apply flags");
 
-    let m1 = FileTime::from_last_modification_time(&fs::metadata(&dest1).expect("m1"));
-    let m2 = FileTime::from_last_modification_time(&fs::metadata(&dest2).expect("m2"));
+    let m1 = test_support::file_times::mtime_of(&fs::metadata(&dest1).expect("m1"));
+    let m2 = test_support::file_times::mtime_of(&fs::metadata(&dest2).expect("m2"));
     assert_eq!(m1, m2);
 }
 
@@ -1638,7 +1638,7 @@ fn attrs_flags_skip_atime_alone_does_not_affect_mtime() {
         .expect("apply with SKIP_ATIME");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
@@ -1978,7 +1978,7 @@ fn metadata_unchanged_returns_true_when_all_attrs_match() {
     fs::write(&dest, b"data").expect("write dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     let mut entry = FileEntry::new_file("unchanged.txt".into(), 4, meta.mode() & 0o7777);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
@@ -2012,7 +2012,7 @@ fn metadata_unchanged_returns_false_on_permission_mismatch() {
     fs::write(&dest, b"data").expect("write dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     // Use different permissions than what's on disk
     let disk_mode = meta.mode() & 0o7777;
@@ -2187,7 +2187,7 @@ fn metadata_unchanged_detects_readonly_difference() {
     // Destination is writable on disk.
     let meta = fs::metadata(&dest).expect("metadata");
     assert!(!meta.permissions().readonly(), "dest starts writable");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     // Sender entry carries a read-only mode (owner-write bit 0o200 cleared);
     // every other preserved attribute matches the destination.
@@ -2238,7 +2238,7 @@ fn metadata_unchanged_ignores_perms_when_not_preserved() {
     fs::write(&dest, b"data").expect("write dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     // Permissions differ but preservation is disabled
     let mut entry = FileEntry::new_file("no-perms.txt".into(), 4, 0o777);
@@ -2280,7 +2280,7 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o644)).expect("chmod dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     let mut entry = FileEntry::new_file("exec-mismatch.txt".into(), 4, 0o755);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
@@ -2335,7 +2335,7 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o654)).expect("chmod dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     let opts = MetadataOptions::new()
         .preserve_permissions(false)
@@ -2360,7 +2360,7 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
     fs::create_dir(&dir).expect("create dir");
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o600)).expect("chmod dir");
     let dir_meta = fs::metadata(&dir).expect("dir metadata");
-    let dir_mtime = FileTime::from_last_modification_time(&dir_meta);
+    let dir_mtime = test_support::file_times::mtime_of(&dir_meta);
     let mut dir_entry = FileEntry::new_directory("subdir".into(), 0o755);
     dir_entry.set_mtime(dir_mtime.unix_seconds(), dir_mtime.nanoseconds());
     assert!(
@@ -2455,7 +2455,7 @@ fn metadata_unchanged_returns_true_when_chmod_is_noop() {
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o755)).expect("set perms");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     let mut entry = FileEntry::new_file("chmod-noop.txt".into(), 4, meta.mode() & 0o7777);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
@@ -2492,7 +2492,7 @@ fn metadata_unchanged_returns_true_when_owner_override_matches() {
     fs::write(&dest, b"data").expect("write dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     let mut entry = FileEntry::new_file("owner-match.txt".into(), 4, meta.mode() & 0o7777);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
@@ -2526,7 +2526,7 @@ fn metadata_unchanged_returns_false_when_owner_override_differs() {
     fs::write(&dest, b"data").expect("write dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     let mut entry = FileEntry::new_file("owner-differ.txt".into(), 4, meta.mode() & 0o7777);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
@@ -2560,7 +2560,7 @@ fn metadata_unchanged_returns_true_when_group_override_matches() {
     fs::write(&dest, b"data").expect("write dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
-    let mtime = FileTime::from_last_modification_time(&meta);
+    let mtime = test_support::file_times::mtime_of(&meta);
 
     let mut entry = FileEntry::new_file("group-match.txt".into(), 4, meta.mode() & 0o7777);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
@@ -2761,7 +2761,7 @@ fn accurate_time_restamps_atime_despite_a_matching_stale_stat() {
     let (_t, dest, entry, stale) =
         atime_fixture(FileTime::from_unix_time(1_650_000_000, 0), 1_650_000_000);
     // The "checksum read" moved atime after the stat was taken.
-    filetime::set_file_atime(&dest, FileTime::from_unix_time(1_690_000_000, 0))
+    test_support::file_times::set_file_atime(&dest, FileTime::from_unix_time(1_690_000_000, 0))
         .expect("bump atime");
 
     let opts = MetadataOptions::new()
@@ -2786,7 +2786,7 @@ fn accurate_time_restamps_atime_despite_a_matching_stale_stat() {
 fn skip_mtime_accurate_time_restamps_atime_and_keeps_mtime() {
     let (_t, dest, entry, stale) =
         atime_fixture(FileTime::from_unix_time(1_650_000_000, 0), 1_650_000_000);
-    filetime::set_file_times(
+    test_support::file_times::set_file_times(
         &dest,
         FileTime::from_unix_time(1_690_000_000, 0),
         FileTime::from_unix_time(1_700_000_000, 0),
@@ -2876,8 +2876,11 @@ fn subsecond_skewed_dir() -> (
     let temp = test_support::create_tempdir();
     let dir = temp.path().join("d");
     fs::create_dir(&dir).expect("mkdir");
-    filetime::set_file_mtime(&dir, FileTime::from_unix_time(1_700_000_000, 400_000_000))
-        .expect("set mtime");
+    test_support::file_times::set_file_mtime(
+        &dir,
+        FileTime::from_unix_time(1_700_000_000, 400_000_000),
+    )
+    .expect("set mtime");
     let meta = fs::metadata(&dir).expect("metadata");
     let mut entry = protocol::flist::FileEntry::new_directory("d".into(), 0o755);
     entry.set_mtime(1_700_000_000, 0);
@@ -2894,7 +2897,7 @@ fn mtime_within_modify_window_is_not_restamped() {
     let opts = MetadataOptions::new().with_modify_window(ModifyWindow::ZERO);
     apply_metadata_with_attrs_flags(&dir, &entry, &opts, Some(stat.into()), AttrsFlags::empty())
         .expect("apply");
-    let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
+    let actual = test_support::file_times::mtime_of(&fs::metadata(&dir).expect("meta"));
     assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 400_000_000));
 }
 
@@ -2912,7 +2915,7 @@ fn accurate_time_restamps_a_subsecond_mtime_skew() {
         AttrsFlags::ACCURATE_TIME,
     )
     .expect("apply");
-    let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
+    let actual = test_support::file_times::mtime_of(&fs::metadata(&dir).expect("meta"));
     assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 0));
 }
 
@@ -2929,7 +2932,7 @@ fn default_options_restamp_a_subsecond_mtime_skew() {
         AttrsFlags::empty(),
     )
     .expect("apply");
-    let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
+    let actual = test_support::file_times::mtime_of(&fs::metadata(&dir).expect("meta"));
     assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 0));
 }
 
@@ -3285,7 +3288,7 @@ fn entry_path_omits_atime_without_atimes() {
     let temp = test_support::create_tempdir();
     let dest = temp.path().join("f.txt");
     fs::write(&dest, b"data").expect("write dest");
-    let before = FileTime::from_last_access_time(&fs::metadata(&dest).expect("pre meta"));
+    let before = test_support::file_times::atime_of(&fs::metadata(&dest).expect("pre meta"));
 
     let mut entry = FileEntry::new_file("f.txt".into(), 4, 0o644);
     entry.set_mtime(1_600_000_000, 0);
@@ -3295,8 +3298,8 @@ fn entry_path_omits_atime_without_atimes() {
     apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply entry");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     // upstream: rsync.c:725-726 - without --atimes the access time is left
     // unchanged (UTIME_OMIT); only the mtime is written.
     assert_eq!(
@@ -3376,7 +3379,7 @@ fn local_atimes_zeroes_atime_nsec() {
     apply_file_metadata_with_options(&dest, &metadata, &opts).expect("apply metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
     // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
     assert_eq!(
         dest_atime.unix_seconds(),
@@ -3693,7 +3696,7 @@ fn apply_file_metadata_sets_times_before_readonly_chmod() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     assert_eq!(
-        FileTime::from_last_modification_time(&dest_meta),
+        test_support::file_times::mtime_of(&dest_meta),
         mtime,
         "mtime must survive: times are set before the read-only chmod"
     );
@@ -3756,7 +3759,7 @@ fn apply_directory_metadata_sets_times_before_readonly_chmod() {
     .expect("apply directory metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let landed_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let landed_mtime = test_support::file_times::mtime_of(&dest_meta);
     let landed_mode = current_mode(&dest) & 0o777;
     // Restore writability so tempdir cleanup can remove the tree.
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o755)).expect("unlock dest");
@@ -3818,7 +3821,7 @@ fn apply_file_metadata_with_fd_sets_times_before_readonly_chmod() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     assert_eq!(
-        FileTime::from_last_modification_time(&dest_meta),
+        test_support::file_times::mtime_of(&dest_meta),
         mtime,
         "mtime must survive: times are set before the read-only chmod"
     );
@@ -3856,7 +3859,7 @@ fn apply_file_metadata_if_changed_sets_times_before_readonly_chmod() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     assert_eq!(
-        FileTime::from_last_modification_time(&dest_meta),
+        test_support::file_times::mtime_of(&dest_meta),
         mtime,
         "mtime must survive: times are set before the read-only chmod"
     );
