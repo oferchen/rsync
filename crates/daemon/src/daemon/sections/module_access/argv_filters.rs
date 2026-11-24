@@ -257,7 +257,7 @@ fn refuse_argv_filters(
             )
         }
         ArgvFilterRefusal::Fatal { code, refusal } => {
-            *ctx.session_exit_code = Some(*code);
+            *ctx.session_exit_code = Some(SessionExit::Refused(*code));
             let brand = ctx
                 .log_sink
                 .and_then(|log| log.lock().ok().map(|sink| sink.brand()))

@@ -37,6 +37,8 @@ use crate::daemon::{
     RERR_UNSUPPORTED_EXIT_CODE,
     // From runtime_options.rs
     RuntimeOptions,
+    // From sections/session_runtime.rs
+    SessionExit,
     TestSecretsEnvOverride,
     UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
     advertised_capability_lines,
@@ -77,7 +79,6 @@ use crate::daemon::{
     set_test_forward_override,
     set_test_hostname_override,
     set_test_netgroup_members,
-    // From sections/session_runtime.rs
     single_session_exit,
 };
 

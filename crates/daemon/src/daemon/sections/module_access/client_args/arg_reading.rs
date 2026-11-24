@@ -244,7 +244,7 @@ fn abandon_client_args(
         }
     }
     if timed_out {
-        *ctx.session_exit_code = Some(ExitCode::Timeout);
+        *ctx.session_exit_code = Some(SessionExit::Refused(ExitCode::Timeout));
     }
     None
 }

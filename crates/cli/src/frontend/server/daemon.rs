@@ -186,8 +186,6 @@ pub(crate) fn run_server_daemon_mode<Err>(args: &[OsString], stderr: &mut Err) -
 where
     Err: Write,
 {
-    use core::message::Role;
-    use core::rsync_error;
     use daemon::{DaemonConfig, run_daemon_stdio};
     use logging_sink::MessageSink;
 
@@ -203,11 +201,13 @@ where
 
     match run_daemon_stdio(config) {
         Ok(()) => 0,
+        Err(error) if !error.prints_trailer() => error.exit_code(),
         Err(error) => {
             let mut sink = MessageSink::with_brand(stderr, program_brand);
-            let mut message = rsync_error!(error.exit_code(), format!("{error}"));
-            message = message.with_role(Role::Daemon);
-            if super::super::write_message(&message, &mut sink).is_err() {
+            if let Some(preamble) = error.preamble() {
+                let _ = writeln!(sink.writer_mut(), "{preamble}");
+            }
+            if super::super::write_message(error.message(), &mut sink).is_err() {
                 let _ = writeln!(sink.writer_mut(), "{error}");
             }
             error.exit_code()

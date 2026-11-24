@@ -30,7 +30,7 @@ fn refuse_unsupported_peer_protocol(
             .with_role(Role::Daemon);
         log_message(log, &message);
     }
-    *ctx.session_exit_code = Some(ExitCode::Protocol);
+    *ctx.session_exit_code = Some(SessionExit::Refused(ExitCode::Protocol));
     run_post_xfer_finalizer(
         ctx,
         module,
@@ -311,7 +311,7 @@ fn process_approved_module(
         Ok(rules) => rules,
         Err(refusal) => {
             let code = refusal.exit_code();
-            *ctx.session_exit_code = Some(code);
+            *ctx.session_exit_code = Some(SessionExit::Refused(code));
             if let Some(log) = ctx.log_sink {
                 log_message(
                     log,
@@ -1079,7 +1079,7 @@ fn process_approved_module(
     let exit_status = outcome.unwrap_or_else(|code| code);
     // upstream: cleanup.c:265 - the session's process exits with that code.
     if exit_status != 0 {
-        *ctx.session_exit_code = Some(ExitCode::from_raw(exit_status));
+        *ctx.session_exit_code = Some(SessionExit::Transferred(ExitCode::from_raw(exit_status)));
     }
 
     // #503: stop and join the background delta-drain thread before the TCP
