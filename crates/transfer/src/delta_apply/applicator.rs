@@ -258,8 +258,56 @@ impl<'a> DeltaApplicator<'a> {
         } else {
             None
         };
+        Ok(Self::with_basis_map(
+            output,
+            config,
+            checksum_verifier,
+            basis_signature,
+            basis_map,
+        ))
+    }
 
-        Ok(Self {
+    /// Creates a delta applicator over a basis the caller already opened, or
+    /// none. The receiver opens a basis inside the destination beneath its
+    /// sandbox, so the applicator must not reopen it by path.
+    ///
+    /// upstream: receiver.c:1080-1108 opens `fnamecmp` (via `held_dfd_for()` +
+    /// `do_open_atfd()` or `secure_relative_open()`) and hands `fd1` to
+    /// `receive_data()`; receiver.c:1158-1160 runs with no basis when it is -1.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the basis size cannot be determined.
+    pub fn with_basis_file(
+        output: File,
+        config: &DeltaApplyConfig,
+        checksum_verifier: ChecksumVerifier,
+        basis_signature: Option<&'a FileSignature>,
+        basis: Option<File>,
+    ) -> io::Result<Self> {
+        #[cfg(unix)]
+        let basis_map = basis
+            .map(MapFile::from_file_adaptive_buffered)
+            .transpose()?;
+        #[cfg(not(unix))]
+        let basis_map = basis.map(MapFile::from_file).transpose()?;
+        Ok(Self::with_basis_map(
+            output,
+            config,
+            checksum_verifier,
+            basis_signature,
+            basis_map,
+        ))
+    }
+
+    fn with_basis_map(
+        output: File,
+        config: &DeltaApplyConfig,
+        checksum_verifier: ChecksumVerifier,
+        basis_signature: Option<&'a FileSignature>,
+        basis_map: Option<MapFile<BasisMapStrategy>>,
+    ) -> Self {
+        Self {
             output,
             sparse_state: config.sparse.then(SparseWriteState::new),
             checksum_verifier,
@@ -272,7 +320,7 @@ impl<'a> DeltaApplicator<'a> {
             updating_basis: false,
             touched: BlockTouchTracker::new(),
             stats: DeltaApplyResult::default(),
-        })
+        }
     }
 
     /// Marks this applicator as updating its basis in place (upstream's

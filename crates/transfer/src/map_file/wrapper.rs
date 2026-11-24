@@ -105,6 +105,19 @@ impl MapFile<AdaptiveMapStrategy> {
         })
     }
 
+    /// [`Self::open_adaptive_buffered`] for a basis the caller already opened,
+    /// so a basis resolved beneath the destination sandbox is read through
+    /// that descriptor rather than reopened by path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file size cannot be determined.
+    pub fn from_file_adaptive_buffered(file: File) -> io::Result<Self> {
+        Ok(Self {
+            strategy: AdaptiveMapStrategy::Buffered(BufferedMap::from_file(file)?),
+        })
+    }
+
     /// Returns true if using memory-mapped strategy.
     #[must_use]
     pub fn is_mmap(&self) -> bool {
