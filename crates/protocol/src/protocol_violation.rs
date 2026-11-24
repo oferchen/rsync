@@ -36,8 +36,20 @@ use std::io;
 ///
 /// An empty message marks a bare `exit_cleanup(RERR_PROTOCOL)`, a site where
 /// upstream prints no line of its own; it displays as the code's name.
+///
+/// The second field records that the receiving side's generator raised it:
+/// upstream's generator is its own process, so its `log_exit()` trailer names
+/// the generator role, not the receiver (rsync.c:987-995 `who_am_i()`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProtocolViolation(pub String);
+pub struct ProtocolViolation(pub String, bool);
+
+impl ProtocolViolation {
+    /// Whether the receiving side's generator raised the violation.
+    #[must_use]
+    pub const fn raised_by_generator(&self) -> bool {
+        self.1
+    }
+}
 
 impl ProtocolViolation {
     /// The line upstream prints before log_exit()'s RERR_PROTOCOL trailer, or
@@ -70,7 +82,22 @@ impl Error for ProtocolViolation {}
 ///
 /// `errcode.h` - `RERR_PROTOCOL = 2`.
 pub fn protocol_violation(msg: impl Into<String>) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, ProtocolViolation(msg.into()))
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        ProtocolViolation(msg.into(), false),
+    )
+}
+
+/// [`protocol_violation`] raised by the receiving side's generator, whose
+/// report carries the generator role.
+///
+/// upstream: generator.c:1750-1752 - `rprintf(FERROR, ...)` then
+/// `exit_cleanup(RERR_PROTOCOL)` in the generator process.
+pub fn generator_protocol_violation(msg: impl Into<String>) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        ProtocolViolation(msg.into(), true),
+    )
 }
 
 /// Builds a [`ProtocolViolation`] for a bare `exit_cleanup(RERR_PROTOCOL)`:
@@ -82,6 +109,29 @@ pub fn bare_protocol_exit() -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generator_violation_keeps_the_marker_and_names_its_raiser() {
+        // WHY: the exit-code mapper must still see RERR_PROTOCOL, and the
+        // reporter must know the generator raised it to tag the trailer.
+        let err = generator_protocol_violation("ABORTING due to invalid path from sender: a/b");
+        let inner = err
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<ProtocolViolation>())
+            .expect("marker");
+        assert!(inner.raised_by_generator());
+        assert!(
+            !protocol_violation("x")
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<ProtocolViolation>())
+                .unwrap()
+                .raised_by_generator()
+        );
+        assert_eq!(
+            err.to_string(),
+            "ABORTING due to invalid path from sender: a/b"
+        );
+    }
 
     #[test]
     fn preserves_kind_and_display() {
@@ -103,6 +153,9 @@ mod tests {
         let inner = err
             .get_ref()
             .and_then(|e| e.downcast_ref::<ProtocolViolation>());
-        assert_eq!(inner, Some(&ProtocolViolation("malformed sum_head".into())));
+        assert_eq!(
+            inner,
+            Some(&ProtocolViolation("malformed sum_head".into(), false))
+        );
     }
 }

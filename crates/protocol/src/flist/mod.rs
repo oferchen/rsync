@@ -37,6 +37,7 @@ mod batched_writer;
 mod dir_tree;
 mod dual;
 mod entry;
+mod find;
 mod flags;
 mod growth;
 mod hardlink;
@@ -57,6 +58,7 @@ pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use dir_tree::{DirTreeError, DirectoryTree};
 pub use dual::DualFileList;
 pub use entry::{FileEntry, FileType};
+pub use find::flist_find_name;
 pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
 pub use growth::{FLIST_START_LARGE, FlistGrowth};
 pub use hardlink::{
@@ -75,8 +77,8 @@ pub use name_cmp::{f_name_cmp, f_name_cmp_components, name_cmp_eq};
 pub use read::read_entry_with_flist_async;
 pub use read::{EntryStep, FileListReader, read_file_entry};
 pub use sort::{
-    CleanResult, apply_permutation_in_place, compare_file_entries, flist_clean,
-    sort_and_clean_file_list, sort_file_list,
+    CleanResult, apply_permutation_in_place, compare_file_entries, compare_file_entries_pre29,
+    flist_clean, sort_and_clean_file_list, sort_file_list,
 };
 pub use state::{FileListCompressionState, FileListStats};
 pub use sublist_plan::{MIN_FILECNT_LOOKAHEAD, SubList, SubListLookahead, SubListPlan};

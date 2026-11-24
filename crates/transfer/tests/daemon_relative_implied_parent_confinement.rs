@@ -269,24 +269,29 @@ fn relative_implied_parents_must_not_be_built_outside_the_module() {
 
 /// THE SAME PIN where `ensure_relative_parents` is the SOLE creator.
 ///
-/// `--no-implied-dirs` below protocol 30 omits the implied parents from the
-/// file list entirely (`flist.c:2769-2770`, `flist.c:2983`, mirrored at
-/// `generator/file_list/mod.rs:134`), so the directory pass has nothing to
-/// create and the `make_path()` equivalent is the only thing that builds `a/b`.
+/// From protocol 30 the sender lists the implied parents flagged
+/// `FLAG_IMPLIED_DIR` (flist.c:2779-2780), and a `--no-implied-dirs`
+/// receiver skips them in its directory pass (generator.c:1848-1849), so the
+/// `make_path()` equivalent is the only thing that builds `a/b`. rsync 3.5.2
+/// refuses that mkdir through the planted symlink and exits 23; so does oc.
 /// Without this cell the ordering fix alone would keep the pin above green and
 /// the unconfined `create_dir` inside `ensure_relative_parents` would kill
-/// nothing - measured: reverting just the confined mkdir leaves the cell above
+/// nothing - measured: making that mkdir unconfined leaves the cell above
 /// passing and fails only this one.
+///
+/// Not protocol 29: below 30 the implied parents are not listed at all, and
+/// the receiver aborts on the list (generator.c:1750-1752) before any parent
+/// is made, so the cell would pass without reaching the mkdir it pins.
 #[test]
 fn a_sole_creator_relative_parent_must_not_escape_the_module() {
     let Some(outcome) = push_relative(
         Plant::DirSymlinkOutsideModule,
-        &["--no-implied-dirs", "--protocol", "29"],
+        &["--no-implied-dirs", "--protocol", "30"],
         Sandbox::OptedOut,
     ) else {
         return;
     };
-    assert_nothing_escaped(&outcome, "--no-implied-dirs at protocol 29");
+    assert_nothing_escaped(&outcome, "--no-implied-dirs at protocol 30");
 }
 
 /// AVAILABILITY, on the same fixture. Confining the implied-parent creation

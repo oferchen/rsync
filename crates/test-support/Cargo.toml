@@ -112,3 +112,9 @@ path = "src/bin/order-rsh.rs"
 [[bin]]
 name = "small-buffer-rsh"
 path = "src/bin/small-buffer-rsh.rs"
+
+# Remote-shell trampoline that rewrites one byte pattern in one direction,
+# so a test can make a real peer send a crafted file list.
+[[bin]]
+name = "rewrite-rsh"
+path = "src/bin/rewrite-rsh.rs"
