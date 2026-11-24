@@ -77,6 +77,9 @@ enum Rewrite {
     None,
     PullList,
     PushList,
+    /// `d/Mxyz` arrives as `d/M/yz` on a pull: `d/M` is missing but `d` is
+    /// listed.
+    PullBelowListed,
 }
 
 struct Outcome {
@@ -103,17 +106,24 @@ fn run(fx: &Fixture, client: &Path, server: &Path, rewrite: Rewrite, args: &[Str
         Rewrite::None => {
             command.arg(&fx.direct);
         }
-        Rewrite::PullList | Rewrite::PushList => {
+        Rewrite::PullList | Rewrite::PushList | Rewrite::PullBelowListed => {
             command
                 .arg(env!("CARGO_BIN_EXE_rewrite-rsh"))
                 .env("OC_REWRITE_FROM", "/Mxyz")
-                .env("OC_REWRITE_TO", "M/xyz")
+                .env(
+                    "OC_REWRITE_TO",
+                    if matches!(rewrite, Rewrite::PullBelowListed) {
+                        "/M/yz"
+                    } else {
+                        "M/xyz"
+                    },
+                )
                 .env(
                     "OC_REWRITE_DIR",
-                    if matches!(rewrite, Rewrite::PullList) {
-                        "s2c"
-                    } else {
+                    if matches!(rewrite, Rewrite::PushList) {
                         "c2s"
+                    } else {
+                        "s2c"
                     },
                 );
         }
@@ -468,29 +478,222 @@ fn a_daemon_closes_the_connection_after_an_abort_below_protocol_31() {
 }
 
 /// WHY: under `--delete-missing-args` a missing operand below a missing
-/// directory is a warning, not an abort (generator.c:1745-1746).
+/// directory is a warning, not an abort (generator.c:1745-1746). The sender
+/// sends the implied parent `nope` through make_file(), which reports it as
+/// vanished (flist.c:2507-2516, :1672-1693) and exits 24; the receiver makes
+/// no parent for the mode-0 entry (generator.c:1755, :1786). Measured with
+/// rsync 3.5.2 as both ends, pull and push.
 #[test]
 fn a_missing_arg_below_an_absent_directory_only_warns() {
     let fx = fixture();
     let oc = oc_rsync_bin();
-    let dst = fx.root.join("dst");
+    for (what, pull) in [("pull", true), ("push", false)] {
+        let dst = fx.root.join(format!("missing-{what}"));
+        fs::create_dir(&dst).unwrap();
+        let operands = [
+            format!("{}/./n/e/f", fx.src.display()),
+            format!("{}/./nope/gone", fx.src.display()),
+        ];
+        let mut args: Vec<String> = vec!["-R".into(), "--delete-missing-args".into()];
+        if pull {
+            args.extend(operands.iter().map(|o| format!("localhost:{o}")));
+            args.push(format!("{}/", dst.display()));
+        } else {
+            args.extend(operands);
+            args.push(remote(&dst) + "/");
+        }
+        let out = run(&fx, &oc, &oc, Rewrite::None, &args);
+        assert_eq!(out.code, 24, "{what}: exit code\n{}", out.stderr);
+        assert!(
+            out.stderr
+                .contains(&format!("file has vanished: \"{}/nope\"", fx.src.display())),
+            "{what}: the sender reports the implied parent\n{}",
+            out.stderr
+        );
+        assert!(
+            out.stderr
+                .contains("WARNING: parent dir is absent in the file list: nope"),
+            "{what}\n{}",
+            out.stderr
+        );
+        assert_eq!(
+            tree(&dst),
+            ["n", "n/e", "n/e/f"],
+            "{what}: no `nope` is made"
+        );
+    }
+}
+
+/// WHY: the sender stats an implied parent with `copy_links` forced on
+/// (flist.c:2504), so a dangling symlink there is "symlink has no referent"
+/// with IOERR_GENERAL (flist.c:1680-1685, exit 23), not a vanished file.
+/// Measured identical with rsync 3.5.2 as both ends.
+#[test]
+fn a_dangling_symlink_as_implied_parent_has_no_referent() {
+    let fx = fixture();
+    let oc = oc_rsync_bin();
+    std::os::unix::fs::symlink(fx.root.join("nowhere"), fx.src.join("lnk")).unwrap();
+    let dst = fx.root.join("dangling");
     fs::create_dir(&dst).unwrap();
     let args = [
-        "-R".into(),
-        "--delete-missing-args".into(),
-        remote(&fx.src) + "/./n/e/f",
-        remote(&fx.src) + "/./nope/gone",
+        "-R".to_owned(),
+        "--delete-missing-args".to_owned(),
+        format!("localhost:{}/./n/e/f", fx.src.display()),
+        format!("localhost:{}/./lnk/gone", fx.src.display()),
         format!("{}/", dst.display()),
     ];
     let out = run(&fx, &oc, &oc, Rewrite::None, &args);
-    assert_ne!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.code, 23, "{}", out.stderr);
     assert!(
-        out.stderr
-            .contains("WARNING: parent dir is absent in the file list: nope"),
+        out.stderr.contains(&format!(
+            "symlink has no referent: \"{}/lnk\"",
+            fx.src.display()
+        )),
         "{}",
         out.stderr
     );
-    assert!(dst.join("n/e/f").is_file());
+    assert!(!out.stderr.contains("file has vanished"), "{}", out.stderr);
+    assert_eq!(tree(&dst), ["n", "n/e", "n/e/f"]);
+}
+
+/// Pulls `localhost:src/d` (no trailing slash, so no `.` entry and the
+/// destination root is not touched) through the relay that turns `d/Mxyz`
+/// into `d/M/yz`.
+fn pull_below_listed(
+    fx: &Fixture,
+    client: &Path,
+    server: &Path,
+    dst: &Path,
+    extra: &[&str],
+) -> Outcome {
+    let mut args: Vec<String> = extra.iter().map(|a| (*a).to_owned()).collect();
+    args.push(remote(&fx.src.join("d")));
+    args.push(format!("{}/", dst.display()));
+    run(fx, client, server, Rewrite::PullBelowListed, &args)
+}
+
+/// The three ways rsync 3.5.2 settles `d/M/yz` below the listed `d`
+/// (generator.c:1685-1695 `skip_dir`): `--existing` skips the missing `d`
+/// (:1798), a failed mkdir of `d` skips it (:1922), and otherwise the walk
+/// reaches the entry, having made `d`, and aborts (:1750-1752).
+fn below_listed_cells(
+    fx: &Fixture,
+    client: &Path,
+    server: &Path,
+    tag: &str,
+) -> Vec<(i32, Vec<String>, Vec<String>)> {
+    let mut cells = Vec::new();
+    for (cell, extra) in [
+        ("control", &[][..]),
+        ("existing", &["--existing"][..]),
+        ("mkdir", &[][..]),
+    ] {
+        let dst = fx.root.join(format!("{tag}-{cell}"));
+        fs::create_dir(&dst).unwrap();
+        if cell == "mkdir" {
+            // Without a `.` entry the receiver never raises the root to u+w,
+            // so the mkdir of `d` fails. As root it would not, and the
+            // assertions below fail rather than pass on the wrong path.
+            fs::set_permissions(&dst, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        let out = pull_below_listed(fx, client, server, &dst, extra);
+        fs::set_permissions(&dst, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut lines = normalise(&out.stderr);
+        if out
+            .stderr
+            .contains("*** Skipping any contents from this failed directory ***")
+        {
+            lines.push("*** Skipping any contents from this failed directory ***".into());
+        }
+        cells.push((out.code, lines, tree(&dst)));
+    }
+    cells
+}
+
+/// WHY: an entry whose missing parent sits below a listed directory is decided
+/// by that directory, as rsync 3.5.2's walk decides it: skipped when the
+/// directory is skipped, aborting otherwise.
+#[test]
+fn an_entry_below_a_skipped_directory_is_skipped() {
+    let fx = fixture();
+    let oc = oc_rsync_bin();
+    let cells = below_listed_cells(&fx, &oc, &oc, "oc");
+    assert_eq!(
+        cells[0],
+        (
+            2,
+            vec![
+                "ABORTING due to invalid path from sender: d/M/yz".to_owned(),
+                ABORT_TRAILER.to_owned()
+            ],
+            vec!["d".to_owned()]
+        ),
+        "control: `d` is made, then the entry aborts"
+    );
+    assert_eq!(
+        cells[1],
+        (0, vec![], vec![]),
+        "--existing skips `d` and all below it"
+    );
+    assert_eq!(
+        cells[2],
+        (
+            23,
+            vec!["*** Skipping any contents from this failed directory ***".to_owned()],
+            vec![]
+        ),
+        "the failed mkdir of `d` skips all below it"
+    );
+}
+
+/// WHY: the three cells above are rsync 3.5.2's own results; run it as the
+/// receiver of the same list and require the same exit codes, reports and
+/// trees.
+#[test]
+fn a_skipped_directory_settles_its_entries_like_rsync_3_5_2() {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let up = upstream.binary().to_path_buf();
+    let fx = fixture();
+    let oc = oc_rsync_bin();
+    assert_eq!(
+        below_listed_cells(&fx, &oc, &up, "oc"),
+        below_listed_cells(&fx, &up, &up, "upstream")
+    );
+}
+
+/// WHY: the missing-operand cell split by side against rsync 3.5.2: its sender
+/// with an oc receiver makes no `nope`, and an oc sender gives its receiver
+/// the vanished report and exit 24.
+#[test]
+fn a_missing_operand_below_a_missing_directory_matches_rsync_3_5_2() {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let up = upstream.binary().to_path_buf();
+    let fx = fixture();
+    let oc = oc_rsync_bin();
+    for (what, client, server) in [("3.5.2 sender", &oc, &up), ("oc sender", &up, &oc)] {
+        let dst = fx.root.join(what.replace(' ', "-"));
+        fs::create_dir(&dst).unwrap();
+        let args = [
+            "-R".to_owned(),
+            "--delete-missing-args".to_owned(),
+            format!("localhost:{}/./n/e/f", fx.src.display()),
+            format!("localhost:{}/./nope/gone", fx.src.display()),
+            format!("{}/", dst.display()),
+        ];
+        let out = run(&fx, client, server, Rewrite::None, &args);
+        assert_eq!(out.code, 24, "{what}\n{}", out.stderr);
+        assert!(
+            out.stderr
+                .contains(&format!("file has vanished: \"{}/nope\"", fx.src.display())),
+            "{what}\n{}",
+            out.stderr
+        );
+        assert_eq!(tree(&dst), ["n", "n/e", "n/e/f"], "{what}");
+    }
 }
 
 /// WHY: the report must be rsync 3.5.2's. When the 3.5.2 binary is

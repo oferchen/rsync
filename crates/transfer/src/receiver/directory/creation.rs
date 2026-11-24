@@ -403,7 +403,14 @@ impl ReceiverContext {
                 )
             })
             .collect();
+        // upstream: generator.c:1685-1695 - an entry the parent check deferred is
+        // decided where the walk reaches it, once the directories above it have
+        // been made or skipped.
+        let mut orphans = self.orphan_entries.iter().copied().peekable();
         for (pos, (idx, relative_path, dir_path)) in dir_entries.iter().enumerate() {
+            while let Some(orphan) = orphans.next_if(|&o| o <= *idx) {
+                self.check_deferred_orphan(orphan, failed_dirs)?;
+            }
             // `pos` is only read on Unix (the transient owner-rwx raise).
             #[cfg(not(unix))]
             let _ = pos;
@@ -429,6 +436,15 @@ impl ReceiverContext {
                 dest_dir,
                 dir_path,
             ) {
+                // upstream: generator.c:1793-1800 - a directory `--existing` finds
+                // missing becomes `skip_dir`, so everything below it is skipped.
+                if self.config.file_selection.existing_only
+                    && dir_path
+                        .symlink_metadata()
+                        .is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+                {
+                    failed_dirs.mark_missing(relative_path);
+                }
                 dir_was_new.push(false);
                 skipped_existing_dirs.insert(dir_path.clone());
                 continue;
@@ -557,6 +573,9 @@ impl ReceiverContext {
                     continue;
                 }
             }
+        }
+        for orphan in orphans {
+            self.check_deferred_orphan(orphan, failed_dirs)?;
         }
 
         // upstream: receiver.c:752-754 - every newly created directory
@@ -866,7 +885,9 @@ impl ReceiverContext {
 
         for entry in &self.file_list[range] {
             let relative_path = entry.path();
-            if relative_path.as_os_str() == "." {
+            // upstream: generator.c:1755 - make_path() runs only for an entry
+            // with a mode; a missing-arg entry (mode 0) never makes its parents.
+            if relative_path.as_os_str() == "." || entry.mode() == 0 {
                 continue;
             }
             // upstream: generator.c:1685-1695 - an entry below a directory that

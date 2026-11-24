@@ -17,6 +17,13 @@
 //! generates in passes, so the check runs once over the sorted list before
 //! the first of them and aborts with the destination untouched.
 //!
+//! The one case the list cannot decide is an entry below a listed directory
+//! the destination still lacks: upstream skips it when that directory's mkdir
+//! fails or `--existing` skips it (`skip_dir`, generator.c:1685-1695, set at
+//! :1798 and :1922), and aborts otherwise. Such an entry is deferred to the
+//! directory pass, which decides it at its place in the list as upstream's
+//! walk does ([`ReceiverContext::check_deferred_orphan`]).
+//!
 //! It skips what upstream's walk returns early for before the check:
 //! `--list-only` (generator.c:1675-1681), a dry run into a destination it did
 //! not create (generator.c:1716, `dry_run > 1`), an entry below a directory a
@@ -39,6 +46,7 @@ use super::strip_leading_slashes;
 use crate::receiver::ReceiverContext;
 use crate::receiver::daemon_filter::DaemonFilterGate;
 use crate::receiver::dest_root::DestRoot;
+use crate::receiver::directory::FailedDirectories;
 
 impl ReceiverContext {
     /// Aborts when an entry's parent directory is not in the file list.
@@ -46,7 +54,12 @@ impl ReceiverContext {
     /// Each entry costs one comparison of its parent against the previous
     /// entry's; the list is searched (`O(log n)`) only when the parent
     /// changes, as upstream caches `parent_dirname`. Nothing is allocated
-    /// unless the list is refused or a warning is sent.
+    /// unless the list is refused, a warning is sent or an entry is deferred.
+    ///
+    /// Returns the indices of the entries deferred to the directory pass: an
+    /// entry whose missing parent sits below a listed directory the
+    /// destination does not hold as a directory, which only that directory's
+    /// mkdir or `--existing` can decide.
     ///
     /// # Errors
     ///
@@ -57,7 +70,7 @@ impl ReceiverContext {
         &self,
         dest_dir: &Path,
         writer: &mut W,
-    ) -> io::Result<()>
+    ) -> io::Result<Vec<usize>>
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
@@ -65,7 +78,7 @@ impl ReceiverContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
         if inc_recurse || self.config.flags.list_only || self.dest_root == DestRoot::DryRunAbsent {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let pre29 = self.protocol.as_u8() < 29;
         let list = self.file_list.live();
@@ -95,7 +108,8 @@ impl ReceiverContext {
             && self.config.flags.no_implied_dirs
             && self.protocol.as_u8() < 30;
         let mut dry_missing: Option<&FileEntry> = None;
-        for entry in list.iter().filter(|e| e.is_active()) {
+        let mut deferred = Vec::new();
+        for (idx, entry) in self.file_list.iter_indexed().filter(|(_, e)| e.is_active()) {
             if dry_run {
                 if dry_missing.is_some_and(|dir| is_below(entry, dir, implied_dirs_missing)) {
                     parent = None;
@@ -149,15 +163,83 @@ impl ReceiverContext {
                 )?;
                 continue;
             }
-            let basename = Path::new(entry.path().file_name().unwrap_or_default());
-            return Err(protocol::generator_protocol_violation(format!(
-                "ABORTING due to invalid path from sender: {}/{}",
-                dn.display(),
-                basename.display()
-            )));
+            if !self.config.flags.skip_dest_writes()
+                && self.listed_ancestor_needs_making(dn, dest_dir, &find)
+            {
+                deferred.push(idx);
+                continue;
+            }
+            return Err(invalid_path(dn, entry));
         }
-        Ok(())
+        Ok(deferred)
     }
+
+    /// Decides an entry [`abort_on_entry_without_parent`] deferred, once the
+    /// directory pass has reached it.
+    ///
+    /// upstream: generator.c:1685-1695 - an entry below `skip_dir` (a directory
+    /// whose mkdir failed, :1922, or that `--existing` skipped, :1798) returns
+    /// before the parent check; any other entry still meets it.
+    ///
+    /// # Errors
+    ///
+    /// The same generator-raised [`protocol::ProtocolViolation`] the check
+    /// raises before generating.
+    ///
+    /// [`abort_on_entry_without_parent`]: Self::abort_on_entry_without_parent
+    pub(in crate::receiver) fn check_deferred_orphan(
+        &self,
+        idx: usize,
+        failed_dirs: &FailedDirectories,
+    ) -> io::Result<()> {
+        let Some(entry) = self.file_list.get(idx) else {
+            return Ok(());
+        };
+        let path = entry.path();
+        if failed_dirs.failed_ancestor(path).is_some() || failed_dirs.is_missing_or_below(path) {
+            return Ok(());
+        }
+        Err(invalid_path(strip_leading_slashes(entry.dirname()), entry))
+    }
+
+    /// Whether a listed directory above `dn` is not yet a directory at the
+    /// destination, so its mkdir (or `--existing`) still decides the subtree.
+    /// An existing directory is never `skip_dir` (generator.c:1793-1800,
+    /// :1897-1924 act only on a missing or non-directory destination).
+    fn listed_ancestor_needs_making<'a>(
+        &self,
+        dn: &Path,
+        dest_dir: &Path,
+        find: &impl Fn(&Path) -> Option<&'a FileEntry>,
+    ) -> bool {
+        // upstream: generator.c:1782 gen_entry_stat() follows a symlink to a
+        // directory only under --keep-dirlinks.
+        let follow = self.config.flags.keep_dirlinks;
+        dn.ancestors()
+            .skip(1)
+            .take_while(|a| !a.as_os_str().is_empty() && a.as_os_str() != ".")
+            .any(|a| {
+                find(a).is_some_and(FileEntry::is_dir) && {
+                    let target = dest_dir.join(a);
+                    let meta = if follow {
+                        target.metadata()
+                    } else {
+                        target.symlink_metadata()
+                    };
+                    !meta.is_ok_and(|m| m.is_dir())
+                }
+            })
+    }
+}
+
+/// upstream: generator.c:1750-1752 - the cause line, raised by the generator.
+fn invalid_path(dn: &Path, entry: &FileEntry) -> io::Error {
+    let basename = Path::new(entry.path().file_name().unwrap_or_default());
+    protocol::generator_protocol_violation(format!(
+        "ABORTING due to invalid path from sender: {}/{}",
+        dn.display(),
+        basename.display()
+    ))
 }
 
 /// Whether upstream's walk returns before the parent check: the daemon's

@@ -205,7 +205,7 @@ impl ReceiverContext {
 
         // upstream: generator.c:1730-1752 - without INC_RECURSE every entry's
         // parent directory must be in the list; checked before generating.
-        self.abort_on_entry_without_parent(&setup.dest_dir, writer)?;
+        self.orphan_entries = self.abort_on_entry_without_parent(&setup.dest_dir, writer)?;
 
         Ok((file_count, setup))
     }

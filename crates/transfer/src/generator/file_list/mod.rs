@@ -649,7 +649,16 @@ impl GeneratorContext {
             // symlink), breaking the ancestor chain.
             let meta = match std::fs::metadata(&full).map(EntryMetadata::from) {
                 Ok(m) if m.is_dir() => m,
-                _ => continue,
+                Ok(_) => continue,
+                // upstream: flist.c:2507-2516 send_implied_dirs() sends each
+                // parent through send_file_name() -> make_file(), which reports
+                // a failed stat (flist.c:1672-1697) with copy_links forced on
+                // (flist.c:2504): `file has vanished` and IOERR_VANISHED for
+                // ENOENT.
+                Err(e) => {
+                    self.report_child_stat_error(&full, &e, true);
+                    continue;
+                }
             };
             // upstream: flist.c:2627 - implied dirs are sent with ALL_FILTERS (2).
             if let Ok(mut entry) = self.create_entry(&full, relative_ancestor, &meta, 2) {
