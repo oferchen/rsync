@@ -35,7 +35,7 @@ use super::super::version_exchange::version_exchange_failure;
 use super::connection::build_ssh_connection;
 use super::exit_status::poll_cleanup_child_deferred;
 use super::exit_status::{
-    convert_server_stats_to_summary, map_child_exit_status, poll_cleanup_child,
+    convert_server_stats_to_summary, finished_remote_shell_exit, poll_cleanup_child,
 };
 use super::parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 use super::progress::ServerProgressAdapter;
@@ -434,16 +434,11 @@ fn run_server_over_ssh_connection(
     // the child (wait_process_with_flush()) and maps its status. The child
     // wrote its stderr straight to ours (see the handshake-failure path above),
     // so only the exit status is taken here.
-    let child_exit_code = child_handle
-        .wait()
-        .map_or(ExitCode::WaitChild, map_child_exit_status);
-    // upstream: take MAX of transfer and child exit codes.
-    if child_exit_code.is_success() {
-        Ok((stats, negotiated_protocol, collected_events))
-    } else {
+    match finished_remote_shell_exit(child_handle.wait()) {
+        None => Ok((stats, negotiated_protocol, collected_events)),
         // upstream: log.c:1025 log_exit() renders the winning child code
         // by its rerr_name tagged with the exiting process's role.
-        Err(remote_exit_error(child_exit_code, side.exit_role()))
+        Some(child_exit_code) => Err(remote_exit_error(child_exit_code, side.exit_role())),
     }
 }
 

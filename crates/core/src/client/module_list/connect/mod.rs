@@ -703,13 +703,14 @@ impl DaemonStreamGuard {
     /// reached through `RSYNC_CONNECT_PROG` runs its `post-xfer exec` hook
     /// after the last transfer byte - before exiting.
     ///
+    /// Returns the child's wait result, or `None` when the guard owns no child.
+    ///
     /// upstream: socket.c:1054-1084 `sock_exec()` forks the connect program and
     /// never signals it; the child ends when the socket closes.
-    pub(crate) fn finish(mut self) {
-        if let Self::Child(child) = &mut self
-            && let Some(mut child) = child.take()
-        {
-            let _ = child.wait();
+    pub(crate) fn finish(mut self) -> Option<io::Result<std::process::ExitStatus>> {
+        match &mut self {
+            Self::Child(child) => child.take().map(|mut child| child.wait()),
+            _ => None,
         }
     }
 }

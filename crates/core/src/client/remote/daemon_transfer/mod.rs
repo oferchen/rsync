@@ -34,7 +34,8 @@ use engine::batch::BatchWriter;
 use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{
-    ClientError, connection_timed_out_error, invalid_argument_error, socket_error,
+    ClientError, connection_timed_out_error, invalid_argument_error, remote_exit_error,
+    socket_error,
 };
 #[cfg(feature = "quic")]
 use super::super::module_list::Transport;
@@ -48,6 +49,8 @@ use super::super::summary::ClientSummary;
 use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 use super::operand_split::split_transfer_operands;
+use super::ssh_transfer::finished_remote_shell_exit;
+use crate::message::Role;
 
 use connection::{DaemonTransferRequest, perform_daemon_handshake};
 use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments};
@@ -313,7 +316,9 @@ pub fn run_daemon_transfer(
             observer,
         ),
     };
-    close_then_reap(reader_half, writer_half, guard);
+    // upstream: socket.c:1054 sock_exec() keeps no pid for a connect program,
+    // so client_run() never reads its exit status (main.c:1408, :1452).
+    let _ = close_then_reap(reader_half, writer_half, guard);
     outcome
 }
 
@@ -331,10 +336,30 @@ fn close_then_reap(
     reader: DaemonStreamReader,
     writer: DaemonStreamWriter,
     guard: DaemonStreamGuard,
-) {
+) -> Option<std::io::Result<std::process::ExitStatus>> {
     drop(writer);
     drop(reader);
-    guard.finish();
+    guard.finish()
+}
+
+/// Folds the remote shell's exit status into a finished transfer's result, the
+/// way the plain remote-shell transfer does ([`finished_remote_shell_exit`]).
+///
+/// A non-zero status is reported with the role of the exiting client process:
+/// the sender on a push, the generator on a pull.
+fn fold_remote_shell_exit(
+    summary: ClientSummary,
+    wait: Option<std::io::Result<std::process::ExitStatus>>,
+    role: RemoteRole,
+) -> Result<ClientSummary, ClientError> {
+    let Some(remote) = wait.and_then(finished_remote_shell_exit) else {
+        return Ok(summary);
+    };
+    let exiting = match role {
+        RemoteRole::Sender => Role::Sender,
+        RemoteRole::Receiver => Role::Generator,
+    };
+    Err(remote_exit_error(remote, exiting))
 }
 
 /// Executes a daemon transfer tunneled over a remote shell (SSH with `::` syntax).
@@ -491,6 +516,6 @@ pub fn run_daemon_over_remote_shell(
             observer,
         ),
     };
-    close_then_reap(reader_half, writer_half, guard);
-    outcome
+    let wait = close_then_reap(reader_half, writer_half, guard);
+    fold_remote_shell_exit(outcome?, wait, role)
 }
