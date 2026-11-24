@@ -25,6 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
+    env:
+      # rust-toolchain.toml pins the compiler, so without this cargo builds
+      # beta and nightly cells with the pin. Empty keeps stable on the pin.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain != 'stable' && matrix.toolchain || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +51,19 @@ jobs:
       uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
       with:
         toolchain: ${{ matrix.toolchain }}
+    - name: Show the compiler cargo builds with
+      shell: bash
+      run: |
+        cargo -vV
+        release="$(rustc -vV | tee /dev/stderr | sed -n 's/^release: //p')"
+        case "${{ matrix.toolchain }}" in
+        beta|nightly)
+          if [[ "$release" != *-"${{ matrix.toolchain }}"* ]]; then
+            echo "::error::expected a ${{ matrix.toolchain }} rustc, cargo resolved $release"
+            exit 1
+          fi
+          ;;
+        esac
     - name: Rust cache
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
@@ -94,6 +111,9 @@ jobs:
     timeout-minutes: 45
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     env:
+      # rust-toolchain.toml pins the compiler, so without this cargo builds
+      # beta and nightly cells with the pin. Empty keeps stable on the pin.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain != 'stable' && matrix.toolchain || '' }}
       OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
     strategy:
       fail-fast: false
@@ -112,6 +132,19 @@ jobs:
       with:
         toolchain: ${{ matrix.toolchain }}
         install_nextest: 'true'
+    - name: Show the compiler cargo builds with
+      shell: bash
+      run: |
+        cargo -vV
+        release="$(rustc -vV | tee /dev/stderr | sed -n 's/^release: //p')"
+        case "${{ matrix.toolchain }}" in
+        beta|nightly)
+          if [[ "$release" != *-"${{ matrix.toolchain }}"* ]]; then
+            echo "::error::expected a ${{ matrix.toolchain }} rustc, cargo resolved $release"
+            exit 1
+          fi
+          ;;
+        esac
     - name: Build per-process temp-dir runner
       shell: bash
       run: |
@@ -160,6 +193,19 @@ jobs:
       with:
         toolchain: ${{ matrix.toolchain }}
         install_nextest: 'true'
+    - name: Show the compiler cargo builds with
+      shell: bash
+      run: |
+        rustup run ${{ matrix.toolchain }} cargo -vV
+        release="$(rustup run ${{ matrix.toolchain }} rustc -vV | tee /dev/stderr | sed -n 's/^release: //p')"
+        case "${{ matrix.toolchain }}" in
+        beta|nightly)
+          if [[ "$release" != *-"${{ matrix.toolchain }}"* ]]; then
+            echo "::error::expected a ${{ matrix.toolchain }} rustc, cargo resolved $release"
+            exit 1
+          fi
+          ;;
+        esac
     - name: Build oc-rsync (for subprocess integration tests)
       run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
     - name: Test
@@ -210,6 +256,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
+    env:
+      # rust-toolchain.toml pins the compiler, so without this cargo builds
+      # beta and nightly cells with the pin. Empty keeps stable on the pin.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain != 'stable' && matrix.toolchain || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +296,19 @@ jobs:
         targets: x86_64-unknown-linux-musl
     - name: Ensure musl target on active toolchain
       run: rustup target add x86_64-unknown-linux-musl
+    - name: Show the compiler cargo builds with
+      shell: bash
+      run: |
+        cargo -vV
+        release="$(rustc -vV | tee /dev/stderr | sed -n 's/^release: //p')"
+        case "${{ matrix.toolchain }}" in
+        beta|nightly)
+          if [[ "$release" != *-"${{ matrix.toolchain }}"* ]]; then
+            echo "::error::expected a ${{ matrix.toolchain }} rustc, cargo resolved $release"
+            exit 1
+          fi
+          ;;
+        esac
     - name: Install musl toolchain
       run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
     - name: Rust cache
