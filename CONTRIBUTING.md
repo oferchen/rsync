@@ -61,6 +61,7 @@ python3 tools/ci/unsafe_owner_deps.py gate
 python3 tools/ci/dead_code_census.py gate
 bash tools/ci/surface_diff.sh --check
 cargo xtask citations
+python3 tools/ci/citation_drift_audit.py --ratchet
 ```
 - `unsafe_owner_deps.py gate` fails on a new direct FFI dependency outside
   `fast_io` and `platform` (see [Unsafe code](#unsafe-code)).
@@ -70,8 +71,10 @@ cargo xtask citations
   directives, exit codes, message codes and more) against upstream 3.5.2 and
   fails on any divergence not declared in `tools/ci/surface_diff.accepted`. It
   needs the upstream source tree above.
-- `cargo xtask citations` is described under
-  [Upstream source citations](#upstream-source-citations).
+- `cargo xtask citations` and `citation_drift_audit.py --ratchet` are
+  described under [Upstream source citations](#upstream-source-citations).
+  Both run in the PR lint workflow. The ratchet fails when a crate's count of
+  drifted citations rises above `tools/ci/citation_drift_baseline.json`.
 
 ### Cross-platform checks
 
