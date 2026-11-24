@@ -187,6 +187,38 @@ impl std::fmt::Display for VerificationFailure {
 
 impl std::error::Error for VerificationFailure {}
 
+/// A block-match token arrived while no basis file is mapped.
+///
+/// The applicator does not know which file it is writing, so the caller that
+/// does renders upstream's line through
+/// `transfer_ops::block_match_without_basis`, exactly as the network receiver
+/// does.
+///
+/// upstream: receiver.c:616-620 receive_data() - `got a block match with no
+/// basis file for %s [%s]`, then `exit_cleanup(RERR_PROTOCOL)`.
+#[derive(Debug)]
+pub struct BlockMatchWithoutBasis;
+
+impl BlockMatchWithoutBasis {
+    fn error() -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, Self)
+    }
+
+    /// Whether `error` is this refusal.
+    #[must_use]
+    pub fn is(error: &io::Error) -> bool {
+        error.get_ref().is_some_and(|inner| inner.is::<Self>())
+    }
+}
+
+impl std::fmt::Display for BlockMatchWithoutBasis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("got a block match with no basis file")
+    }
+}
+
+impl std::error::Error for BlockMatchWithoutBasis {}
+
 /// Applies delta data to reconstruct a file.
 ///
 /// Mirrors upstream's `receive_data()` function structure.
@@ -429,10 +461,7 @@ impl<'a> DeltaApplicator<'a> {
         let (offset, bytes_to_copy) =
             super::block_span(self.basis_signature.map(FileSignature::layout), block_idx)?;
         let Some(basis_map) = self.basis_map.as_mut() else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("block reference {block_idx} without basis file"),
-            ));
+            return Err(BlockMatchWithoutBasis::error());
         };
         // upstream: receiver.c:640-645 - an in-place update seeks past a block
         // already at its own offset, so it credits no touched blocks.
@@ -824,10 +853,7 @@ impl<'a> DeltaApplicator<'a> {
         let (offset, bytes_to_copy) =
             super::block_span(self.basis_signature.map(FileSignature::layout), block_idx)?;
         let Some(basis_map) = self.basis_map.as_mut() else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("block reference {block_idx} without basis file"),
-            ));
+            return Err(BlockMatchWithoutBasis::error());
         };
         let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
         token_reader.see_token(block_data)
@@ -1268,6 +1294,43 @@ mod tests {
             io::ErrorKind::UnexpectedEof,
             "short read past the shrunk basis must surface as UnexpectedEof, got {err:?}",
         );
+    }
+
+    /// receiver.c:616-620 - a block reference with a signed layout but no
+    /// basis file is the typed refusal the caller names the file in, not a
+    /// generic I/O error.
+    #[test]
+    fn block_ref_without_basis_is_the_typed_refusal() {
+        use std::num::NonZeroU8;
+        let dir = tempdir().expect("tempdir");
+        let basis_path = dir.path().join("basis.bin");
+        std::fs::write(&basis_path, vec![7u8; 4096]).expect("write basis");
+        let layout =
+            engine::delta::calculate_signature_layout(engine::delta::SignatureLayoutParams::new(
+                4096,
+                None,
+                protocol::ProtocolVersion::NEWEST,
+                NonZeroU8::new(16).unwrap(),
+            ))
+            .expect("layout");
+        let signature = engine::signature::generate_file_signature(
+            File::open(&basis_path).expect("reopen basis"),
+            layout,
+            engine::signature::SignatureAlgorithm::Md4,
+        )
+        .expect("signature");
+        let out = File::create(dir.path().join("out.bin")).expect("create out");
+        let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
+        let mut applicator = DeltaApplicator::new(
+            out,
+            &DeltaApplyConfig::default(),
+            verifier,
+            Some(&signature),
+            None,
+        )
+        .expect("construct applicator");
+        let err = applicator.apply_block_ref(0).expect_err("no basis");
+        assert!(BlockMatchWithoutBasis::is(&err), "{err}");
     }
 
     /// Applies `block 0, 2 KiB literal, block 2` over a 4 MiB basis (2 KiB

@@ -50,6 +50,7 @@ mod post_decision_name_emission;
 mod push_metadata_itemize;
 #[cfg(unix)]
 mod ranged_post_passes;
+mod replay_basis;
 #[cfg(unix)]
 mod sanitize_symlink_targets;
 mod sender_stats;

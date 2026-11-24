@@ -305,7 +305,7 @@ impl ResponseContext<'_> {
 /// upstream: receiver.c:616-620 receive_data() - `rprintf(FERROR, "got a
 /// block match with no basis file for %s [%s]\n", full_fname(fname),
 /// who_am_i()); exit_cleanup(RERR_PROTOCOL);`
-fn block_match_without_basis(file: &str) -> io::Error {
+pub(crate) fn block_match_without_basis(file: &str) -> io::Error {
     protocol::protocol_violation(format!(
         "got a block match with no basis file for {file} [receiver]"
     ))

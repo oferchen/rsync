@@ -14,6 +14,7 @@
 
 use std::collections::HashSet;
 use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 
 use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
@@ -590,24 +591,6 @@ impl ReceiverContext {
             // layout the recorded COPY tokens reference.
             let sum_head = SumHead::read(reader)?;
 
-            // upstream: receiver.c:1011-1062 - the recorded fnamecmp_type/xname
-            // select the basis; FNAMECMP_FNAME (the default) is the
-            // destination file itself.
-            let wire_basis = WireBasis {
-                entry_relative_path: relative_path,
-                basis_dirs: &self.config.reference_directories,
-                fuzzy_level: self.config.flags.fuzzy_level,
-            };
-            let named =
-                wire_basis.resolve(attrs.fnamecmp_type, attrs.xname.as_deref(), &file_path)?;
-            let basis_path = named.unwrap_or_else(|| file_path.clone());
-            #[cfg(unix)]
-            let basis_file = open_usable_basis(sandbox.as_deref(), dest_dir, &basis_path);
-            #[cfg(not(unix))]
-            let basis_file =
-                usable_basis(&basis_path).and_then(|path| fast_io::open_basis_nofollow(&path).ok());
-            let basis_path = basis_file.as_ref().map(|_| basis_path);
-
             // The recorded sum head is the applicator's block layout; the
             // strong sums themselves are not needed to resolve COPY offsets.
             let layout_signature = sum_head.block_signature();
@@ -626,6 +609,19 @@ impl ReceiverContext {
                     sandbox.as_deref(),
                 )?;
             }
+            // upstream: receiver.c:1009-1062 - the recorded fnamecmp_type names
+            // the basis. It is resolved after the in-place backup above: a
+            // FNAMECMP_BACKUP row's basis is that copy, which upstream's
+            // generator makes before the receiver opens it (generator.c:2328).
+            let basis_path = self
+                .recorded_basis(&attrs, relative_path, &file_path, dest_dir)?
+                .unwrap_or_else(|| file_path.clone());
+            #[cfg(unix)]
+            let basis_file = open_usable_basis(sandbox.as_deref(), dest_dir, &basis_path);
+            #[cfg(not(unix))]
+            let basis_file =
+                usable_basis(&basis_path).and_then(|path| fast_io::open_basis_nofollow(&path).ok());
+            let basis_path = basis_file.as_ref().map(|_| basis_path);
             let open_result = if inplace {
                 open_inplace_dest(
                     &file_path,
@@ -703,7 +699,21 @@ impl ReceiverContext {
             )?
             .with_updating_basis(updating_basis);
 
-            crate::delta_apply::apply_delta_stream(reader, &mut applicator, &mut token_reader)?;
+            // upstream: receiver.c:616-620 - a match token with no basis is a
+            // protocol error naming the file, as on the network receiver.
+            crate::delta_apply::apply_delta_stream(reader, &mut applicator, &mut token_reader)
+                .map_err(|error| {
+                    if crate::delta_apply::BlockMatchWithoutBasis::is(&error) {
+                        // full_fname() prefixes upstream's absolute curr_dir.
+                        let root =
+                            std::path::absolute(dest_dir).unwrap_or_else(|_| dest_dir.clone());
+                        crate::transfer_ops::block_match_without_basis(
+                            &self.full_fname(relative_path, Some(&root)),
+                        )
+                    } else {
+                        error
+                    }
+                })?;
             let (file, result) = match applicator.finish(reader, None) {
                 Ok(done) => done,
                 Err(e) => {
@@ -1243,6 +1253,75 @@ impl ReceiverContext {
             .advance_to(crate::transfer_state::TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
         Ok(())
+    }
+
+    /// The basis a recorded transfer row names, or `None` for the destination
+    /// itself (`FNAMECMP_FNAME`).
+    ///
+    /// The recorded `fnamecmp_type` is the record-time generator's choice and
+    /// rules the replay like every other recorded field: a delta made against a
+    /// partial file or an alternate-basis file applies only to that file. Each
+    /// arm is resolved against the replaying invocation's own options, as
+    /// upstream's receiver resolves it against its globals, so a replay without
+    /// the option that named the basis has no basis for that row.
+    ///
+    /// # Errors
+    ///
+    /// A basis-dir index past the replay's `--compare-dest` / `--copy-dest` /
+    /// `--link-dest` list is a protocol violation (exit 2), as are the fuzzy
+    /// refusals [`WireBasis::resolve`] reports.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1009` - `partialptr = partial_dir ? partial_dir_fname(fname) : fname`
+    /// - `receiver.c:1012-1020` - `FNAMECMP_FNAME`, `FNAMECMP_PARTIAL_DIR`, and
+    ///   `FNAMECMP_BACKUP` via `get_backup_name()`
+    /// - `receiver.c:1021-1053` - the fuzzy arms, then `basis_dir[fnamecmp_type]`
+    ///   or `invalid basis_dir index` past `basis_dir_cnt`
+    /// - `options.c:2627-2628` - `--delay-updates` without `--partial-dir` uses `.~tmp~`
+    pub(in crate::receiver) fn recorded_basis(
+        &self,
+        attrs: &SenderAttrs,
+        relative_path: &Path,
+        file_path: &Path,
+        dest_dir: &Path,
+    ) -> io::Result<Option<PathBuf>> {
+        use protocol::FnameCmpType;
+        Ok(match attrs.fnamecmp_type {
+            None | Some(FnameCmpType::Fname) => None,
+            Some(FnameCmpType::PartialDir) => {
+                let partial_dir = match self.config.partial_dir.as_deref() {
+                    Some(dir) => Some(dir),
+                    None if self.config.write.delay_updates => {
+                        Some(Path::new(crate::disk_commit::DELAY_UPDATES_PARTIAL_DIR))
+                    }
+                    None => None,
+                };
+                partial_dir.and_then(|dir| crate::temp_guard::partial_dir_fname(file_path, dir))
+            }
+            Some(FnameCmpType::Backup) => Some(engine::compute_backup_path(
+                dest_dir,
+                file_path,
+                None,
+                self.config.backup_dir.as_deref().map(Path::new),
+                std::ffi::OsStr::new(self.config.effective_backup_suffix()),
+            )),
+            Some(FnameCmpType::BasisDir(index)) => {
+                let Some(basis_dir) = self.config.reference_directories.get(usize::from(index))
+                else {
+                    return Err(protocol::protocol_violation(format!(
+                        "invalid basis_dir index: {index}."
+                    )));
+                };
+                Some(basis_dir.path.join(relative_path))
+            }
+            Some(FnameCmpType::Fuzzy(_)) => WireBasis {
+                entry_relative_path: relative_path,
+                basis_dirs: &self.config.reference_directories,
+                fuzzy_level: self.config.flags.fuzzy_level,
+            }
+            .resolve(attrs.fnamecmp_type, attrs.xname.as_deref(), file_path)?,
+        })
     }
 }
 
