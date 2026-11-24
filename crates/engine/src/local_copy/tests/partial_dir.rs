@@ -1567,6 +1567,82 @@ fn run_one_inplace_copy(source: &Path, destination: &Path, whole_file: bool) {
     assert_eq!(summary.files_copied(), 1);
 }
 
+/// Runs a delta copy of `new` into a pinned `dest/` whose `pdir` is a symlink
+/// to `target`, with `<temp>/outside/pd/source.bin` holding `old`. Returns the
+/// destination path and the outside partial.
+#[cfg(unix)]
+fn copy_through_partial_dir_symlink(
+    temp: &Path,
+    target: impl Fn(&Path) -> PathBuf,
+    old: &[u8],
+    new: &[u8],
+) -> (PathBuf, PathBuf) {
+    struct PinGuard;
+    impl Drop for PinGuard {
+        fn drop(&mut self) {
+            fast_io::confinement::clear_destination_root();
+        }
+    }
+    let base = fs::canonicalize(temp).expect("canonicalize");
+    let source = base.join("source.bin");
+    let dest_dir = base.join("dest");
+    let outside = base.join("outside/pd");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::create_dir_all(&outside).expect("create outside");
+    fs::write(&source, new).expect("write source");
+    fs::write(outside.join("source.bin"), old).expect("write outside partial");
+    std::os::unix::fs::symlink(target(&base), dest_dir.join("pdir")).expect("plant symlink");
+    let anchor = fast_io::operator_open_destination(&dest_dir).expect("walk dest");
+    fast_io::confinement::pin_destination_root(&dest_dir, anchor).expect("pin dest");
+    let _guard = PinGuard;
+    let destination = dest_dir.join("source.bin");
+    run_one_inplace_copy(&source, &destination, false);
+    (destination, outside.join("source.bin"))
+}
+
+/// upstream: generator.c:2214-2220 - `link_stat()` resolves a relative
+/// `--partial-dir` with the secure walk (syscall.c:2471, :3103-3177), which
+/// refuses a symlink to an absolute path. There is no `partialptr`, so the
+/// file is copied whole and the partial outside the destination is neither
+/// read nor written.
+#[cfg(unix)]
+#[test]
+fn partial_dir_symlinked_to_an_absolute_path_is_not_staged_into() {
+    let temp = tempdir().expect("tempdir");
+    let old = vec![b'O'; 4096];
+    let new = vec![b'N'; 4096];
+    let (destination, outside) =
+        copy_through_partial_dir_symlink(temp.path(), |base| base.join("outside/pd"), &old, &new);
+    assert_eq!(fs::read(&destination).expect("read dest"), new);
+    assert_eq!(
+        fs::read(&outside).expect("read outside"),
+        old,
+        "outside partial touched"
+    );
+}
+
+/// The same for a relative target that climbs above the destination; the walk
+/// refuses a `..` above its anchor (syscall.c:3108-3111).
+#[cfg(unix)]
+#[test]
+fn partial_dir_symlinked_above_the_destination_is_not_staged_into() {
+    let temp = tempdir().expect("tempdir");
+    let old = vec![b'O'; 4096];
+    let new = vec![b'N'; 4096];
+    let (destination, outside) = copy_through_partial_dir_symlink(
+        temp.path(),
+        |_| PathBuf::from("../outside/pd"),
+        &old,
+        &new,
+    );
+    assert_eq!(fs::read(&destination).expect("read dest"), new);
+    assert_eq!(
+        fs::read(&outside).expect("read outside"),
+        old,
+        "outside partial touched"
+    );
+}
+
 /// Non-vacuity companion for the one_inplace staging: an ordinary
 /// `--partial-dir` resume, with nothing refusing any open, must still land the
 /// source bytes at the destination and clear the partial dir.
@@ -1662,5 +1738,28 @@ fn partial_dir_symlink_leaf_is_not_a_one_inplace_target() {
         fs::read(&outside).expect("read outside"),
         b"untouched",
         "a symlinked partial-dir leaf must not receive the payload"
+    );
+}
+
+/// upstream: receiver.c:1307-1316 unlinks the partial-dir entry only when it
+/// was the basis (`fnamecmp == partialptr`). A symlink there is never a
+/// `partialptr` (generator.c:2214-2216 needs `S_ISREG`), so rsync 3.5.2 leaves
+/// it in place after the copy.
+#[cfg(unix)]
+#[test]
+fn partial_dir_entry_that_was_not_the_basis_survives_the_commit() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(dest_dir.join("pdir")).expect("create partial dir");
+    fs::write(&source, b"new contents").expect("write source");
+    let entry = dest_dir.join("pdir/source.bin");
+    std::os::unix::fs::symlink("nowhere", &entry).expect("plant symlink");
+
+    run_one_inplace_copy(&source, &dest_dir.join("source.bin"), false);
+
+    assert_eq!(
+        fs::read_link(&entry).expect("partial-dir entry kept"),
+        Path::new("nowhere")
     );
 }

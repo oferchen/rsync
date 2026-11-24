@@ -813,11 +813,50 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
 
 /// The same-named regular file under `--partial-dir`, when there is one.
 ///
-/// upstream: generator.c:2213-2219 `partial_dir_fname()` + `S_ISREG`
+/// A relative partial dir names a directory below the destination, so it is
+/// resolved through the secure walk beneath the pinned destination: a partial
+/// dir that is a symlink to an absolute path, or one that climbs above the
+/// destination, yields no basis rather than a file read from outside the tree.
+///
+/// upstream: generator.c:2213-2219 `partial_dir_fname()` + `link_stat()` +
+/// `S_ISREG`; `link_stat()` resolves the relative name with the secure walk
+/// (syscall.c:2471 `do_lstat_at()`), and a refusal leaves `partialptr` NULL.
 fn try_partial_basis(config: &BasisFileConfig<'_>) -> Option<(fs::File, u64, PathBuf)> {
     let dir = config.partial_dir?;
     let partial = crate::temp_guard::partial_dir_fname(config.file_path, dir)?;
-    try_open_file(&partial)
+    if dir.is_absolute() {
+        return try_open_file(&partial);
+    }
+    let file = open_relative_partial(config, &partial).ok()?;
+    let size = file.metadata().ok()?.len();
+    Some((file, size, partial))
+}
+
+/// Opens a relative `--partial-dir` entry through the secure walk beneath
+/// whichever anchor confines this receiver: the destination sandbox a daemon
+/// holds, else the destination pin.
+#[cfg(unix)]
+fn open_relative_partial(
+    config: &BasisFileConfig<'_>,
+    partial: &std::path::Path,
+) -> std::io::Result<fs::File> {
+    match (config.sandbox, partial.strip_prefix(config.dest_dir)) {
+        (Some(sandbox), Ok(relative)) => fast_io::open_basis_via_sandbox_or_fallback(
+            Some(sandbox),
+            config.dest_dir,
+            relative,
+            partial,
+        ),
+        _ => fast_io::open_basis_secure(partial),
+    }
+}
+
+#[cfg(not(unix))]
+fn open_relative_partial(
+    _config: &BasisFileConfig<'_>,
+    partial: &std::path::Path,
+) -> std::io::Result<fs::File> {
+    fast_io::open_basis_nofollow(partial)
 }
 
 /// The basis a `--whole-file` request names, without reading it.
@@ -1393,6 +1432,155 @@ mod tests {
             result.signature.is_some(),
             "the partial basis must be read from the entered directory"
         );
+    }
+
+    /// How a partial-basis test confines `<tmp>/dest`: the process-wide pin
+    /// a local copy, pull or push receiver holds, or the destination sandbox
+    /// a daemon receiver holds instead of a pin.
+    #[cfg(unix)]
+    #[derive(Clone, Copy)]
+    enum DestAnchor {
+        Pin,
+        Sandbox,
+    }
+
+    /// Confines `<tmp>/dest` by `anchor` with `dest/.rsync-partial` a symlink
+    /// to `target` and `<tmp>/outside/pd/file.bin` and
+    /// `<tmp>/dest/pdreal/file.bin` holding a partial, then asks for the basis
+    /// of the absent `dest/file.bin`.
+    #[cfg(unix)]
+    fn partial_basis_through_symlink(
+        anchor: DestAnchor,
+        target: impl Fn(&std::path::Path) -> PathBuf,
+    ) -> BasisFileResult {
+        struct PinGuard;
+        impl Drop for PinGuard {
+            fn drop(&mut self) {
+                fast_io::confinement::clear_destination_root();
+            }
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = fs::canonicalize(tmp.path()).expect("canonicalize");
+        let dest_dir = base.join("dest");
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        for dir in [base.join("outside/pd"), dest_dir.join("pdreal")] {
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::write(dir.join("file.bin"), &data).expect("write partial");
+        }
+        std::os::unix::fs::symlink(target(&base), dest_dir.join(".rsync-partial"))
+            .expect("plant partial-dir symlink");
+        let (_guard, sandbox) = match anchor {
+            DestAnchor::Pin => {
+                let fd = fast_io::operator_open_destination(&dest_dir).expect("walk dest");
+                fast_io::confinement::pin_destination_root(&dest_dir, fd).expect("pin dest");
+                (Some(PinGuard), None)
+            }
+            DestAnchor::Sandbox => (
+                None,
+                Some(fast_io::DirSandbox::open_root(&dest_dir).expect("sandbox dest")),
+            ),
+        };
+
+        let dest_file = dest_dir.join("file.bin");
+        let config = BasisFileConfig {
+            sandbox: sandbox.as_ref(),
+            ndx: 0,
+            file_path: &dest_file,
+            dest_dir: &dest_dir,
+            relative_path: std::path::Path::new("file.bin"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: Some(std::path::Path::new(".rsync-partial")),
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+            block_size: None,
+            inplace_backup: None,
+        };
+        find_basis_file_with_config(&config)
+    }
+
+    /// upstream: generator.c:2214-2220 `link_stat(partialptr)` resolves the
+    /// relative partial dir with the secure walk (syscall.c:2471,
+    /// :3103-3177), which refuses a symlink to an absolute path, so there is
+    /// no partial basis and nothing outside the destination is read.
+    #[cfg(unix)]
+    #[test]
+    fn partial_dir_symlinked_to_an_absolute_path_is_no_basis() {
+        let result = partial_basis_through_symlink(DestAnchor::Pin, |base| base.join("outside/pd"));
+        assert_ne!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(
+            result.signature.is_none(),
+            "a file outside the destination was signed"
+        );
+    }
+
+    /// The same for a relative target that climbs above the destination: the
+    /// secure walk refuses a `..` above its anchor (syscall.c:3108-3111).
+    #[cfg(unix)]
+    #[test]
+    fn partial_dir_symlinked_above_the_destination_is_no_basis() {
+        let result =
+            partial_basis_through_symlink(DestAnchor::Pin, |_| PathBuf::from("../outside/pd"));
+        assert_ne!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(
+            result.signature.is_none(),
+            "a file outside the destination was signed"
+        );
+    }
+
+    /// Non-vacuity: a relative symlink that stays inside the destination is
+    /// followed, whoever owns it, so the partial is still the basis.
+    #[cfg(unix)]
+    #[test]
+    fn partial_dir_symlinked_inside_the_destination_is_the_basis() {
+        let result = partial_basis_through_symlink(DestAnchor::Pin, |_| PathBuf::from("pdreal"));
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(result.signature.is_some());
+    }
+
+    /// A daemon receiver holds a destination sandbox and no pin. Its
+    /// generator applies the same secure walk (generator.c:2214-2220), so a
+    /// partial dir symlinked to an absolute path is no basis there either.
+    #[cfg(unix)]
+    #[test]
+    fn sandboxed_partial_dir_symlinked_to_an_absolute_path_is_no_basis() {
+        let result =
+            partial_basis_through_symlink(DestAnchor::Sandbox, |base| base.join("outside/pd"));
+        assert_ne!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(
+            result.signature.is_none(),
+            "a file outside the destination was signed"
+        );
+    }
+
+    /// The sandboxed generator refuses a `..` above the destination too
+    /// (syscall.c:3108-3111).
+    #[cfg(unix)]
+    #[test]
+    fn sandboxed_partial_dir_symlinked_above_the_destination_is_no_basis() {
+        let result =
+            partial_basis_through_symlink(DestAnchor::Sandbox, |_| PathBuf::from("../outside/pd"));
+        assert_ne!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(
+            result.signature.is_none(),
+            "a file outside the destination was signed"
+        );
+    }
+
+    /// Non-vacuity for the sandboxed generator: an in-tree symlink is
+    /// followed and the partial is the basis.
+    #[cfg(unix)]
+    #[test]
+    fn sandboxed_partial_dir_symlinked_inside_the_destination_is_the_basis() {
+        let result =
+            partial_basis_through_symlink(DestAnchor::Sandbox, |_| PathBuf::from("pdreal"));
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(result.signature.is_some());
     }
 
     /// Issue #264 regression: when the destination is absent but an

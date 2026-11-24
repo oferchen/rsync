@@ -70,20 +70,29 @@ pub fn metadata(path: &Path) -> io::Result<EntryMetadata> {
 /// The underlying `openat` error, or `EINVAL` for a path with an interior NUL.
 #[cfg(unix)]
 pub fn open(path: &Path, flags: libc::c_int, mode: u32) -> io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::AsRawFd;
+    match crate::confinement::pinned_destination_relative(path) {
+        Some((fd, relative)) => openat_name(fd.as_raw_fd(), &relative, flags, mode),
+        None => openat_name(libc::AT_FDCWD, path, flags, mode),
+    }
+}
+
+/// `openat(dirfd, name, flags | O_CLOEXEC, mode)`.
+#[cfg(unix)]
+fn openat_name(
+    dirfd: libc::c_int,
+    name: &Path,
+    flags: libc::c_int,
+    mode: u32,
+) -> io::Result<std::os::fd::OwnedFd> {
     use std::ffi::CString;
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::{FromRawFd, OwnedFd};
     use std::os::unix::ffi::OsStrExt;
-    let anchored = crate::confinement::pinned_destination_relative(path);
-    let (dirfd, name) = match &anchored {
-        Some((fd, relative)) => (fd.as_raw_fd(), relative.as_path()),
-        None => (libc::AT_FDCWD, path),
-    };
     let c_name = CString::new(name.as_os_str().as_bytes())
         .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-    // SAFETY: `dirfd` is either `AT_FDCWD` or the raw fd of the pinned
-    // destination, which `anchored` keeps alive for the duration of the call;
-    // `c_name` is a valid NUL-terminated string. `openat` returns a new
-    // descriptor or -1.
+    // SAFETY: the caller keeps `dirfd` - `AT_FDCWD` or a descriptor it holds -
+    // open for the duration of the call; `c_name` is a valid NUL-terminated
+    // string. `openat` returns a new descriptor or -1.
     let raw = unsafe {
         libc::openat(
             dirfd,
@@ -97,6 +106,115 @@ pub fn open(path: &Path, flags: libc::c_int, mode: u32) -> io::Result<std::os::f
     }
     // SAFETY: `raw` is a freshly opened descriptor that nothing else owns.
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+/// The directory holding `path`'s leaf, resolved beneath the pinned
+/// destination the way upstream's secure walk resolves a relative name below
+/// its cwd, and the leaf name.
+///
+/// Each directory component is opened `O_NOFOLLOW | O_DIRECTORY`; a symlink in
+/// its place is followed only while its target is relative and stays beneath
+/// the pin, whoever owns it. An absolute or empty target, a `..` above the pin
+/// and an exhausted hop budget are refused with `ELOOP`. `None` means nothing
+/// is pinned or `path` is not beneath the pin, and the caller resolves `path`
+/// as it always has.
+///
+/// # Errors
+///
+/// The walk's refusal or the underlying `openat`/`readlinkat` error;
+/// `EISDIR` when `path` is the pinned destination itself.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.2/syscall.c:3103-3177` `ds_descend()` - the per-component rule.
+/// - `rsync-3.5.2/syscall.c:3196-3311` `secure_walk_at()`.
+#[cfg(unix)]
+fn secure_parent(path: &Path) -> io::Result<Option<(std::os::fd::OwnedFd, std::ffi::OsString)>> {
+    use std::os::fd::AsFd;
+    let Some((pin, relative)) = crate::confinement::pinned_destination_relative(path) else {
+        return Ok(None);
+    };
+    let Some(leaf) = relative.file_name() else {
+        return Err(io::Error::from_raw_os_error(libc::EISDIR));
+    };
+    let parent = relative.parent().unwrap_or_else(|| Path::new(""));
+    let dir = crate::dir_sandbox::walk_beneath(pin.as_fd(), parent)?;
+    Ok(Some((dir, leaf.to_os_string())))
+}
+
+/// `lstat` for a destination entry whose directory components a peer can
+/// influence, resolved through the secure walk beneath the pinned
+/// destination (see `secure_parent`). Unpinned, it is [`symlink_metadata`].
+///
+/// upstream: `rsync-3.5.2/generator.c:2214-2216` checks `partialptr` with
+/// `link_stat()`, an `x_lstat()` (`flist.c:519`) that goes through
+/// `do_lstat_at()` (`syscall.c:2471`) and so resolves the relative partial-dir
+/// parent with the secure walk; a refusal leaves `partialptr` NULL.
+///
+/// # Errors
+///
+/// The walk's refusal (`ELOOP`) or the underlying `fstatat`/`lstat` error.
+pub fn symlink_metadata_secure(path: &Path) -> io::Result<EntryMetadata> {
+    #[cfg(unix)]
+    if let Some((dir, leaf)) = secure_parent(path)? {
+        use std::os::fd::AsFd;
+        return crate::dir_sandbox::fstatat_nofollow(dir.as_fd(), &leaf).map(EntryMetadata::At);
+    }
+    symlink_metadata(path)
+}
+
+/// `unlink(2)` of a destination entry whose directory components a peer can
+/// influence, through the secure walk beneath the pinned destination (see
+/// `secure_parent`); unpinned, it is [`std::fs::remove_file`]. A partial dir
+/// that is a symlink out of the destination is refused instead of having a
+/// file outside the tree removed.
+///
+/// upstream: `rsync-3.5.2/receiver.c:1307-1314` removes a consumed
+/// `--partial-dir` basis with `do_unlink_at()` under `operator_path_resolve`,
+/// never by a path that follows a symlinked partial dir out of the tree.
+///
+/// # Errors
+///
+/// The walk's refusal (`ELOOP`) or the underlying `unlinkat`/`unlink` error.
+pub fn remove_file_secure(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    if let Some((dir, leaf)) = secure_parent(path)? {
+        use std::os::fd::AsFd;
+        return crate::dir_sandbox::at_syscalls::unlinkat(
+            dir.as_fd(),
+            &leaf,
+            crate::dir_sandbox::UnlinkFlags::File,
+        );
+    }
+    std::fs::remove_file(path)
+}
+
+/// `open(2)` of a destination entry whose directory components a peer can
+/// influence: the parent through the secure walk beneath the pinned
+/// destination (see `secure_parent`), the leaf with `flags | O_NOFOLLOW`.
+/// `None` when nothing is pinned or `path` is not beneath the pin.
+///
+/// upstream: `rsync-3.5.2/receiver.c:1083-1087` opens a relative
+/// `--partial-dir` basis with `secure_relative_open(NULL, fnamecmp,
+/// O_RDONLY, 0)` (`syscall.c:3314`).
+///
+/// # Errors
+///
+/// The walk's refusal (`ELOOP`), `ELOOP` for a symlink leaf, or the
+/// underlying `openat` error.
+#[cfg(unix)]
+pub fn open_secure(path: &Path, flags: libc::c_int) -> io::Result<Option<std::os::fd::OwnedFd>> {
+    use std::os::fd::AsRawFd;
+    let Some((dir, leaf)) = secure_parent(path)? else {
+        return Ok(None);
+    };
+    openat_name(
+        dir.as_raw_fd(),
+        Path::new(&leaf),
+        flags | libc::O_NOFOLLOW,
+        0,
+    )
+    .map(Some)
 }
 
 /// Creates a new destination file for writing, failing if the name exists -
