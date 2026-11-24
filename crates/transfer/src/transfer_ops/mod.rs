@@ -415,6 +415,31 @@ pub(crate) fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf>
     file.metadata().ok()?.is_file().then(|| path.to_path_buf())
 }
 
+/// Opens a basis for a receiver that reads it itself, beneath the
+/// destination sandbox when the basis lies inside the destination, and keeps
+/// it only if it is a regular file. A refused or failed open is no basis.
+///
+/// upstream: receiver.c:1080-1108 opens `fnamecmp` relative to the
+/// destination it entered (`held_dfd_for()` + `do_open_atfd()`, or
+/// `secure_relative_open()` for a partial dir), never by path;
+/// receiver.c:1158-1160 and :1191-1194 continue with no basis when the open
+/// fails or does not name a regular file.
+#[cfg(unix)]
+pub(crate) fn open_usable_basis(
+    sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &std::path::Path,
+    path: &std::path::Path,
+) -> Option<std::fs::File> {
+    let file = match (sandbox, path.strip_prefix(dest_dir)) {
+        (Some(sandbox), Ok(relative)) => {
+            fast_io::open_basis_via_sandbox_or_fallback(Some(sandbox), dest_dir, relative, path)
+        }
+        _ => fast_io::open_basis_nofollow(path),
+    }
+    .ok()?;
+    file.metadata().ok()?.is_file().then_some(file)
+}
+
 /// Outcome of reading and validating one response header.
 ///
 /// A sender answers a request either with the file's attributes and delta
@@ -1236,6 +1261,35 @@ mod tests {
             ctx.open_basis_map(&dest.join("a/f")).is_err(),
             "the receiver read a basis through the swapped parent"
         );
+    }
+
+    /// The `--read-batch` replay opens its own basis. Before, it opened the
+    /// destination basis by path, so a parent that is a symlink out of the
+    /// destination supplied a file from outside it. Beneath the sandbox the
+    /// walk refuses it and the entry has no basis, as in upstream's
+    /// receive_data() with `fd1 == -1` (receiver.c:1080-1108, :1158-1160).
+    #[cfg(unix)]
+    #[test]
+    fn replay_basis_under_an_escaping_parent_is_no_basis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(dest.join("in")).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("f"), b"bait").unwrap();
+        std::fs::write(dest.join("in/f"), b"basis").unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("a")).unwrap();
+        let sandbox = fast_io::DirSandbox::open_root(&dest).unwrap();
+
+        assert!(
+            open_usable_basis(Some(&sandbox), &dest, &dest.join("a/f")).is_none(),
+            "the replay read a basis through a parent symlinked out of the destination"
+        );
+        let mut basis = open_usable_basis(Some(&sandbox), &dest, &dest.join("in/f"))
+            .expect("an in-tree basis opens");
+        let mut contents = Vec::new();
+        std::io::Read::read_to_end(&mut basis, &mut contents).unwrap();
+        assert_eq!(contents, b"basis");
     }
 
     /// upstream: receiver.c:1110-1122, :1158-1160 - a basis the confined open

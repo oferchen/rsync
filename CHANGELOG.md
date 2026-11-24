@@ -39,7 +39,7 @@ upstream's 3.5.2 test suite. One entry per change; see the linked PRs for detail
 | CVE-2026-53793 | Fixed | #7585, #8010 |
 | CVE-2026-53794 | Fixed | #7285, #7693, #8011 |
 | CVE-2026-53795 | Fixed | #7393, #7398, #7404, #7415, #7419, #7421-#7426, #7439, #7441-#7443, #7459, #7463 |
-| CVE-2026-53796 | Partially fixed | #8071, #8201, #8207, #8228, #8233, #8712, #8758 |
+| CVE-2026-53796 | Partially fixed | #8071, #8201, #8207, #8228, #8233, #8712, #8758, #8768 |
 | CVE-2026-53797 | Fixed | #8120 |
 | CVE-2026-53798 | Fixed | #8108 |
 | CVE-2026-53799 | Fixed | #8167, #8201 |
@@ -162,6 +162,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Bump `url` to 2.5.9 for RUSTSEC-2026-0592 (#8719)
 - A destination swapped after the receiver entered it no longer redirects the remaining path-based reads: the `--inplace --backup` pre-image (and the stat taken from it), the `--partial-dir`, `--fuzzy` and backup basis opens, the `--fuzzy` directory scan, the local copy's delta-basis reads and, on Linux, the default-ACL read open beneath the pinned destination; without `/proc/self/fd` the default ACL is read through a descriptor opened beneath the pin, and an unreadable default ACL prints rsync 3.5.2's `falling back on umask` warning (CVE-2026-53796, #8712)
 - A relative `--partial-dir` is resolved through the secure walk, as rsync 3.5.2's `secure_relative_open()` does: a partial dir that is a symlink to an absolute path or above the destination is no basis, a refused basis open falls back to a whole-file transfer instead of exiting 11, and the partial-dir entry is removed only when it was the basis (CVE-2026-53796, #8758)
+- A `--read-batch` replay opens each basis once, beneath the destination sandbox, and reads it through that descriptor; it no longer checks the basis by path and then reopens it by path, so a parent directory swapped in between cannot redirect the read outside the destination (CVE-2026-53796, #8768)
 
 ### Added
 

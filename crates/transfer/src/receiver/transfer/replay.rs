@@ -32,6 +32,9 @@ use crate::temp_guard::open_tmpfile;
 #[cfg(unix)]
 use crate::temp_guard::open_tmpfile_sandboxed;
 use crate::token_reader::TokenReader;
+#[cfg(unix)]
+use crate::transfer_ops::open_usable_basis;
+#[cfg(not(unix))]
 use crate::transfer_ops::usable_basis;
 use crate::transfer_ops::wire_basis::WireBasis;
 
@@ -466,14 +469,15 @@ impl ReceiverContext {
                 basis_dirs: &self.config.reference_directories,
                 fuzzy_level: self.config.flags.fuzzy_level,
             };
-            let basis_path = match wire_basis.resolve(
-                attrs.fnamecmp_type,
-                attrs.xname.as_deref(),
-                &file_path,
-            )? {
-                Some(named) => usable_basis(&named),
-                None => usable_basis(&file_path),
-            };
+            let named =
+                wire_basis.resolve(attrs.fnamecmp_type, attrs.xname.as_deref(), &file_path)?;
+            let basis_path = named.unwrap_or_else(|| file_path.clone());
+            #[cfg(unix)]
+            let basis_file = open_usable_basis(sandbox.as_deref(), dest_dir, &basis_path);
+            #[cfg(not(unix))]
+            let basis_file =
+                usable_basis(&basis_path).and_then(|path| fast_io::open_basis_nofollow(&path).ok());
+            let basis_path = basis_file.as_ref().map(|_| basis_path);
 
             // The recorded sum head is the applicator's block layout; the
             // strong sums themselves are not needed to resolve COPY offsets.
@@ -561,12 +565,12 @@ impl ReceiverContext {
             // in the file being rewritten is skipped, as skip_matched() does.
             let updating_basis =
                 self.config.write.inplace && basis_path.as_deref() == Some(file_path.as_path());
-            let mut applicator = crate::delta_apply::DeltaApplicator::new(
+            let mut applicator = crate::delta_apply::DeltaApplicator::with_basis_file(
                 file,
                 &config,
                 file_verifier,
                 layout_signature.as_ref(),
-                basis_path.as_deref(),
+                basis_file,
             )?
             .with_updating_basis(updating_basis);
 
