@@ -1138,7 +1138,7 @@ mod tests {
         // Control: replay WITHOUT -b overwrites the pre-image, leaving no backup.
         let ctrl_dest = temp.path().join("ctrl");
         std::fs::create_dir_all(&ctrl_dest).unwrap();
-        std::fs::write(ctrl_dest.join("top.txt"), b"old payload").unwrap();
+        std::fs::write(ctrl_dest.join("top.txt"), b"stale pre-image").unwrap();
         let ctrl_cfg = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().into_owned(),
@@ -1164,7 +1164,7 @@ mod tests {
         // Treatment: replay WITH -b keeps the pre-image at "top.txt~".
         let bak_dest = temp.path().join("bak");
         std::fs::create_dir_all(&bak_dest).unwrap();
-        std::fs::write(bak_dest.join("top.txt"), b"old payload").unwrap();
+        std::fs::write(bak_dest.join("top.txt"), b"stale pre-image").unwrap();
         let bak_cfg = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().into_owned(),
@@ -1185,7 +1185,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read(bak_dest.join("top.txt~")).unwrap(),
-            b"old payload",
+            b"stale pre-image",
             "--read-batch -b must preserve the pre-image at the backup name"
         );
     }

@@ -1707,7 +1707,7 @@ impl OnlyWriteBatchRequests<'_> {
             crate::delta_apply::discard_delta_stream(
                 reader,
                 token_reader,
-                u64::from(echoed_sum_head.count),
+                echoed_sum_head.layout(),
                 self.discard_checksum_len,
             )?;
         }

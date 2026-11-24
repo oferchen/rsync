@@ -51,21 +51,6 @@ pub(crate) fn block_span(
     }
 }
 
-/// Refuses a block-match index the `sum_head` does not describe.
-///
-/// The discard path maps no basis but still reads the token, so it calls this
-/// directly with the echoed head's count.
-///
-/// upstream: `receiver.c:585-589` - `rprintf(FERROR, "Invalid block index %d
-/// (count=%ld) [%s]\n", ...); exit_cleanup(RERR_PROTOCOL);`
-pub(crate) fn check_block_index(index: usize, count: u64) -> io::Result<()> {
-    if (index as u64) < count {
-        Ok(())
-    } else {
-        Err(invalid_block_index(index, count))
-    }
-}
-
 /// The `RERR_PROTOCOL`-tagged refusal, in upstream's wording.
 fn invalid_block_index(index: usize, count: u64) -> io::Error {
     protocol::protocol_violation(format!(
@@ -130,16 +115,6 @@ mod tests {
     #[test]
     fn a_whole_file_head_refuses_every_index() {
         assert_refused(block_span(None, 0), 0, 0);
-    }
-
-    #[test]
-    fn the_discard_check_uses_the_echoed_count() {
-        assert!(check_block_index(3, 4).is_ok());
-        let err = check_block_index(4, 4).expect_err("past the echoed count");
-        assert_eq!(
-            err.to_string(),
-            "Invalid block index 4 (count=4) [receiver]"
-        );
     }
 
     /// An exact multiple of the block length has no tail: the last block is

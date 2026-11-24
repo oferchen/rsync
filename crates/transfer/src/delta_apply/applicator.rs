@@ -872,6 +872,13 @@ pub fn apply_delta_stream<R: Read>(
     Ok(())
 }
 
+/// The deflate window rsync compresses with (`-15` window bits, `token.c:584`):
+/// a back-reference never reaches further than this.
+const INFLATE_WINDOW: usize = 32 * 1024;
+
+/// Stand-in history for matched blocks of a discarded delta.
+static ZERO_HISTORY: [u8; INFLATE_WINDOW] = [0; INFLATE_WINDOW];
+
 /// Drains a file's delta stream with no output and no basis, then consumes the
 /// trailing whole-file checksum.
 ///
@@ -889,14 +896,23 @@ pub fn apply_delta_stream<R: Read>(
 ///   writing (`receiver.c:579` `write_file` is guarded by `fd != -1`). On the
 ///   compressed path the decoder returns the already-decompressed payload, so
 ///   reading the token keeps the inflate stream in sync.
-/// - Block-match tokens: bounded by `block_count`, the echoed `sum_head`'s
-///   count, exactly as on the write path (`receiver.c:585-589` runs before the
-///   `fd`/`mapbuf` tests), then absorbed benignly by advancing the notional
-///   offset, with NO basis read and NO `see_token` dictionary feed - exactly the
+/// - Block-match tokens: bounded by `layout`, the echoed `sum_head`, exactly as
+///   on the write path (`receiver.c:585-589` runs before the `fd`/`mapbuf`
+///   tests), then absorbed with NO basis read, like the
 ///   `if (!mapbuf) { ...; offset += len; continue; }` branch at
-///   `receiver.c:616-624`. That branch runs BEFORE the `if (mapbuf)` guard that
-///   would otherwise call `see_token`/`sum_update` (`receiver.c:633-638`), so
-///   the discard path never feeds the dictionary either. A pre-fix upstream
+///   `receiver.c:616-624`.
+/// - Deliberate deviation from rsync 3.5.2: each matched block's length is
+///   still fed into the inflate history, from a static zero buffer. Upstream's
+///   discard (`receiver.c:696-699`) passes no basis, so the `if (mapbuf)`
+///   `see_token` call (`receiver.c:633-636`) never runs, and under `-z` (zlib)
+///   the inflater's history no longer matches the sender's deflate history. A
+///   later literal of the same file that refers back into a matched block then
+///   fails with `Z_DATA_ERROR` and 3.5.2 aborts the whole transfer
+///   (`token.c:664-668`, "inflate returned -3", exit 12). oc completes instead:
+///   the discarded output is dropped and the inflater is reset for the next
+///   file (`token.c:592`), so only the history's length matters, not its bytes,
+///   and only the last `INFLATE_WINDOW` bytes of it can be referenced. This
+///   is read side only; no byte on the wire changes. A pre-fix upstream
 ///   version dereferenced `full_fname(fname)` with `fname == NULL` here and
 ///   crashed the receiver on an otherwise normal transfer (the
 ///   "nulldereference" the upstream test guards); we simply absorb the match.
@@ -913,11 +929,12 @@ pub fn apply_delta_stream<R: Read>(
 /// - `receiver.c:1254-1261` - `open_tmpfile` failure -> `discard_receive_data`
 ///   + `continue` (no propagation out of the receive loop).
 /// - `receiver.c:616-624` - block-match-with-no-basis absorb (`offset += len`).
+/// - `receiver.c:633-636` - the `see_token` call the discard skips upstream.
 /// - `receiver.c:687` - trailing `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
 pub fn discard_delta_stream<R: Read>(
     reader: &mut R,
     token_reader: &mut TokenReader,
-    block_count: u64,
+    layout: Option<signature::SignatureLayout>,
     checksum_len: usize,
 ) -> io::Result<()> {
     debug_log!(Deltasum, 2, "recv delta stream discard start");
@@ -937,9 +954,14 @@ pub fn discard_delta_stream<R: Read>(
                 }
                 reader.read_exact(&mut scratch[..len])?;
             }
-            // Block match with no basis: absorb without reading a basis block
-            // and without feeding see_token. upstream: receiver.c:616-624.
-            DeltaToken::BlockRef(index) => super::check_block_index(index, block_count)?,
+            // Block match with no basis: absorb without reading a basis
+            // block (upstream: receiver.c:616-624), but keep the inflate
+            // history the length the sender's deflate history has - the
+            // deliberate deviation documented above.
+            DeltaToken::BlockRef(index) => {
+                let (_, len) = super::block_span(layout, index)?;
+                token_reader.see_token(&ZERO_HISTORY[..len.min(INFLATE_WINDOW)])?;
+            }
         }
     }
 
@@ -959,6 +981,16 @@ pub fn discard_delta_stream<R: Read>(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// The echoed head of a one-block delta: a single full 700-byte block.
+    fn one_block_head() -> Option<signature::SignatureLayout> {
+        Some(signature::SignatureLayout::from_raw_parts(
+            std::num::NonZeroU32::new(700).expect("non-zero"),
+            0,
+            1,
+            std::num::NonZeroU8::new(16).expect("non-zero"),
+        ))
+    }
 
     #[test]
     fn delta_apply_config_default() {
@@ -1457,7 +1489,7 @@ mod tests {
         let mut cursor = io::Cursor::new(wire);
         let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
-        discard_delta_stream(&mut cursor, &mut token_reader, 1, digest_len)
+        discard_delta_stream(&mut cursor, &mut token_reader, one_block_head(), digest_len)
             .expect("drains cleanly");
 
         // The cursor is positioned exactly after the frame: the next 4 bytes
@@ -1478,7 +1510,7 @@ mod tests {
         let mut cursor = io::Cursor::new(plain_delta_with_match(digest_len));
         let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
-        let err = discard_delta_stream(&mut cursor, &mut token_reader, 0, digest_len)
+        let err = discard_delta_stream(&mut cursor, &mut token_reader, None, digest_len)
             .expect_err("a whole-file head describes no block 0");
         assert_eq!(
             err.to_string(),
@@ -1508,8 +1540,9 @@ mod tests {
         let mut cursor = io::Cursor::new(wire);
         let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
-        let err = discard_delta_stream(&mut cursor, &mut token_reader, 1, digest_len)
-            .expect_err("truncated frame must error");
+        let err =
+            discard_delta_stream(&mut cursor, &mut token_reader, one_block_head(), digest_len)
+                .expect_err("truncated frame must error");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 
@@ -1530,7 +1563,7 @@ mod tests {
         let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
         // Draining must succeed (no crash, no propagated open error).
-        discard_delta_stream(&mut cursor, &mut token_reader, 1, digest_len)
+        discard_delta_stream(&mut cursor, &mut token_reader, one_block_head(), digest_len)
             .expect("drains cleanly");
         assert_eq!(cursor.position(), frame.len() as u64);
 
