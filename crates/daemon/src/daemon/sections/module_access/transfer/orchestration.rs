@@ -498,7 +498,10 @@ fn process_approved_module(
     // ⚠ The daemon filter parameters are read ABOVE this point, not below it -
     // see the ordering table there for why each of the three steps in this
     // block would break a different working configuration.
-    let Some(module_root) = validate_module_path(ctx, module)? else {
+    // upstream: clientserver.c:886-899 settles an unset use chroot before
+    // the module path is entered, so the refusal below knows which step fails.
+    let settled = settle_use_chroot(&module.definition, ctx.log_sink, probe_chroot_capability);
+    let Some(module_root) = validate_module_path(ctx, module, settled.use_chroot)? else {
         // upstream: clientserver.c:1063-1064 - the change_dir() into the module
         // path is post-fork, so a missing/unreachable path still hooks.
         let host_owned = ctx.host_display().to_owned();
@@ -518,7 +521,7 @@ fn process_approved_module(
     let resolved_module = ModuleRuntime::new(
         ModuleDefinition {
             path: module_root,
-            ..settle_use_chroot(&module.definition, ctx.log_sink, probe_chroot_capability)
+            ..settled
         },
         module.connection_limiter.clone(),
     );

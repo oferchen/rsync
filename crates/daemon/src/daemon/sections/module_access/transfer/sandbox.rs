@@ -372,34 +372,70 @@ impl PrivilegeOutcome {
 ///
 /// Returns the path the session serves from - the stored value resolved as
 /// Cygwin opens it (`crate::posix_path::resolve_module_path`) - or sends an
-/// error and returns `None`.
+/// error and returns `None`. `use_chroot` is the settled `use chroot`: a
+/// chrooted module reaches its path in two steps, and the refusal names the
+/// step that would fail.
+///
+/// upstream: clientserver.c:901-922 split the path at `/./`; :1054-1058
+/// chroot into the outer half, then :1063-1064 change_dir() into the inner
+/// half, which path_failure() (:692-699) reports.
 fn validate_module_path(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
+    use_chroot: bool,
 ) -> io::Result<Option<PathBuf>> {
-    let failure = match crate::posix_path::resolve_module_path(&module.path) {
-        Ok(resolved) => match fs::metadata(&resolved) {
-            Ok(_) => return Ok(Some(resolved)),
-            Err(error) => error,
-        },
-        Err(error) => error,
+    // A path that exists but is not a directory fails chroot() and chdir()
+    // with ENOTDIR; opening it as a directory yields that same errno.
+    let reachable = |path: &Path| {
+        let resolved = crate::posix_path::resolve_module_path(path)?;
+        if fs::metadata(&resolved)?.is_dir() {
+            return Ok(resolved);
+        }
+        fs::read_dir(&resolved).map(|_| resolved)
+    };
+    let (failure, error) = if use_chroot {
+        let (outer, inner) = split_chroot_path(&module.path);
+        match reachable(&outer) {
+            Err(cause) => (
+                logging::rsyserr_io(
+                    "rsync",
+                    "Receiver",
+                    format_args!("chroot(\"{}\") failed", outer.display()),
+                    &cause,
+                ),
+                AtError::ChrootFailed,
+            ),
+            Ok(_) => match reachable(&module.path) {
+                Ok(resolved) => return Ok(Some(resolved)),
+                Err(cause) => (chdir_failure(&inner, &cause), AtError::ChdirFailed),
+            },
+        }
+    } else {
+        match reachable(&module.path) {
+            Ok(resolved) => return Ok(Some(resolved)),
+            Err(cause) => (chdir_failure(&module.path, &cause), AtError::ChdirFailed),
+        }
     };
 
-    // upstream: clientserver.c:692-699 path_failure() - the log names the
-    // directory and the errno; the peer only learns that the chdir failed.
-    // The role is who_am_i() before the server arguments are parsed.
+    // upstream: the log names the directory and the errno; the peer only
+    // learns which step failed. The role is who_am_i() before the server
+    // arguments are parsed.
     if let Some(log) = ctx.log_sink {
-        let text = logging::rsyserr_io(
-            "rsync",
-            "Receiver",
-            format_args!("chdir {} failed", module.path.display()),
-            &failure,
-        );
-        log_message(log, &rsync_info!(text).with_role(Role::Daemon));
+        log_message(log, &rsync_info!(failure).with_role(Role::Daemon));
     }
-    send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ChdirFailed)?;
+    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
 
     Ok(None)
+}
+
+/// upstream: clientserver.c:692-699 path_failure() - `chdir %s failed`.
+fn chdir_failure(dir: &Path, cause: &io::Error) -> String {
+    logging::rsyserr_io(
+        "rsync",
+        "Receiver",
+        format_args!("chdir {} failed", dir.display()),
+        cause,
+    )
 }
 
 /// Outcome of [`validate_client_paths_in_module`].

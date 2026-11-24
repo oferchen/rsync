@@ -10,10 +10,7 @@ fn module_setup_refusal(dir: &Path, extra: &str) -> (String, Vec<String>) {
     let config_path = dir.join("rsyncd.conf");
     fs::write(
         &config_path,
-        format!(
-            "log file = {}\n[mod]\nuse chroot = false\n{extra}",
-            log_path.display()
-        ),
+        format!("log file = {}\n[mod]\n{extra}", log_path.display()),
     )
     .expect("write config");
     let (port, held_listener) = allocate_test_port();
@@ -74,8 +71,10 @@ fn missing_module_path_refuses_with_upstream_chdir_lines() {
     let dir = tempdir().expect("config dir");
     let missing = dir.path().join("missing");
     let cause = fs::metadata(&missing).expect_err("path is missing");
-    let (reply, messages) =
-        module_setup_refusal(dir.path(), &format!("path = {}\n", missing.display()));
+    let (reply, messages) = module_setup_refusal(
+        dir.path(),
+        &format!("use chroot = false\npath = {}\n", missing.display()),
+    );
     assert_eq!(reply, "@ERROR: chdir failed");
     assert_eq!(
         after_access_line(&messages),
@@ -101,7 +100,7 @@ fn unopenable_lock_file_refuses_with_upstream_lines() {
     let (reply, messages) = module_setup_refusal(
         dir.path(),
         &format!(
-            "path = {}\nmax connections = 1\nlock file = {}\n",
+            "use chroot = false\npath = {}\nmax connections = 1\nlock file = {}\n",
             module_dir.display(),
             lock_file.display()
         ),
@@ -131,7 +130,10 @@ fn failing_early_exec_refuses_with_the_upstream_line() {
     fs::create_dir_all(&module_dir).expect("module dir");
     let (reply, messages) = module_setup_refusal(
         dir.path(),
-        &format!("path = {}\nearly exec = /bin/false\n", module_dir.display()),
+        &format!(
+            "use chroot = false\npath = {}\nearly exec = /bin/false\n",
+            module_dir.display()
+        ),
     );
     assert_eq!(reply, "@ERROR: early exec failed");
     assert_eq!(
@@ -159,7 +161,7 @@ fn unparsable_module_filter_logs_the_cause_and_a_receiver_trailer() {
     let (reply, messages) = module_setup_refusal(
         dir.path(),
         &format!(
-            "path = {}\nfilter = - foo clear,- keep\n",
+            "use chroot = false\npath = {}\nfilter = - foo clear,- keep\n",
             module_dir.display()
         ),
     );
@@ -173,5 +175,104 @@ fn unparsable_module_filter_logs_the_cause_and_a_receiver_trailer() {
         trailer.contains("syntax or usage error (code 1) at ")
             && trailer.ends_with(&format!("[Receiver={}]", env!("CARGO_PKG_VERSION"))),
         "expected the syntax-error trailer tagged [Receiver=...], got {trailer:?}"
+    );
+}
+
+/// Under `use chroot = yes` a missing module path is refused at the chroot,
+/// not at the chdir: the peer reads `@ERROR: chroot failed` and the log names
+/// the chroot target. No privilege is needed, because the path is checked
+/// before the chroot is attempted.
+///
+/// upstream: clientserver.c:1054-1058.
+#[test]
+fn missing_chrooted_module_path_refuses_at_the_chroot() {
+    let dir = tempdir().expect("config dir");
+    let missing = dir.path().join("missing");
+    let cause = fs::metadata(&missing).expect_err("path is missing");
+    let (reply, messages) = module_setup_refusal(
+        dir.path(),
+        &format!("use chroot = yes\npath = {}\n", missing.display()),
+    );
+    assert_eq!(reply, "@ERROR: chroot failed");
+    assert_eq!(
+        after_access_line(&messages),
+        logging::rsyserr_io(
+            "rsync",
+            "Receiver",
+            format_args!("chroot(\"{}\") failed", missing.display()),
+            &cause,
+        )
+    );
+}
+
+/// With a `/./` split, the chroot target exists and the missing inner half is
+/// refused at the chdir, named as the jail sees it.
+///
+/// upstream: clientserver.c:901-912, :1063-1064.
+#[test]
+fn missing_inner_half_of_a_split_module_path_refuses_at_the_chdir() {
+    let dir = tempdir().expect("config dir");
+    let outer = dir.path().join("real");
+    fs::create_dir_all(&outer).expect("outer dir");
+    let cause = fs::metadata(outer.join("missing")).expect_err("inner is missing");
+    let (reply, messages) = module_setup_refusal(
+        dir.path(),
+        &format!("use chroot = yes\npath = {}/./missing\n", outer.display()),
+    );
+    assert_eq!(reply, "@ERROR: chdir failed");
+    assert_eq!(
+        after_access_line(&messages),
+        logging::rsyserr_io("rsync", "Receiver", "chdir /missing failed", &cause)
+    );
+}
+
+/// A module path that is a regular file is refused at the chdir with the
+/// errno chdir() would report, not accepted and failed later.
+///
+/// upstream: clientserver.c:692-699, :1063-1064.
+#[test]
+fn module_path_that_is_a_file_refuses_at_the_chdir() {
+    let dir = tempdir().expect("config dir");
+    let file = dir.path().join("target");
+    fs::write(&file, "not a directory\n").expect("write file");
+    let cause = fs::read_dir(&file).expect_err("a file is not a directory");
+    let (reply, messages) = module_setup_refusal(
+        dir.path(),
+        &format!("use chroot = false\npath = {}\n", file.display()),
+    );
+    assert_eq!(reply, "@ERROR: chdir failed");
+    assert_eq!(
+        after_access_line(&messages),
+        logging::rsyserr_io(
+            "rsync",
+            "Receiver",
+            format_args!("chdir {} failed", file.display()),
+            &cause,
+        )
+    );
+}
+
+/// Under `use chroot = yes` the same file is refused at the chroot.
+///
+/// upstream: clientserver.c:1054-1058.
+#[test]
+fn chrooted_module_path_that_is_a_file_refuses_at_the_chroot() {
+    let dir = tempdir().expect("config dir");
+    let file = dir.path().join("target");
+    fs::write(&file, "not a directory\n").expect("write file");
+    let cause = fs::read_dir(&file).expect_err("a file is not a directory");
+    let (reply, messages) = module_setup_refusal(
+        dir.path(),
+        &format!("use chroot = yes\npath = {}\n", file.display()),
+    );
+    assert_eq!(reply, "@ERROR: chroot failed");
+    assert_eq!(
+        after_access_line(&messages),
+        logging::rsyserr_io(
+            "rsync",
+            "Receiver",
+            format_args!("chroot(\"{}\") failed", file.display()),
+            &cause,
+        )
     );
 }
