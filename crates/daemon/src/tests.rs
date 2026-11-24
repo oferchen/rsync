@@ -37,6 +37,7 @@ use crate::daemon::{
     RERR_UNSUPPORTED_EXIT_CODE,
     // From runtime_options.rs
     RuntimeOptions,
+    SecretRefusal,
     // From sections/session_runtime.rs
     SessionExit,
     TestSecretsEnvOverride,
@@ -300,6 +301,7 @@ include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_module_implicit_list_only.rs");
 include!("tests/chunks/daemon_negotiation_empty_module_lists_modules.rs");
 include!("tests/chunks/daemon_auth_digest_floor.rs");
+include!("tests/chunks/auth_strict_modes_logs_upstream_line.rs");
 include!("tests/chunks/daemon_auth_digest_negotiation.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");

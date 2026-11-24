@@ -600,7 +600,7 @@ fn handle_authentication(
                     ctx.host_display(),
                     ctx.peer,
                     ctx.request,
-                    denial.log_suffix().as_deref(),
+                    &denial.log_suffix(),
                 );
             }
             let error = AtError::AuthFailed {

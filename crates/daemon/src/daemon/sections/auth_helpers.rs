@@ -127,19 +127,14 @@ pub(crate) fn log_module_auth_failure(
     host: &str,
     peer_ip: impl std::fmt::Display,
     module: &str,
-    suffix: Option<&str>,
+    suffix: &str,
 ) {
     // upstream: `auth failed on module %s from %s (%s)` is the common prefix;
-    // what follows differs by refusal. authenticate.c:318 / :325 append `: %s`
-    // for the digest-floor arms, and :433 appends ` for %s: %s` once a username
-    // is known. `AuthDenial::log_suffix` picks between those shapes, so this
-    // layer just concatenates - one owner for the prefix, one for the tail.
-    let text = match suffix {
-        Some(suffix) => {
-            format!("auth failed on module {module} from {host} ({peer_ip}){suffix}")
-        }
-        None => format!("auth failed on module {module} from {host} ({peer_ip})"),
-    };
+    // what follows differs by refusal. authenticate.c:313 / :320 / :336 append
+    // `: %s` before a username is known, and :428 appends ` for %s: %s` once it
+    // is. `AuthDenial::log_suffix` picks between those shapes, so this layer
+    // just concatenates - one owner for the prefix, one for the tail.
+    let text = format!("auth failed on module {module} from {host} ({peer_ip}){suffix}");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }

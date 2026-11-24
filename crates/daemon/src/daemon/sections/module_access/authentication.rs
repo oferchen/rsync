@@ -41,16 +41,18 @@ enum AuthenticationStatus {
 /// reproduce that suffix instead of logging the bare prefix.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AuthDenial {
-    /// Credentials were absent, malformed, or the secret did not verify.
+    /// The response line could not be read or holds no space separator.
     ///
-    /// The first two arrive before a username exists, so upstream's ` for %s:`
-    /// clause has nothing to name. The third - a failed secret check - does
-    /// have a username, but upstream's reason there is `check_secret()`'s
-    /// return ("no secrets file", "ignoring secrets file", "invalid username",
-    /// ...) and oc's `verify_secret_response` collapses all of them into one
-    /// bool, so naming any single reason would be a guess. These stay the bare
-    /// prefix until that outcome is split.
-    Credentials,
+    /// upstream: authenticate.c:334-339 - no username exists yet, so the line
+    /// ends in `: invalid challenge response` without a ` for %s` clause.
+    InvalidChallengeResponse,
+    /// `check_secret()` refused the offered username.
+    ///
+    /// upstream: authenticate.c:412, :428 - its return is the reason.
+    Secret {
+        user: String,
+        refusal: SecretRefusal,
+    },
     /// An `auth users` rule refused the offered username.
     ///
     /// upstream: authenticate.c:428 logs these as
@@ -102,26 +104,57 @@ impl AuthUserRule {
     }
 }
 
+/// Why `check_secret()` refused a username.
+///
+/// upstream: authenticate.c:131-215 - the five strings it can return.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SecretRefusal {
+    /// No `secrets file` is set, or it cannot be opened (authenticate.c:150-158).
+    NoSecretsFile,
+    /// The file fails the `strict modes` checks (authenticate.c:162-177).
+    IgnoringSecretsFile,
+    /// The username starts with `#`, so it could only match a comment
+    /// (authenticate.c:179-183).
+    InvalidUsername,
+    /// No line names the user or the authorizing group (authenticate.c:186).
+    SecretNotFound,
+    /// A line names the user or group but its digest differs (authenticate.c:207).
+    PasswordMismatch,
+}
+
+impl SecretRefusal {
+    /// upstream's literal reason text for this outcome.
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::NoSecretsFile => "no secrets file",
+            Self::IgnoringSecretsFile => "ignoring secrets file",
+            Self::InvalidUsername => "invalid username",
+            Self::SecretNotFound => "secret not found",
+            Self::PasswordMismatch => "password mismatch",
+        }
+    }
+}
+
 impl AuthDenial {
-    /// The text upstream appends after `auth failed on module %s from %s (%s)`,
-    /// or `None` when this layer cannot reconstruct it.
+    /// The text upstream appends after `auth failed on module %s from %s (%s)`.
     ///
     /// Returns the WHOLE suffix rather than just a reason, because upstream has
-    /// two shapes: `: %s` for the digest-floor refusals (authenticate.c:318 /
-    /// :325) and ` for %s: %s` once a username is known (:433). Handing the
-    /// emitter a ready-made suffix keeps that choice here, next to the variants
-    /// that determine it.
-    pub(crate) fn log_suffix(&self) -> Option<String> {
+    /// two shapes: `: %s` before a username is known (authenticate.c:313, :320,
+    /// :336) and ` for %s: %s` once it is (:428). Handing the emitter a
+    /// ready-made suffix keeps that choice here, next to the variants that
+    /// determine it.
+    pub(crate) fn log_suffix(&self) -> String {
         match self {
-            Self::Credentials => None,
-            Self::UserRule { user, rule } => Some(format!(" for {user}: {}", rule.reason())),
-            Self::DigestFloorUnsupported { configured } => Some(format!(
+            Self::InvalidChallengeResponse => ": invalid challenge response".to_owned(),
+            Self::Secret { user, refusal } => format!(" for {user}: {}", refusal.reason()),
+            Self::UserRule { user, rule } => format!(" for {user}: {}", rule.reason()),
+            Self::DigestFloorUnsupported { configured } => format!(
                 ": the configured 'auth digest = {configured}' is not a supported digest on this build"
-            )),
-            Self::DigestTooWeak { negotiated, floor } => Some(format!(
+            ),
+            Self::DigestTooWeak { negotiated, floor } => format!(
                 ": negotiated auth digest {} is weaker than the required 'auth digest = {floor}'",
                 negotiated.name()
-            )),
+            ),
         }
     }
 }
@@ -298,7 +331,11 @@ fn perform_module_authentication(
 
     let response = match response_line {
         Ok(Some(line)) => line,
-        Ok(None) => return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials)),
+        Ok(None) => {
+            return Ok(AuthenticationStatus::Denied(
+                AuthDenial::InvalidChallengeResponse,
+            ));
+        }
         // upstream: io.c:154-161 - an elapsed deadline exits `RERR_TIMEOUT`; the
         // read error is only the messenger, so the deadline decides.
         Err(_) if deadline.expired() => {
@@ -310,13 +347,18 @@ fn perform_module_authentication(
         Err(error) => return Err(error),
     };
 
+    // upstream: authenticate.c:334-339 - a line without a space is refused
+    // before any username exists. An empty name or digest is not: it goes on
+    // to the rule scan and check_secret() like any other.
+    if !response.contains(' ') {
+        return Ok(AuthenticationStatus::Denied(
+            AuthDenial::InvalidChallengeResponse,
+        ));
+    }
+
     // Parse `<user> <response>` via the shared protocol helper - the exact
     // inverse of the client's `send_daemon_auth_credentials` emit.
     let (username, response_digest) = parse_daemon_auth_response(&response);
-
-    if username.is_empty() || response_digest.is_empty() {
-        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
-    }
 
     let auth_match = match module.get_auth_user(username) {
         Some(matched) => matched,
@@ -349,15 +391,19 @@ fn perform_module_authentication(
     // because upstream keys the `@group:` secrets lookup off the real group.
     let auth_group = auth_match.group.as_deref();
 
-    if !verify_secret_response(
+    if let Err(refusal) = verify_secret_response(
         module,
         username,
         auth_group,
         &challenge,
         response_digest,
         digest,
-    )? {
-        return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
+        log_sink,
+    ) {
+        return Ok(AuthenticationStatus::Denied(AuthDenial::Secret {
+            user: username.to_owned(),
+            refusal,
+        }));
     }
 
     // upstream: authenticate.c:335-338 - the `:ro` / `:rw` suffix travels back
@@ -396,7 +442,12 @@ fn perform_module_authentication(
 /// one that produced the challenge, exactly as upstream reuses
 /// `valid_auth_checksums.negotiated_nni` for both.
 ///
-/// Returns `true` if a matching key's digest matches, `false` otherwise.
+/// Returns `Ok(())` if a matching key's digest matches, otherwise the reason
+/// `check_secret()` would return.
+///
+/// upstream: check_secret() never aborts the connection - every refusal is an
+/// auth failure, and the client still receives `@ERROR: auth failed on module
+/// X` - so no refusal here is an `io::Error`.
 fn verify_secret_response(
     module: &ModuleDefinition,
     username: &str,
@@ -404,35 +455,55 @@ fn verify_secret_response(
     challenge: &str,
     response: &str,
     digest: DaemonAuthDigest,
-) -> io::Result<bool> {
-    let secrets_path = match &module.secrets_file {
-        Some(path) => path,
-        None => return Ok(false),
-    };
-
-    // upstream: authenticate.c:112-124 check_secret() - a strict-modes
-    // violation (other-accessible secrets, or non-root ownership when
-    // running as root) sets `ok = 0` and returns the "ignoring secrets file"
-    // error string; an unreadable secrets file returns "no secrets file".
-    // In every case auth_server() reports an auth failure and the client
-    // still receives `@ERROR: auth failed on module X`. check_secret() never
-    // aborts the connection. Treat these as a denial (Ok(false)) rather than
-    // propagating an io::Error, so the caller emits the @ERROR line on the
-    // Denied arm instead of dropping the socket mid-handshake.
-    if module.strict_modes && check_secrets_file_permissions(secrets_path).is_err() {
-        return Ok(false);
-    }
+    log_sink: Option<&SharedLogSink>,
+) -> Result<(), SecretRefusal> {
+    let secrets_path = module
+        .secrets_file
+        .as_ref()
+        .ok_or(SecretRefusal::NoSecretsFile)?;
 
     // upstream: authenticate.c:152 opens the secrets file through
     // `open_no_attacker_symlinks()`. Without the walk, a symlink planted at any
     // component redirects the daemon's privileged read - and because the
-    // strict-modes `fstat` above inspects the *target* inode, a link to a
+    // strict-modes `fstat` below inspects the *target* inode, a link to a
     // root-owned 0600 file passes the mode check while feeding an
-    // attacker-chosen file to the password comparison.
-    let contents = match crate::daemon::operator_file::read_to_string(secrets_path) {
-        Ok(contents) => contents,
-        Err(_) => return Ok(false),
-    };
+    // attacker-chosen file to the password comparison. A failed open is
+    // "no secrets file" (authenticate.c:150-158), checked before strict modes.
+    let contents = crate::daemon::operator_file::read_to_string(secrets_path)
+        .map_err(|_| SecretRefusal::NoSecretsFile)?;
+
+    // upstream: authenticate.c:162-177 - a strict-modes violation
+    // (other-accessible secrets, or non-root ownership when running as root)
+    // sets `ok = 0` and returns "ignoring secrets file".
+    if module.strict_modes
+        && let Err(error) = check_secrets_file_permissions(secrets_path)
+    {
+        // upstream: authenticate.c:162-172 - the rule that failed is logged
+        // with rprintf(FLOG) as is; an fstat() failure with rsyserr().
+        if let Some(log) = log_sink {
+            let text = match error.raw_os_error() {
+                Some(_) => logging::rsyserr_io(
+                    "rsync",
+                    "Receiver",
+                    format_args!("fstat({})", secrets_path.display()),
+                    &error,
+                ),
+                None => error.to_string(),
+            };
+            log_message(log, &rsync_info!(text).with_role(Role::Daemon));
+        }
+        return Err(SecretRefusal::IgnoringSecretsFile);
+    }
+
+    // upstream: authenticate.c:179-183 - a name starting with `#` could only
+    // match a comment line.
+    if username.starts_with('#') {
+        return Err(SecretRefusal::InvalidUsername);
+    }
+
+    // upstream: authenticate.c:186 - the reason until a key-matching line is
+    // found.
+    let mut refusal = SecretRefusal::SecretNotFound;
 
     // upstream: authenticate.c:134 `while ((user || group) && ...)` - each key
     // is retired once it mismatches, so scanning stops when neither a user nor
@@ -472,12 +543,13 @@ fn verify_secret_response(
         // the outcome; a digest match authenticates, a mismatch retires the key
         // (`*ptr = NULL`) so later duplicates cannot flip the denial.
         if verify_daemon_auth_response(secret.as_bytes(), challenge, response, digest) {
-            return Ok(true);
+            return Ok(());
         }
+        refusal = SecretRefusal::PasswordMismatch;
         *active = false;
     }
 
-    Ok(false)
+    Err(refusal)
 }
 
 /// Checks that a secrets file has appropriately restrictive permissions.

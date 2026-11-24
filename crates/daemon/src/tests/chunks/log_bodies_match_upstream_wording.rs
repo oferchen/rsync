@@ -15,8 +15,14 @@ fn log_bodies_match_upstream_wording() {
 
     // upstream: clientserver.c:791 - module access granted.
     log_module_request(&log, host, ip, "docs");
-    // upstream: authenticate.c:313/:325/:341 - auth failure prefix.
-    log_module_auth_failure(&log, host, ip, "docs", None);
+    // upstream: authenticate.c:336 - a response line without a space.
+    log_module_auth_failure(
+        &log,
+        host,
+        ip,
+        "docs",
+        &AuthDenial::InvalidChallengeResponse.log_suffix(),
+    );
     // upstream: clientserver.c:778 - access denied by allow/deny rules.
     log_module_denied(&log, host, ip, "docs");
     // upstream: clientserver.c:1578 - request for an undefined module.
@@ -34,7 +40,7 @@ fn log_bodies_match_upstream_wording() {
 
     for expected in [
         "rsync allowed access on module docs from client.example (192.0.2.17)",
-        "auth failed on module docs from client.example (192.0.2.17)",
+        "auth failed on module docs from client.example (192.0.2.17): invalid challenge response",
         "rsync denied on module docs from client.example (192.0.2.17)",
         "unknown module 'docs' tried from client.example (192.0.2.17)",
         "module-list request from client.example (192.0.2.17)",
@@ -88,24 +94,22 @@ fn auth_users_refusals_name_the_user_and_the_rule() {
         host,
         ip,
         "docs",
-        AuthDenial::UserRule {
+        &AuthDenial::UserRule {
             user: "alice".to_owned(),
             rule: AuthUserRule::DeniedByRule,
         }
-        .log_suffix()
-        .as_deref(),
+        .log_suffix(),
     );
     log_module_auth_failure(
         &log,
         host,
         ip,
         "docs",
-        AuthDenial::UserRule {
+        &AuthDenial::UserRule {
             user: "mallory".to_owned(),
             rule: AuthUserRule::NoMatchingRule,
         }
-        .log_suffix()
-        .as_deref(),
+        .log_suffix(),
     );
 
     drop(log);

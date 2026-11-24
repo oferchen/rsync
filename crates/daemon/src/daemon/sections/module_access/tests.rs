@@ -598,10 +598,9 @@ mod module_access_tests {
             ..Default::default()
         };
 
-        // upstream: authenticate.c:165-177 check_secret() - a strict-modes
-        // violation is an auth denial, not a fatal error: verify returns
-        // Ok(false) so the daemon emits `@ERROR: auth failed on module X`
-        // rather than dropping the socket mid-handshake.
+        // upstream: authenticate.c:162-177 check_secret() - a strict-modes
+        // violation is an auth denial, not a fatal error, so the daemon emits
+        // `@ERROR: auth failed on module X` rather than dropping the socket.
         let result = verify_secret_response(
             &module,
             "alice",
@@ -609,12 +608,9 @@ mod module_access_tests {
             "challenge",
             "response",
             DaemonAuthDigest::Md5,
-        )
-        .expect("strict-modes violation must be a denial, not an io error");
-        assert!(
-            !result,
-            "other-accessible secrets under strict modes must deny auth"
+            None,
         );
+        assert_eq!(result, Err(SecretRefusal::IgnoringSecretsFile));
     }
 
     #[cfg(unix)]
@@ -633,7 +629,7 @@ mod module_access_tests {
         };
 
         // With strict_modes disabled, the file is read even though it's world-readable.
-        // Authentication will fail (wrong response), but no permission error is returned.
+        // Authentication fails on the wrong response, not on permissions.
         let result = verify_secret_response(
             &module,
             "alice",
@@ -641,12 +637,9 @@ mod module_access_tests {
             "challenge",
             "response",
             DaemonAuthDigest::Md5,
-        )
-        .expect("should not error on permissions");
-        assert!(
-            !result,
-            "auth should fail due to wrong response, not permissions"
+            None,
         );
+        assert_eq!(result, Err(SecretRefusal::PasswordMismatch));
     }
 
     #[cfg(unix)]
@@ -664,8 +657,8 @@ mod module_access_tests {
             ..Default::default()
         };
 
-        // Permissions are fine, so the file is read. Auth will fail (wrong response)
-        // but no permission error is returned.
+        // Permissions are fine, so the file is read. Auth fails on the wrong
+        // response, not on permissions.
         let result = verify_secret_response(
             &module,
             "alice",
@@ -673,9 +666,9 @@ mod module_access_tests {
             "challenge",
             "response",
             DaemonAuthDigest::Md5,
-        )
-        .expect("should not error on permissions");
-        assert!(!result, "auth should fail due to wrong response");
+            None,
+        );
+        assert_eq!(result, Err(SecretRefusal::PasswordMismatch));
     }
 
     /// Computes the client digest a member of the authorizing group (or the
@@ -720,10 +713,11 @@ mod module_access_tests {
             challenge,
             &response,
             DaemonAuthDigest::Md5,
-        )
-        .expect("no io error");
-        assert!(
+            None,
+        );
+        assert_eq!(
             granted,
+            Ok(()),
             "group member must authenticate via @devs shared secret"
         );
 
@@ -736,10 +730,11 @@ mod module_access_tests {
             challenge,
             &response,
             DaemonAuthDigest::Md5,
-        )
-        .expect("no io error");
-        assert!(
-            !denied,
+            None,
+        );
+        assert_eq!(
+            denied,
+            Err(SecretRefusal::SecretNotFound),
             "a @group secret must not match when the user was not authorized via that group"
         );
     }
@@ -775,10 +770,11 @@ mod module_access_tests {
             challenge,
             &response,
             DaemonAuthDigest::Md5,
-        )
-        .expect("no io error");
-        assert!(
-            !denied,
+            None,
+        );
+        assert_eq!(
+            denied,
+            Err(SecretRefusal::PasswordMismatch),
             "an earlier wrong-password line must retire the username and deny"
         );
 
@@ -797,9 +793,52 @@ mod module_access_tests {
             challenge,
             &response,
             DaemonAuthDigest::Md5,
+            None,
+        );
+        assert_eq!(granted, Ok(()), "a correct first line must authenticate");
+    }
+
+    /// The refusals `check_secret()` reaches before and without a key-matching
+    /// line each keep their own reason: an operator reads the log to tell a
+    /// missing or rejected secrets file from an unknown user.
+    ///
+    /// upstream: authenticate.c:150-158, :179-183, :186.
+    #[test]
+    fn verify_secret_names_each_check_secret_refusal() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let secrets = dir.path().join("secrets");
+        fs::write(
+            &secrets,
+            "alice:password123
+#bob:password123
+",
         )
-        .expect("no io error");
-        assert!(granted, "a correct first line must authenticate");
+        .expect("write");
+        let module = |secrets_file| ModuleDefinition {
+            secrets_file,
+            strict_modes: false,
+            ..Default::default()
+        };
+        let check = |module: &ModuleDefinition, user| {
+            verify_secret_response(module, user, None, "c", "r", DaemonAuthDigest::Md5, None)
+        };
+
+        assert_eq!(
+            check(&module(None), "alice"),
+            Err(SecretRefusal::NoSecretsFile)
+        );
+        assert_eq!(
+            check(&module(Some(dir.path().join("missing"))), "alice"),
+            Err(SecretRefusal::NoSecretsFile)
+        );
+        assert_eq!(
+            check(&module(Some(secrets.clone())), "#bob"),
+            Err(SecretRefusal::InvalidUsername)
+        );
+        assert_eq!(
+            check(&module(Some(secrets)), "carol"),
+            Err(SecretRefusal::SecretNotFound)
+        );
     }
 
     #[test]

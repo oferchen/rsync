@@ -284,28 +284,45 @@ fn auth_digest_floor_name_is_case_insensitive() {
     assert!(enforce_auth_digest_floor(Some("Sha256"), DaemonAuthDigest::Md5).is_err());
 }
 
-/// The two refusal arms carry upstream's wording into the log line; the
-/// credential arm deliberately carries none, leaving the bare prefix.
+/// Every denial carries upstream's wording into the log line.
 ///
-/// upstream: authenticate.c:313-316 and :325-329.
+/// upstream: authenticate.c:313-316, :320-323, :336-338 and :428-429, with the
+/// `check_secret()` reasons from :150-207.
 #[test]
 fn auth_denial_log_reasons_match_upstream_wording() {
-    assert_eq!(AuthDenial::Credentials.log_suffix(), None);
+    assert_eq!(
+        AuthDenial::InvalidChallengeResponse.log_suffix(),
+        ": invalid challenge response"
+    );
     assert_eq!(
         AuthDenial::DigestFloorUnsupported {
             configured: "sponge".to_owned()
         }
-        .log_suffix()
-        .as_deref(),
-        Some(": the configured 'auth digest = sponge' is not a supported digest on this build")
+        .log_suffix(),
+        ": the configured 'auth digest = sponge' is not a supported digest on this build"
     );
     assert_eq!(
         AuthDenial::DigestTooWeak {
             negotiated: DaemonAuthDigest::Md5,
             floor: "sha256".to_owned(),
         }
-        .log_suffix()
-        .as_deref(),
-        Some(": negotiated auth digest md5 is weaker than the required 'auth digest = sha256'")
+        .log_suffix(),
+        ": negotiated auth digest md5 is weaker than the required 'auth digest = sha256'"
     );
+    for (refusal, reason) in [
+        (SecretRefusal::NoSecretsFile, "no secrets file"),
+        (SecretRefusal::IgnoringSecretsFile, "ignoring secrets file"),
+        (SecretRefusal::InvalidUsername, "invalid username"),
+        (SecretRefusal::SecretNotFound, "secret not found"),
+        (SecretRefusal::PasswordMismatch, "password mismatch"),
+    ] {
+        assert_eq!(
+            AuthDenial::Secret {
+                user: "alice".to_owned(),
+                refusal,
+            }
+            .log_suffix(),
+            format!(" for alice: {reason}")
+        );
+    }
 }
