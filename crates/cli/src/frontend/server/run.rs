@@ -19,6 +19,7 @@ use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
+use crate::frontend::arguments::{backup_dir_dot_prefix_len, empty_backup_suffix_error};
 use crate::frontend::execution::{SYNTAX_ERROR, exit_trailer, parse_max_delete_argument};
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
@@ -747,8 +748,31 @@ where
     // The receiver must place backups UNDER this directory; without it `-b`
     // silently degrades to in-place suffix backups, which is a different
     // on-disk layout, not a cosmetic difference.
-    if let Some(dir) = &long_flags.backup_dir {
-        config.backup_dir = Some(dir.clone());
+    // upstream: options.c:2514-2527 - the server strips the dir as the client
+    // does, and drops one that names the destination itself.
+    let backup_dir_given = long_flags.backup_dir.is_some();
+    config.backup_dir = long_flags
+        .backup_dir
+        .as_deref()
+        .map(|dir| &dir[backup_dir_dot_prefix_len(dir.as_bytes())..])
+        .filter(|dir| !dir.is_empty())
+        .map(str::to_owned);
+    // upstream: options.c:2502-2503,2536-2540 - without a usable backup dir the
+    // suffix ("" by default once --backup-dir was given) must be non-empty.
+    // Only a server sender is exempt (`!am_server || !am_sender`).
+    if config.backup_dir.is_none()
+        && role != ServerRole::Generator
+        && long_flags
+            .backup_suffix
+            .as_deref()
+            .map_or(backup_dir_given, str::is_empty)
+    {
+        write_server_error(
+            stderr,
+            program_brand,
+            empty_backup_suffix_error(backup_dir_given),
+        );
+        return 1;
     }
     // upstream: options.c:3174-3177 - `--temp-dir` then `safe_arg("", tmpdir)`. Shares
     // the same decode site as `--backup-dir`, so it shared the same defect.

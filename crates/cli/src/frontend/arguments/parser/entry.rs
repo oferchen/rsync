@@ -32,7 +32,7 @@ use super::flags::{
     archive_aware_flag, leveled_flag_pair, tri_state_flag_negative_first,
     tri_state_flag_positive_first,
 };
-use super::values::join_os_values;
+use super::values::{empty_backup_suffix_error, join_os_values, strip_backup_dir_dot_prefix};
 use super::{
     BandwidthArgument, ParsedArgs, detect_program_name, env_iconv_default, env_max_alloc_default,
     resolve_arg_protection,
@@ -789,6 +789,13 @@ fn parsed_args_from_matches(
     if backup_dir.is_some() {
         backup = true;
     }
+    // upstream: options.c:2514-2527 - leading "./" pairs and a lone "." are
+    // stripped; an empty remainder names the destination itself, so the
+    // backup dir is dropped (backup_dir_len = -1) while --backup stays on.
+    let backup_dir_given = backup_dir.is_some();
+    let backup_dir = backup_dir
+        .map(strip_backup_dir_dot_prefix)
+        .filter(|dir| !dir.is_empty());
     let compress_count = matches.get_count("compress");
     let compress_flag = compress_count > 0;
     let no_compress = matches.get_flag("no-compress");
@@ -1527,16 +1534,17 @@ fn parsed_args_from_matches(
         ));
     }
 
-    // upstream: options.c:2534-2541 - an empty `--suffix` is only valid together
-    // with a `--backup-dir`; otherwise it is rejected.
+    // upstream: options.c:2502-2503,2534-2541 - without a usable backup dir the
+    // suffix must be non-empty. A `--backup-dir` that named the destination
+    // itself leaves the suffix at its "" default, so it is refused too.
     if backup_dir.is_none()
         && backup_suffix
             .as_ref()
-            .is_some_and(|suffix| suffix.is_empty())
+            .map_or(backup_dir_given, |suffix| suffix.is_empty())
     {
         return Err(clap::Error::raw(
             clap::error::ErrorKind::ValueValidation,
-            "--suffix cannot be empty without a --backup-dir\n",
+            format!("{}\n", empty_backup_suffix_error(backup_dir_given)),
         ));
     }
 
