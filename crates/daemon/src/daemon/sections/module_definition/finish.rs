@@ -254,6 +254,7 @@ impl ModuleDefinitionBuilder {
                 .munge_symlinks
                 .or(defaults.munge_symlinks)
                 .unwrap_or(None),
+            pinned_sanitize_paths: None,
             max_verbosity: self.max_verbosity.or(defaults.max_verbosity).unwrap_or(1),
             ignore_errors: self
                 .ignore_errors

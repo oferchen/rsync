@@ -124,12 +124,11 @@ impl ReceiverContext {
     ///   link cannot resolve outside the module root when followed.
     /// - upstream: flist.c:1557 - `if (sanitize_paths && !munge_symlinks &&
     ///   *bp) sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
-    ///   `sanitize_paths` is live only in the daemon server process
-    ///   (clientserver.c:1067-1068; a non-chroot module records its full path
-    ///   length as `module_dirlen`), never in the client end of a daemon
-    ///   connection, so the client of a pull stores the wire target verbatim.
-    ///   Measured against rsync 3.5.1: a pull client keeps
-    ///   `abs_link -> /etc/hostname` byte-for-byte.
+    ///   `sanitize_paths` is set only by a daemon server, for a module whose
+    ///   path survives the chroot (clientserver.c:1071-1072). A module chrooted
+    ///   to its own root, a pull client and a non-daemon receiver all store
+    ///   the wire target verbatim. Measured against rsync 3.5.2: a chrooted
+    ///   module keeps `/etc/passwd` and `../escape` byte-for-byte.
     #[cfg(unix)]
     pub(in crate::receiver) fn stored_symlink_target<'e>(
         &self,
@@ -138,10 +137,7 @@ impl ReceiverContext {
         let wire_target = entry.link_target()?;
         Some(if self.config.munge_symlinks {
             std::borrow::Cow::Owned(apply_symlink_munge_prefix(wire_target))
-        } else if self.config.connection.is_daemon_connection
-            && !self.config.connection.client_mode
-            && !wire_target.as_os_str().is_empty()
-        {
+        } else if self.config.sanitize_paths && !wire_target.as_os_str().is_empty() {
             std::borrow::Cow::Owned(sanitize_received_symlink_target(wire_target, entry.path()))
         } else {
             std::borrow::Cow::Borrowed(wire_target.as_path())
@@ -1428,12 +1424,10 @@ impl ReceiverContext {
 ///
 /// Mirrors upstream `flist.c:1557`, which applies `sanitize_path(...,
 /// SP_DEFAULT)` to the target whenever `sanitize_paths && !munge_symlinks`.
-/// `sanitize_paths` is set for a daemon module with a path
-/// (`clientserver.c:1067-1068`), so the two transforms between them leave no
-/// daemon configuration in which a peer-supplied target reaches the disk
-/// verbatim. It is never set in the client end of a daemon connection, so the
-/// caller gates this on `!client_mode`: a pull client stores the wire target
-/// byte-for-byte (measured against rsync 3.5.1).
+/// `sanitize_paths` is set for a daemon module whose path survives the chroot
+/// (`clientserver.c:1071-1072`); a module chrooted to its own root relies on the
+/// chroot instead and stores the target verbatim, as does the client end of a
+/// daemon connection (measured against rsync 3.5.2).
 ///
 /// This rewrite is what makes an absolute target relative, so a link to
 /// `/etc/hostname` becomes the in-tree `etc/hostname` and `--safe-links` no

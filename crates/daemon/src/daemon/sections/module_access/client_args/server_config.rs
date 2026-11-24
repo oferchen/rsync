@@ -618,6 +618,9 @@ fn build_server_config(
             // through the transfer layer so the sender strips `/rsyncd-munged/`
             // on `readlink()` and the receiver prepends it on `symlink()` writes.
             cfg.munge_symlinks = module.effective_munge_symlinks();
+            // upstream: clientserver.c:1071-1072 - `sanitize_paths` is on only
+            // while the module path survives the chroot.
+            cfg.sanitize_paths = module.sanitize_paths();
 
             // upstream: clientserver.c:1197-1198 (`ignore errors`) and
             // clientserver.c:1283-1286 (`numeric ids`) - module directives that

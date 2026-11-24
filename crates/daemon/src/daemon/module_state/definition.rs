@@ -194,6 +194,10 @@ pub(crate) struct ModuleDefinition {
     /// becomes `!use_chroot || module_dirlen`, i.e. true when `use chroot` is off
     /// or the module path has a non-empty inner path after a `/./` split.
     pub(crate) munge_symlinks: Option<bool>,
+    /// Upstream's `sanitize_paths` for this module, pinned from the configured
+    /// path before the chroot rewrite replaces it. `None` derives it; see
+    /// [`sanitize_paths`](Self::sanitize_paths).
+    pub(crate) pinned_sanitize_paths: Option<bool>,
     /// Caps the client's requested verbosity level.
     ///
     /// upstream: daemon-parm.txt:51 `INTEGER max_verbosity 1`.
@@ -530,6 +534,25 @@ impl ModuleDefinition {
             .unwrap_or(!self.use_chroot || self.has_inside_chroot_split())
     }
 
+    /// Returns whether a transfer in this module runs with upstream's
+    /// `sanitize_paths`, which sanitizes received symlink targets when munging
+    /// is off.
+    ///
+    /// upstream: clientserver.c:1071-1072 - `if (module_dirlen) sanitize_paths
+    /// = 1`. `module_dirlen` is the normalized module path's length without a
+    /// chroot (:920), the inner path's after a `/./` split under one (:907), 0
+    /// for a chroot without the split (:917), and 0 for a path of `/`
+    /// (:926-927).
+    pub(crate) fn sanitize_paths(&self) -> bool {
+        self.pinned_sanitize_paths.unwrap_or_else(|| {
+            if self.use_chroot {
+                self.has_inside_chroot_split()
+            } else {
+                !is_filesystem_root(&self.path)
+            }
+        })
+    }
+
     /// Returns whether the module path carries an inside-chroot split marker
     /// (`/./`) with a non-empty inner path, mirroring upstream's
     /// `module_dirlen > 0`.
@@ -801,4 +824,16 @@ impl ModuleDefinition {
     pub(crate) fn open_noatime(&self) -> bool {
         self.open_noatime
     }
+}
+
+/// Whether `path` names `/`, which upstream's `normalize_path` reduces to a
+/// one-byte `module_dir` (clientserver.c:926-927).
+fn is_filesystem_root(path: &Path) -> bool {
+    path.has_root()
+        && path.components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::RootDir | std::path::Component::CurDir
+            )
+        })
 }
