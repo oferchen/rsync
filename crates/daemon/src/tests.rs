@@ -274,6 +274,7 @@ include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_push.rs");
 include!("tests/chunks/daemon_safe_links_receive.rs");
 // Daemon `munge symlinks = yes` round-trip tests (push + pull)
 include!("tests/chunks/daemon_munge_symlinks_push.rs");
+include!("tests/chunks/daemon_push_without_munging_sanitizes_symlink_targets.rs");
 include!("tests/chunks/daemon_munge_symlinks_pull.rs");
 // Daemon munging safety check consults /rsyncd-munged, not the module's entry
 include!("tests/chunks/daemon_munge_symlinks_prefix_dir_check.rs");

@@ -8,11 +8,13 @@
 //! exclusive and together they leave no configuration in which a
 //! client-supplied target reaches the daemon's disk verbatim.
 //!
-//! Both transforms belong to the daemon server process. The client end of a
-//! daemon connection stores received targets verbatim: `sanitize_paths` is
-//! never set in an upstream client (clientserver.c:1071-1072 is the only
-//! assignment), so a pull client keeps `abs_link -> /etc/hostname`
-//! byte-for-byte and its own `--safe-links` check reads that raw value.
+//! Both transforms belong to the daemon server process. `sanitize_paths` is
+//! set only there, and only for a module whose path survives the chroot
+//! (clientserver.c:1071-1072 is the only assignment). The client end of a
+//! daemon connection stores received targets verbatim, so a pull client keeps
+//! `abs_link -> /etc/hostname` byte-for-byte and its own `--safe-links` check
+//! reads that raw value. A module chrooted to its own root stores them verbatim
+//! too: the chroot is its confinement.
 //!
 //! The strip is budgeted, not unconditional: upstream passes `lastdir_depth`,
 //! the depth of the entry's own directory, so a target that walks back no
@@ -77,8 +79,8 @@ impl MsgInfoSender for NullMsgInfoWriter {
     }
 }
 
-/// A daemon receiver with `munge symlinks = false` - the configuration in
-/// which upstream falls back to `sanitize_path`.
+/// A daemon receiver with `munge symlinks = false` for a module outside a
+/// chroot - the configuration in which upstream falls back to `sanitize_path`.
 fn daemon_receiver_without_munging() -> ServerConfig {
     ServerConfig {
         role: ServerRole::Receiver,
@@ -90,6 +92,7 @@ fn daemon_receiver_without_munging() -> ServerConfig {
         },
         args: vec![OsString::from(".")],
         munge_symlinks: false,
+        sanitize_paths: true,
         connection: ConnectionConfig {
             is_daemon_connection: true,
             ..Default::default()
@@ -168,6 +171,7 @@ fn the_client_end_of_a_daemon_pull_stores_the_target_verbatim() {
     // client's own --safe-links evaluation.
     let mut config = daemon_receiver_without_munging();
     config.connection.client_mode = true;
+    config.sanitize_paths = false;
 
     let on_disk = create_one_symlink(config, "../outside");
 
@@ -190,6 +194,7 @@ fn a_pull_clients_safe_links_check_reads_the_verbatim_target() {
     // (generator.c:1951 / util1.c:1664 "all absolute ... are unsafe").
     let mut config = daemon_receiver_without_munging();
     config.connection.client_mode = true;
+    config.sanitize_paths = false;
     config.flags.safe_links = true;
 
     let on_disk = create_one_symlink(config, "/etc/passwd");
@@ -210,6 +215,7 @@ fn a_non_daemon_receiver_leaves_the_target_alone() {
     // legitimate `../` targets on every non-daemon transfer.
     let mut config = daemon_receiver_without_munging();
     config.connection.is_daemon_connection = false;
+    config.sanitize_paths = false;
 
     let on_disk = create_one_symlink(config, "../outside");
 
@@ -219,6 +225,35 @@ fn a_non_daemon_receiver_leaves_the_target_alone() {
         "only a daemon receiver has `sanitize_paths` set upstream \
          (clientserver.c:1068); a non-daemon receiver must store the \
          target verbatim",
+    );
+}
+
+#[test]
+fn a_module_chrooted_to_its_root_stores_targets_verbatim() {
+    // upstream: clientserver.c:1071-1072 sets `sanitize_paths` only when
+    // `module_dirlen` is non-zero, and a module chrooted to its own root (no
+    // `/./` split) has `module_dirlen == 0` (:917, :926-927). With munging off
+    // as well - the default for such a module (:1074-1075) - flist.c:1557 does
+    // nothing and the daemon stores what the client sent. Measured against
+    // rsync 3.5.2 as root in that configuration: `/etc/passwd`, `../escape`
+    // and `../../x` land unchanged, where a module outside a chroot stores
+    // `etc/passwd`, `escape` and `../x`.
+    let mut config = daemon_receiver_without_munging();
+    config.sanitize_paths = false;
+
+    for target in ["/etc/passwd", "../escape"] {
+        let on_disk = create_one_symlink(config.clone(), target);
+        assert_eq!(
+            on_disk.as_deref(),
+            Some(std::path::Path::new(target)),
+            "a module chrooted to its root has no `sanitize_paths`, so the \
+             daemon stores {target} verbatim (clientserver.c:1071-1072)",
+        );
+    }
+    assert_eq!(
+        create_one_symlink_at(config, "sub/up2", "../../x").as_deref(),
+        Some(std::path::Path::new("../../x")),
+        "the depth budget does not apply when nothing is sanitized",
     );
 }
 

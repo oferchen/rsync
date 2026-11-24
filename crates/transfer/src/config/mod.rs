@@ -829,6 +829,20 @@ pub struct ServerConfig {
     /// - `flist.c:499-502` - sender strips the prefix.
     /// - `flist.c:1521-1524` - receiver prepends the prefix.
     pub munge_symlinks: bool,
+    /// When true, a received symlink target is sanitized so it cannot climb
+    /// above the module root (applied only when munging is off).
+    ///
+    /// Mirrors upstream's `sanitize_paths` global, which only a daemon server
+    /// sets, and only for a module whose path survives the chroot: a module
+    /// outside a chroot, or one split by a `/./` marker. A module chrooted to
+    /// its own root leaves it off, so its targets are stored verbatim.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:1071-1072` - `if (module_dirlen) sanitize_paths = 1`.
+    /// - `flist.c:1557-1558` - `if (sanitize_paths && !munge_symlinks && *bp)
+    ///   sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
+    pub sanitize_paths: bool,
 }
 
 /// Parses a forwarded `-B<digits>` / `--block-size=NUM` value into the
@@ -906,6 +920,7 @@ impl Default for ServerConfig {
             user_mapping: None,
             group_mapping: None,
             munge_symlinks: false,
+            sanitize_paths: false,
         }
     }
 }

@@ -1315,6 +1315,7 @@ fn chroot_adjusted_definition(
 ) -> ModuleDefinition {
     let mut adjusted = definition.clone();
     adjusted.munge_symlinks = Some(definition.effective_munge_symlinks());
+    adjusted.pinned_sanitize_paths = Some(definition.sanitize_paths());
     adjusted.path = inner_module_path
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("/"));
@@ -1429,6 +1430,22 @@ mod chroot_adjusted_definition_tests {
 
         assert_eq!(adjusted.path, Path::new("/sub"));
         assert!(adjusted.effective_munge_symlinks());
+    }
+
+    /// WHY: `sanitize_paths` is decided by the configured path, which the
+    /// rewrite replaces. A module chrooted to its root keeps it off; a `/./`
+    /// module keeps it on after the rewritten `/sub` no longer carries the
+    /// marker (clientserver.c:907-920 then :1071-1072).
+    #[test]
+    fn sanitize_paths_is_pinned_from_the_configured_path() {
+        let whole = chroot_adjusted_definition(&chrooted_module("/srv/mod"), None);
+        assert!(!whole.sanitize_paths());
+
+        let split = chroot_adjusted_definition(
+            &chrooted_module("/srv/base/./sub"),
+            Some(Path::new("/sub")),
+        );
+        assert!(split.sanitize_paths());
     }
 
     /// An explicit directive is not a default, so the rewrite must not disturb

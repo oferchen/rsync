@@ -94,6 +94,7 @@ pub struct ServerConfigBuilder {
     user_mapping: Option<UserMapping>,
     group_mapping: Option<GroupMapping>,
     munge_symlinks: bool,
+    sanitize_paths: bool,
 }
 
 impl Default for ServerConfigBuilder {
@@ -138,6 +139,7 @@ impl ServerConfigBuilder {
             user_mapping: None,
             group_mapping: None,
             munge_symlinks: false,
+            sanitize_paths: false,
         }
     }
 
@@ -581,6 +583,18 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Sets whether received symlink targets are sanitized, as upstream's
+    /// daemon does for a module whose path survives the chroot.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:1071-1072` - `if (module_dirlen) sanitize_paths = 1`.
+    /// - `flist.c:1557-1558` - receiver-side target sanitize.
+    pub fn sanitize_paths(&mut self, enabled: bool) -> &mut Self {
+        self.sanitize_paths = enabled;
+        self
+    }
+
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), BuilderError> {
         // upstream: options.c:2627-2637 - --delay-updates implies a partial dir, which
@@ -679,6 +693,7 @@ impl ServerConfigBuilder {
             user_mapping: self.user_mapping.clone(),
             group_mapping: self.group_mapping.clone(),
             munge_symlinks: self.munge_symlinks,
+            sanitize_paths: self.sanitize_paths,
         }
     }
 }

@@ -207,6 +207,7 @@ fn parse_module_definition(
         insecure_links: false,
         parallel_delta_scan: false,
         munge_symlinks: None,
+        pinned_sanitize_paths: None,
         max_verbosity: 1,
         ignore_errors: false,
         ignore_nonreadable: false,

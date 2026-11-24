@@ -215,4 +215,48 @@ mod symlink_munge_tests {
         };
         assert!(!def.effective_munge_symlinks());
     }
+
+    /// WHY: upstream sanitizes received symlink targets only while the module
+    /// path survives the chroot (clientserver.c:1071-1072, `module_dirlen`):
+    /// outside a chroot unless the path is `/`, and under one only past a `/./`
+    /// split with a non-empty inner path (:907, :917, :920, :926-927). A module
+    /// chrooted to its own root stores what the client sent - measured against
+    /// rsync 3.5.2 as root, `/etc/passwd` stays `/etc/passwd`.
+    #[test]
+    fn sanitize_paths_follows_module_dirlen() {
+        for (use_chroot, path, expected) in [
+            (false, "/srv/mod", true),
+            (false, "/", false),
+            (false, "/./", false),
+            (true, "/srv/mod", false),
+            (true, "/srv/./data", true),
+            (true, "/srv/./", false),
+        ] {
+            let def = ModuleDefinition {
+                use_chroot,
+                path: path.into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                def.sanitize_paths(),
+                expected,
+                "use chroot = {use_chroot}, path = {path}"
+            );
+        }
+    }
+
+    /// `munge symlinks` does not feed `sanitize_paths`; flist.c:1557 is what
+    /// combines them, on the receiver.
+    #[test]
+    fn sanitize_paths_ignores_the_munge_directive() {
+        for munge in [None, Some(false), Some(true)] {
+            let def = ModuleDefinition {
+                use_chroot: true,
+                munge_symlinks: munge,
+                path: "/srv/mod".into(),
+                ..Default::default()
+            };
+            assert!(!def.sanitize_paths(), "munge symlinks = {munge:?}");
+        }
+    }
 }
