@@ -24,11 +24,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 use metadata::{
     DestinationRoot, MetadataError, MetadataOptions, apply_directory_metadata_with_options,
     apply_file_metadata_with_options,
 };
+use test_support::file_times::set_file_times;
 
 /// 2001-09-09T01:46:40Z - the mtime the source carries.
 const SOURCE_MTIME: FileTime = FileTime::from_unix_time(1_000_000_000, 0);
@@ -109,7 +110,7 @@ fn operator_symlink_above_the_root_is_followed() {
     for landed in [l.real_root.join("sub/file"), l.real_root.clone()] {
         let meta = fs::metadata(&landed).expect("stat landed");
         assert_eq!(
-            FileTime::from_last_modification_time(&meta),
+            test_support::file_times::mtime_of(&meta),
             SOURCE_MTIME,
             "{landed:?} mtime"
         );
@@ -161,7 +162,7 @@ fn symlink_below_the_root_is_still_refused() {
     let after = fs::metadata(&l.outside_sentinel).expect("stat sentinel");
     assert_eq!(after.mode() & 0o7777, 0o600, "outside mode untouched");
     assert_eq!(
-        FileTime::from_last_modification_time(&after),
+        test_support::file_times::mtime_of(&after),
         WITNESS_MTIME,
         "outside mtime untouched"
     );

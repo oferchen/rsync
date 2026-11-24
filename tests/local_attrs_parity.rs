@@ -63,7 +63,7 @@ impl Fixture {
 
     fn backdate(&self) {
         for path in ["src/a.txt", "src/sub/b.log", "outside/target.txt"] {
-            filetime::set_file_mtime(
+            test_support::file_times::set_file_mtime(
                 self.root.join(path),
                 FileTime::from_unix_time(1_600_000_000, 0),
             )

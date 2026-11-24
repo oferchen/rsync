@@ -145,9 +145,10 @@ fn implicit_list_only_lists_local_source_without_destination() {
 #[cfg(unix)]
 #[test]
 fn list_only_matches_rsync_format_for_regular_file() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -222,9 +223,10 @@ fn list_only_matches_rsync_format_for_regular_file() {
 #[cfg(unix)]
 #[test]
 fn list_only_formats_special_permission_bits_like_rsync() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -422,9 +424,10 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
 #[cfg(unix)]
 #[test]
 fn list_only_symlink_shows_arrow_target_in_exact_format() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -480,9 +483,10 @@ fn list_only_symlink_shows_arrow_target_in_exact_format() {
 #[cfg(unix)]
 #[test]
 fn list_only_zero_byte_file_shows_zero_size() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -532,9 +536,10 @@ fn list_only_zero_byte_file_shows_zero_size() {
 #[cfg(unix)]
 #[test]
 fn list_only_directory_permissions_start_with_d() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -587,9 +592,10 @@ fn list_only_directory_permissions_start_with_d() {
 #[cfg(unix)]
 #[test]
 fn list_only_size_field_right_aligned_in_14_chars() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -719,9 +725,10 @@ fn list_only_recursive_shows_nested_paths() {
 #[cfg(unix)]
 #[test]
 fn list_only_large_file_size_has_thousands_separators() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -773,9 +780,10 @@ fn list_only_large_file_size_has_thousands_separators() {
 #[cfg(unix)]
 #[test]
 fn list_only_with_verbose_still_shows_listing_format() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -825,9 +833,10 @@ fn list_only_with_verbose_still_shows_listing_format() {
 #[cfg(unix)]
 #[test]
 fn list_only_read_only_file_permissions() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -873,9 +882,10 @@ fn list_only_read_only_file_permissions() {
 #[cfg(unix)]
 #[test]
 fn list_only_executable_file_permissions() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -922,9 +932,10 @@ fn list_only_executable_file_permissions() {
 #[cfg(unix)]
 #[test]
 fn list_only_human_readable_size_format() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -976,9 +987,10 @@ fn list_only_human_readable_size_format() {
 #[cfg(unix)]
 #[test]
 fn list_only_multiple_files_have_consistent_column_alignment() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
@@ -1215,9 +1227,10 @@ fn list_only_with_stats_appends_summary() {
 #[cfg(unix)]
 #[test]
 fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");

@@ -133,7 +133,8 @@ fn reference_link_destination_degrades_to_copy_on_cross_device_error() {
 #[cfg(unix)]
 #[test]
 fn execute_does_not_preserve_metadata_by_default() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -156,8 +157,8 @@ fn execute_does_not_preserve_metadata_by_default() {
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
     assert_ne!(metadata.permissions().mode() & 0o777, 0o640);
-    let dest_atime = FileTime::from_last_access_time(&metadata);
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_atime = ::test_support::file_times::atime_of(&metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&metadata);
     assert_ne!(dest_atime, atime);
     assert_ne!(dest_mtime, mtime);
     assert_eq!(summary.files_copied(), 1);
@@ -166,7 +167,8 @@ fn execute_does_not_preserve_metadata_by_default() {
 #[cfg(unix)]
 #[test]
 fn execute_preserves_metadata_when_requested() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -192,8 +194,8 @@ fn execute_preserves_metadata_when_requested() {
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
-    let dest_atime = FileTime::from_last_access_time(&metadata);
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_atime = ::test_support::file_times::atime_of(&metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&metadata);
     // upstream: rsync.c:725-726 - --times alone leaves the access time unchanged
     // (ATTRS_SKIP_ATIME); only --atimes/-U would preserve it.
     assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
@@ -412,7 +414,8 @@ fn execute_preserves_mode_0000_on_destination_file() {
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn execute_mode_0000_with_times_preservation() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -439,8 +442,8 @@ fn execute_mode_0000_with_times_preservation() {
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
-    let dest_atime = FileTime::from_last_access_time(&metadata);
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_atime = ::test_support::file_times::atime_of(&metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&metadata);
     // upstream: rsync.c:725-726 - --times alone leaves the access time unchanged.
     assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
     assert_eq!(dest_mtime, mtime);
@@ -556,7 +559,8 @@ fn execute_mode_0000_with_chmod_modifiers() {
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn execute_mode_0000_update_existing_destination() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -747,7 +751,8 @@ fn execute_preserves_sticky_bit() {
 #[cfg(unix)]
 #[test]
 fn execute_round_trip_preserves_all_bits() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -791,8 +796,8 @@ fn execute_round_trip_preserves_all_bits() {
         "all permission bits should be preserved through round trip"
     );
 
-    let final_atime = FileTime::from_last_access_time(&final_metadata);
-    let final_mtime = FileTime::from_last_modification_time(&final_metadata);
+    let final_atime = ::test_support::file_times::atime_of(&final_metadata);
+    let final_mtime = ::test_support::file_times::mtime_of(&final_metadata);
     // upstream: rsync.c:725-726 - --times alone leaves the access time unchanged;
     // the round trip preserves permission bits and mtime, not atime.
     assert_ne!(final_atime, atime, "atime must not be preserved without -U");

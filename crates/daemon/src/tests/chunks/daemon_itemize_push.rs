@@ -48,7 +48,7 @@ fn daemon_itemize_push_reports_events() {
     // quick-check detects it as needing an update.
     fs::write(dest_dir.join("existing.txt"), b"old content\n").expect("write dest existing");
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(dest_dir.join("existing.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(dest_dir.join("existing.txt"), old_time)
         .expect("backdate dest existing");
 
     let config_file = temp.path().join("rsyncd.conf");

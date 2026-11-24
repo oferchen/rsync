@@ -271,7 +271,8 @@ mod tests {
     /// resolves them apart makes the assertion depend on timestamp
     /// granularity, which is how a guard like this silently stops guarding.
     fn fixture(dir: &Path, binary_age: u64, sources: &[&str]) -> PathBuf {
-        use filetime::{FileTime, set_file_mtime};
+        use crate::file_times::set_file_mtime;
+        use filetime::FileTime;
 
         let binary = dir.join("fakebin");
         fs::write(&binary, b"").expect("binary");

@@ -1499,12 +1499,12 @@ impl ReceiverContext {
                 });
             #[cfg(not(unix))]
             let needs_update = fs::metadata(&dir_path)
-                .is_ok_and(|meta| filetime::FileTime::from_last_modification_time(&meta) != mtime);
+                .is_ok_and(|meta| fast_io::modified_filetime(&meta) != mtime);
 
             #[cfg(unix)]
             let set_mtime = || super::dest_set_mtime(sandbox, dest_dir, &dir_path, mtime);
             #[cfg(not(unix))]
-            let set_mtime = || filetime::set_file_mtime(&dir_path, mtime);
+            let set_mtime = || fast_io::set_path_times(&dir_path, None, Some(mtime), true);
             if needs_update && let Err(e) = set_mtime() {
                 debug_log!(
                     Recv,
@@ -1874,7 +1874,7 @@ mod touch_up_dirs_tests {
         fs::write(&obstacle, b"not a directory").unwrap();
         fs::set_permissions(&obstacle, fs::Permissions::from_mode(0o644)).unwrap();
         let own_time = FileTime::from_unix_time(1_546_300_800, 0);
-        filetime::set_file_mtime(&obstacle, own_time).unwrap();
+        test_support::file_times::set_file_mtime(&obstacle, own_time).unwrap();
 
         let original = fs::metadata(dest).unwrap().permissions();
         fs::set_permissions(dest, fs::Permissions::from_mode(0o555)).unwrap();
@@ -1907,7 +1907,7 @@ mod touch_up_dirs_tests {
         let meta = fs::symlink_metadata(&obstacle).unwrap();
         assert!(meta.is_file(), "the obstacle is still the regular file");
         assert_eq!(
-            FileTime::from_last_modification_time(&meta),
+            test_support::file_times::mtime_of(&meta),
             own_time,
             "the file must keep its own mtime"
         );
@@ -2012,7 +2012,8 @@ mod touch_up_dirs_tests {
         // Pin the pre-existing transfer-root mtime to a fixed value so the
         // sender entry below can match it exactly.
         let root_secs: i64 = 1_577_836_800; // 2020-01-01 00:00:00 UTC
-        filetime::set_file_mtime(dest, FileTime::from_unix_time(root_secs, 0)).unwrap();
+        test_support::file_times::set_file_mtime(dest, FileTime::from_unix_time(root_secs, 0))
+            .unwrap();
 
         let mut config = config_with_times(true);
         config.flags.info_flags.itemize = true;
@@ -2099,7 +2100,7 @@ mod touch_up_dirs_tests {
         );
 
         let meta = fs::metadata(&sub).unwrap();
-        let actual = FileTime::from_last_modification_time(&meta);
+        let actual = test_support::file_times::mtime_of(&meta);
         let expected = FileTime::from_unix_time(desired_secs, 0);
         assert_eq!(
             actual, expected,
@@ -2143,7 +2144,7 @@ mod touch_up_dirs_tests {
         );
 
         let meta = fs::metadata(&sub).unwrap();
-        let actual = FileTime::from_last_modification_time(&meta);
+        let actual = test_support::file_times::mtime_of(&meta);
         let source_mtime = FileTime::from_unix_time(source_secs, 0);
         assert_ne!(
             actual, source_mtime,
@@ -2426,7 +2427,7 @@ mod touch_up_dirs_tests {
         fs::create_dir(&sub).unwrap();
 
         // Record the current mtime before touch_up_dirs.
-        let before = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+        let before = test_support::file_times::mtime_of(&fs::metadata(&sub).unwrap());
 
         let desired_secs: i64 = 1_577_836_800;
         let mut entry = FileEntry::new_directory("subdir".into(), 0o755);
@@ -2445,7 +2446,7 @@ mod touch_up_dirs_tests {
             &crate::receiver::directory::FailedDirectories::new(),
         );
 
-        let after = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+        let after = test_support::file_times::mtime_of(&fs::metadata(&sub).unwrap());
         assert_eq!(
             before, after,
             "directory mtime must not change when --times is off"
@@ -2487,8 +2488,8 @@ mod touch_up_dirs_tests {
             &crate::receiver::directory::FailedDirectories::new(),
         );
 
-        let parent_actual = FileTime::from_last_modification_time(&fs::metadata(&parent).unwrap());
-        let child_actual = FileTime::from_last_modification_time(&fs::metadata(&child).unwrap());
+        let parent_actual = test_support::file_times::mtime_of(&fs::metadata(&parent).unwrap());
+        let child_actual = test_support::file_times::mtime_of(&fs::metadata(&child).unwrap());
 
         assert_eq!(
             parent_actual,
@@ -2524,7 +2525,7 @@ mod touch_up_dirs_tests {
             &crate::receiver::directory::FailedDirectories::new(),
         );
 
-        let actual = FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
+        let actual = test_support::file_times::mtime_of(&fs::metadata(dir.path()).unwrap());
         let expected = FileTime::from_unix_time(desired_secs, 0);
         assert_eq!(actual, expected, "dest_dir mtime should match '.' entry");
     }
@@ -2535,8 +2536,11 @@ mod touch_up_dirs_tests {
         let dir = test_support::create_tempdir();
         let sub = dir.path().join("sub");
         fs::create_dir(&sub).unwrap();
-        filetime::set_file_mtime(&sub, FileTime::from_unix_time(1_700_000_000, 400_000_000))
-            .unwrap();
+        test_support::file_times::set_file_mtime(
+            &sub,
+            FileTime::from_unix_time(1_700_000_000, 400_000_000),
+        )
+        .unwrap();
         let mut entry = FileEntry::new_directory("sub".into(), 0o755);
         entry.set_mtime(1_700_000_000, 0);
         (dir, sub, entry)
@@ -2568,7 +2572,7 @@ mod touch_up_dirs_tests {
         )
         .expect("create_directories succeeds");
 
-        let actual = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+        let actual = test_support::file_times::mtime_of(&fs::metadata(&sub).unwrap());
         assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 400_000_000));
     }
 
@@ -2594,7 +2598,7 @@ mod touch_up_dirs_tests {
         )
         .expect("create_directory_incremental succeeds");
 
-        let actual = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+        let actual = test_support::file_times::mtime_of(&fs::metadata(&sub).unwrap());
         assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 400_000_000));
     }
 
@@ -2607,7 +2611,7 @@ mod touch_up_dirs_tests {
 
         // Backdate the file so we can detect if touch_up_dirs changes it.
         let past = FileTime::from_unix_time(1_500_000_000, 0);
-        filetime::set_file_mtime(&file_path, past).unwrap();
+        test_support::file_times::set_file_mtime(&file_path, past).unwrap();
 
         let mut file_entry = FileEntry::new_file("file.txt".into(), 7, 0o644);
         file_entry.set_mtime(1_577_836_800, 0);
@@ -2625,7 +2629,7 @@ mod touch_up_dirs_tests {
             &crate::receiver::directory::FailedDirectories::new(),
         );
 
-        let actual = FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+        let actual = test_support::file_times::mtime_of(&fs::metadata(&file_path).unwrap());
         assert_eq!(
             actual, past,
             "touch_up_dirs must not modify non-directory entries"

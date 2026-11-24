@@ -31,7 +31,8 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 use std::process::Command;
 
-use filetime::{FileTime, set_file_times, set_symlink_file_times};
+use filetime::FileTime;
+use test_support::file_times::{set_file_times, set_symlink_file_times};
 
 /// 2020-01-01 00:00:00 UTC.
 const T1: i64 = 1_577_836_800;

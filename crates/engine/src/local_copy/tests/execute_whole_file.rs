@@ -359,7 +359,7 @@ fn execute_whole_file_preserves_timestamps() {
     assert_eq!(summary.matched_bytes(), 0);
 
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
     assert_eq!(dest_mtime, source_time, "mtime should be preserved");
 }
 

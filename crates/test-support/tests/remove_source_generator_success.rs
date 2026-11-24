@@ -33,7 +33,8 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use filetime::{FileTime, set_symlink_file_times};
+use filetime::FileTime;
+use test_support::file_times::set_symlink_file_times;
 use test_support::inetd_server::{InetdCommand, InetdServer};
 use test_support::{
     LshRunnerStub, UpstreamVersion, create_tempdir, oc_rsync_bin, require_upstream_rsync,

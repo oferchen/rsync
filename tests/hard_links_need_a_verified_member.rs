@@ -64,7 +64,7 @@ struct Cell {
 
 fn set_mtime(path: &Path, seconds: i64) {
     let time = FileTime::from_unix_time(seconds, 0);
-    filetime::set_file_times(path, time, time).expect("set mtime");
+    test_support::file_times::set_file_times(path, time, time).expect("set mtime");
 }
 
 fn write_file(path: &Path, data: &str, mtime: i64) {

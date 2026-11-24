@@ -77,7 +77,7 @@ fn fixture() -> Fixture {
     fs::create_dir_all(root.join("dst")).expect("create dst");
     fs::write(root.join("src/f"), b"new content here").expect("write src");
     fs::write(root.join("dst/f"), b"old").expect("write dst");
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         root.join("dst/f"),
         filetime::FileTime::from_unix_time(1_000_000, 0),
     )

@@ -23,8 +23,9 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, SystemTime};
 
-use filetime::{FileTime, set_file_atime};
+use filetime::FileTime;
 use integration::helpers::{RsyncCommand, TestDir};
+use test_support::file_times::set_file_atime;
 
 /// Probe whether the filesystem backing `path` honours `O_NOATIME`.
 ///

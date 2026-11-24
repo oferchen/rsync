@@ -300,9 +300,9 @@ fn try_statx(path: &Path, follow_symlinks: bool) -> io::Result<fs::Metadata> {
 
 /// Set file times.
 ///
-/// On Unix this calls `utimensat(2)` directly; on non-Unix platforms it uses
-/// the `filetime` crate. A `None` atime or mtime leaves that timestamp
-/// unchanged.
+/// On Unix this calls `utimensat(2)` directly; on non-Unix platforms it goes
+/// through [`crate::set_path_times`]. A `None` atime or mtime leaves that
+/// timestamp unchanged.
 fn set_file_times(
     path: &Path,
     atime: Option<SystemTime>,
@@ -329,18 +329,11 @@ fn set_file_times(
 
     #[cfg(not(unix))]
     {
-        let ft_atime = atime.map(filetime::FileTime::from_system_time);
-        let ft_mtime = mtime.map(filetime::FileTime::from_system_time);
-
-        // filetime::set_file_times requires both; use current values for omitted.
-        let meta = fs::metadata(path)?;
-        let current_atime = filetime::FileTime::from_last_access_time(&meta);
-        let current_mtime = filetime::FileTime::from_last_modification_time(&meta);
-
-        filetime::set_file_times(
+        crate::set_path_times(
             path,
-            ft_atime.unwrap_or(current_atime),
-            ft_mtime.unwrap_or(current_mtime),
+            atime.map(filetime::FileTime::from_system_time),
+            mtime.map(filetime::FileTime::from_system_time),
+            true,
         )
     }
 }

@@ -38,8 +38,9 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
 use tempfile::TempDir;
+use test_support::file_times::set_file_mtime;
 use test_support::{OcRsyncCliRunner, require_binaries};
 
 /// Backdate `path` well before the freshly written source so rsync's

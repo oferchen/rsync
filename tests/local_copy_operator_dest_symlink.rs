@@ -81,16 +81,25 @@ fn seed_source(src: &Path) {
     fs::set_permissions(src.join("sticky"), fs::Permissions::from_mode(0o1777))
         .expect("chmod sticky");
 
-    filetime::set_file_times(src.join("d1/d2/file"), old_time(1), old_time(1)).expect("file mtime");
-    filetime::set_symlink_file_times(src.join("d1/d2/link"), old_time(2), old_time(2))
-        .expect("link mtime");
+    test_support::file_times::set_file_times(src.join("d1/d2/file"), old_time(1), old_time(1))
+        .expect("file mtime");
+    test_support::file_times::set_symlink_file_times(
+        src.join("d1/d2/link"),
+        old_time(2),
+        old_time(2),
+    )
+    .expect("link mtime");
     // filetime's `set_file_times` opens the node, which blocks on a FIFO with
     // no writer. The symlink variant is an open-free `utimensat` with
     // `AT_SYMLINK_NOFOLLOW`, identical to a follow for a non-symlink.
-    filetime::set_symlink_file_times(src.join("d1/d2/fifo"), old_time(3), old_time(3))
-        .expect("fifo mtime");
+    test_support::file_times::set_symlink_file_times(
+        src.join("d1/d2/fifo"),
+        old_time(3),
+        old_time(3),
+    )
+    .expect("fifo mtime");
     for (dir, offset) in DIRS {
-        filetime::set_file_times(src.join(dir), old_time(offset), old_time(offset))
+        test_support::file_times::set_file_times(src.join(dir), old_time(offset), old_time(offset))
             .expect("dir mtime");
     }
 }

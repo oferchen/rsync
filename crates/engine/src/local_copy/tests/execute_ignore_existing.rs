@@ -76,7 +76,7 @@ fn ignore_existing_skips_file_with_different_timestamps() {
     assert_eq!(summary.regular_files_ignored_existing(), 1);
 
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
     assert_eq!(dest_mtime, older_time);
 }
 

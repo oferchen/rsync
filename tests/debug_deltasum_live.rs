@@ -79,7 +79,7 @@ fn fixture(root: &Path) -> (PathBuf, PathBuf) {
     // Backdate the basis: rsync's quick-check skips a same-size, same-mtime
     // file, which would make every assertion here vacuous.
     let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(946_684_800);
-    filetime::set_file_mtime(&dst, filetime::FileTime::from_system_time(old))
+    test_support::file_times::set_file_mtime(&dst, filetime::FileTime::from_system_time(old))
         .expect("backdate basis");
 
     (src, dst)

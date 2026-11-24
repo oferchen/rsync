@@ -17,8 +17,9 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use ::test_support::file_times::set_file_mtime;
 use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
 use tempfile::tempdir;
 
 /// Asserts the destination dir's mtime is within 2 seconds of the expected

@@ -310,8 +310,9 @@ fn multiple_dangling_symlinks_all_preserved() {
 #[cfg(unix)]
 #[test]
 fn file_grows_between_syncs_transfers_updated_content() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use tempfile::tempdir;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
@@ -380,8 +381,9 @@ fn file_grows_between_syncs_transfers_updated_content() {
 #[cfg(unix)]
 #[test]
 fn file_shrinks_between_syncs_transfers_updated_content() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use tempfile::tempdir;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");

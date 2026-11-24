@@ -3,10 +3,11 @@ use crate::signature::SignatureAlgorithm;
 use ::metadata::ChmodModifiers;
 use ::metadata::ModifyWindow;
 use ::test_support::create_tempdir;
+use ::test_support::file_times::{set_file_mtime, set_file_times};
 use bandwidth::BandwidthLimiter;
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
-use filetime::{FileTime, set_file_mtime, set_file_times};
+use filetime::FileTime;
 use filters::{FilterRule, FilterSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -411,7 +412,7 @@ mod test_helpers {
         }
         std::fs::write(path, content).expect("write file");
         let mtime = FileTime::from_unix_time(unix_timestamp, 0);
-        filetime::set_file_mtime(path, mtime).expect("set mtime");
+        ::test_support::file_times::set_file_mtime(path, mtime).expect("set mtime");
     }
 
     /// Creates a file with both access and modification times set.
@@ -423,7 +424,7 @@ mod test_helpers {
         std::fs::write(path, content).expect("write file");
         let atime = FileTime::from_unix_time(atime_unix, 0);
         let mtime = FileTime::from_unix_time(mtime_unix, 0);
-        filetime::set_file_times(path, atime, mtime).expect("set times");
+        ::test_support::file_times::set_file_times(path, atime, mtime).expect("set times");
     }
 
     /// Creates a symbolic link (Unix only).
@@ -521,7 +522,7 @@ mod test_helpers {
     /// Sets the modification time of a file to the test timestamp.
     #[allow(dead_code)]
     pub fn set_test_mtime(path: &Path) {
-        filetime::set_file_mtime(path, test_time()).expect("set mtime");
+        ::test_support::file_times::set_file_mtime(path, test_time()).expect("set mtime");
     }
 
     /// Synchronizes the modification time of two files.
@@ -529,16 +530,16 @@ mod test_helpers {
     /// Makes `dest` have the same mtime as `source`.
     #[allow(dead_code)]
     pub fn sync_mtime(source: &Path, dest: &Path) {
-        let mtime = FileTime::from_last_modification_time(
+        let mtime = ::test_support::file_times::mtime_of(
             &std::fs::metadata(source).expect("source metadata"),
         );
-        filetime::set_file_mtime(dest, mtime).expect("set dest mtime");
+        ::test_support::file_times::set_file_mtime(dest, mtime).expect("set dest mtime");
     }
 
     /// Gets the modification time of a file as a FileTime.
     #[allow(dead_code)]
     pub fn get_mtime(path: &Path) -> FileTime {
-        FileTime::from_last_modification_time(&std::fs::metadata(path).expect("metadata"))
+        ::test_support::file_times::mtime_of(&std::fs::metadata(path).expect("metadata"))
     }
 
     /// Asserts that a file exists at the given path.

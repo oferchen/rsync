@@ -544,7 +544,7 @@ fn checksum_ignores_mtime_when_content_matches() {
     set_file_mtime(&destination, very_old).expect("set dest time");
 
     let dest_mtime_before =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
 
     let operands = vec![
         source.into_os_string(),
@@ -564,7 +564,7 @@ fn checksum_ignores_mtime_when_content_matches() {
     assert_eq!(summary.regular_files_matched(), 1);
 
     let dest_mtime_after =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime_before, dest_mtime_after);
 }
 

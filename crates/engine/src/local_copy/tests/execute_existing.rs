@@ -245,7 +245,8 @@ fn existing_nested_directories_mixed_states() {
 
 #[test]
 fn existing_combined_with_update() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -357,7 +358,8 @@ fn existing_combined_with_checksum() {
 
 #[test]
 fn existing_combined_with_times_preserves_mtime() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
@@ -386,7 +388,7 @@ fn existing_combined_with_times_preserves_mtime() {
     assert_eq!(summary.files_copied(), 1);
 
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime.unix_seconds(), source_mtime.unix_seconds());
 }
 

@@ -301,7 +301,7 @@ mod create_directory_incremental_tests {
 
         // Backdate the on-disk directory so its mtime differs from the entry.
         let old = filetime::FileTime::from_unix_time(1_500_000_000, 0);
-        filetime::set_file_mtime(&present, old).unwrap();
+        test_support::file_times::set_file_mtime(&present, old).unwrap();
 
         // Sender entry carries a newer mtime (2021-01-01 vs the 2017 on disk).
         let mut entry = FileEntry::new_directory("present".into(), 0o755);
@@ -351,7 +351,7 @@ mod create_directory_incremental_tests {
         std::fs::create_dir(&present).unwrap();
 
         let when = filetime::FileTime::from_unix_time(1_609_459_200, 0);
-        filetime::set_file_mtime(&present, when).unwrap();
+        test_support::file_times::set_file_mtime(&present, when).unwrap();
 
         let mut entry = FileEntry::new_directory("present".into(), 0o755);
         entry.set_mtime(1_609_459_200, 0);

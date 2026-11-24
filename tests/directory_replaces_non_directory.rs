@@ -93,7 +93,7 @@ struct Outcome {
 
 fn set_mtime(path: &Path, seconds: i64) {
     let time = FileTime::from_unix_time(seconds, 0);
-    filetime::set_symlink_file_times(path, time, time).expect("set mtime");
+    test_support::file_times::set_symlink_file_times(path, time, time).expect("set mtime");
 }
 
 /// `src/` holds `a`, `d1/f1`, `d1/sub/f2` and `ro/d1/x`; `dst/` holds
@@ -175,7 +175,7 @@ fn walk(root: &Path, relative: &Path, lines: &mut Vec<String>) {
     };
     let file_type = meta.file_type();
     let mode = meta.permissions().mode() & 0o7777;
-    let mtime = FileTime::from_last_modification_time(&meta).unix_seconds();
+    let mtime = test_support::file_times::mtime_of(&meta).unix_seconds();
     let detail = if file_type.is_dir() {
         // A created directory that was not given the source time carries the
         // time of the run, which differs between the two binaries.

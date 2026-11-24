@@ -98,7 +98,7 @@ fn fixture() -> Fixture {
     fs::create_dir_all(root.join("dst/bak")).expect("create backup root");
     fs::write(root.join("src/sub/f"), NEW).expect("write src");
     fs::write(root.join("dst/sub/f"), OLD).expect("write dst");
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         root.join("dst/sub/f"),
         filetime::FileTime::from_unix_time(1_000_000, 0),
     )

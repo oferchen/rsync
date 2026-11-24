@@ -207,7 +207,7 @@ fn parity_partial_shutdown_retains_with_mtime_zero() {
     assert!(dest.exists(), "--partial must retain file on Shutdown");
     assert_eq!(fs::read(&dest).unwrap(), test_data(200));
 
-    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&dest).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&dest).unwrap());
     assert_eq!(
         mtime,
         filetime::FileTime::from_unix_time(0, 0),
@@ -225,7 +225,7 @@ fn parity_partial_abort_retains_with_mtime_zero() {
     assert!(dest.exists(), "--partial must retain file on Abort");
     assert_eq!(fs::read(&dest).unwrap(), test_data(200));
 
-    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&dest).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&dest).unwrap());
     assert_eq!(
         mtime,
         filetime::FileTime::from_unix_time(0, 0),
@@ -243,7 +243,7 @@ fn parity_partial_disconnect_retains_with_mtime_zero() {
     assert!(dest.exists(), "--partial must retain file on Disconnect");
     assert_eq!(fs::read(&dest).unwrap(), test_data(200));
 
-    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&dest).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&dest).unwrap());
     assert_eq!(
         mtime,
         filetime::FileTime::from_unix_time(0, 0),
@@ -360,8 +360,7 @@ fn parity_partial_dir_shutdown_retains_without_mtime_zero() {
     assert_eq!(fs::read(&partial_path).unwrap(), test_data(200));
 
     // upstream: cleanup.c:175-179 only applies to plain --partial, not --partial-dir
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(&partial_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&partial_path).unwrap());
     assert_ne!(
         mtime,
         filetime::FileTime::from_unix_time(0, 0),
@@ -384,8 +383,7 @@ fn parity_partial_dir_abort_retains_without_mtime_zero() {
     );
     assert_eq!(fs::read(&partial_path).unwrap(), test_data(200));
 
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(&partial_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&partial_path).unwrap());
     assert_ne!(
         mtime,
         filetime::FileTime::from_unix_time(0, 0),
@@ -408,8 +406,7 @@ fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
     );
     assert_eq!(fs::read(&partial_path).unwrap(), test_data(200));
 
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(&partial_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&partial_path).unwrap());
     assert_ne!(
         mtime,
         filetime::FileTime::from_unix_time(0, 0),

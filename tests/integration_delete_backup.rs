@@ -530,7 +530,8 @@ fn delete_empty_directories() {
 
 #[test]
 fn backup_only_on_actual_changes() {
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_mtime;
 
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();

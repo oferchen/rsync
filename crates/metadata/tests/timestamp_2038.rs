@@ -11,13 +11,14 @@
 //! - Round-trip preserves timestamps after 2038
 //! - No overflow errors occur at the boundary
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 #[cfg(unix)]
 use metadata::apply_directory_metadata;
 use metadata::apply_file_metadata;
 #[cfg(unix)]
 use metadata::apply_symlink_metadata;
 use std::fs;
+use test_support::file_times::set_file_times;
 
 /// The Year 2038 overflow boundary for 32-bit signed Unix timestamps.
 /// This is 2^31 - 1 = 2,147,483,647 seconds since Unix epoch.
@@ -61,8 +62,8 @@ fn file_metadata_preserves_timestamp_at_2038_boundary() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - without --atimes the access time is left
     // unchanged (ATTRS_SKIP_ATIME); the 2038-boundary overflow test is on mtime.
@@ -94,8 +95,8 @@ fn file_metadata_preserves_timestamp_before_2038() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - atime not written without --atimes.
     assert_ne!(
@@ -123,8 +124,8 @@ fn file_metadata_preserves_timestamp_after_2038() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - atime not written without --atimes.
     assert_ne!(
@@ -152,8 +153,8 @@ fn file_metadata_preserves_timestamp_year_2100() {
     apply_file_metadata(&dest, &metadata).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - atime not written without --atimes.
     assert_ne!(
@@ -180,7 +181,7 @@ fn file_metadata_preserves_timestamp_year_3000() {
     // Some filesystems (e.g. ext4 on CI runners) cap timestamps before year 3000.
     // If the source timestamp was clamped by the filesystem, skip the assertion.
     let source_meta = fs::metadata(&source).expect("source metadata");
-    let source_mtime = FileTime::from_last_modification_time(&source_meta);
+    let source_mtime = test_support::file_times::mtime_of(&source_meta);
     if source_mtime != mtime {
         eprintln!(
             "skipping: filesystem clamped year-3000 timestamp to {}",
@@ -192,8 +193,8 @@ fn file_metadata_preserves_timestamp_year_3000() {
     apply_file_metadata(&dest, &source_meta).expect("apply file metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - atime not written without --atimes.
     assert_ne!(
@@ -221,8 +222,8 @@ fn directory_metadata_preserves_timestamp_beyond_2038() {
     apply_directory_metadata(&dest, &metadata).expect("apply directory metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - directories always skip atime (S_ISDIR).
     assert_ne!(dest_atime, atime, "directory atime must never be preserved");
@@ -247,14 +248,15 @@ fn symlink_metadata_preserves_timestamp_beyond_2038() {
     // Use timestamp beyond 2038
     let atime = FileTime::from_unix_time(AFTER_2038, 777_000_000);
     let mtime = FileTime::from_unix_time(AFTER_2038, 888_000_000);
-    filetime::set_symlink_file_times(&source_link, atime, mtime).expect("set link times");
+    test_support::file_times::set_symlink_file_times(&source_link, atime, mtime)
+        .expect("set link times");
 
     let metadata = fs::symlink_metadata(&source_link).expect("source link metadata");
     apply_symlink_metadata(&dest_link, &metadata).expect("apply symlink metadata");
 
     let dest_meta = fs::symlink_metadata(&dest_link).expect("dest link metadata");
-    let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_atime = test_support::file_times::atime_of(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // upstream: rsync.c:725-726 - symlink atime not written without --atimes.
     assert_ne!(
@@ -303,7 +305,7 @@ fn round_trip_preserves_timestamps_across_2038_boundary() {
 
         // Verify file3 has the same timestamp as file1
         let meta3 = fs::metadata(&file3).expect("file3 metadata");
-        let final_mtime = FileTime::from_last_modification_time(&meta3);
+        let final_mtime = test_support::file_times::mtime_of(&meta3);
 
         assert_eq!(
             final_mtime, original_time,
@@ -335,7 +337,7 @@ fn no_overflow_at_i32_max_boundary() {
     );
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(
         dest_mtime, critical_timestamp,
         "Timestamp at i32::MAX should be preserved"
@@ -363,7 +365,7 @@ fn no_overflow_just_past_i32_max() {
     );
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(
         dest_mtime, past_overflow,
         "Timestamp past i32::MAX should be preserved"
@@ -390,7 +392,7 @@ fn nanosecond_precision_preserved_beyond_2038() {
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
-        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
         assert_eq!(
             dest_mtime, time_with_nsec,
@@ -452,7 +454,7 @@ fn apply_metadata_from_file_entry_handles_post_2038_timestamps() {
 
     // Verify the timestamp was correctly applied
     let metadata = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_mtime = test_support::file_times::mtime_of(&metadata);
     let expected_mtime = FileTime::from_unix_time(YEAR_2100, 123_456_789);
 
     assert_eq!(
@@ -478,7 +480,7 @@ fn negative_timestamps_are_handled_correctly() {
     apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     assert_eq!(
         dest_mtime, timestamp_1960,
@@ -505,7 +507,7 @@ fn extreme_range_64bit_timestamps() {
     // Some filesystems (e.g. ext4 on CI runners) clamp timestamps before year 2500.
     // If the source timestamp was clamped, skip the exact-match assertion.
     let metadata = fs::metadata(&source).expect("source metadata");
-    let source_mtime = FileTime::from_last_modification_time(&metadata);
+    let source_mtime = test_support::file_times::mtime_of(&metadata);
     if source_mtime != large_timestamp {
         eprintln!(
             "skipping: filesystem clamped extreme timestamp to {}",
@@ -519,7 +521,7 @@ fn extreme_range_64bit_timestamps() {
     assert!(result.is_ok(), "Should handle extreme 64-bit timestamps");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(
         dest_mtime, large_timestamp,
         "Extreme timestamp should be preserved"
@@ -548,7 +550,7 @@ fn metadata_options_respect_times_flag_post_2038() {
     apply_file_metadata_with_options(&dest, &metadata, &options).expect("apply without times");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // Time should NOT match because times preservation was disabled
     assert_ne!(
@@ -561,7 +563,7 @@ fn metadata_options_respect_times_flag_post_2038() {
     apply_file_metadata_with_options(&dest, &metadata, &options).expect("apply with times");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
 
     // Time should match now
     assert_eq!(

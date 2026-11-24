@@ -114,7 +114,7 @@ fn touch_up_dirs_never_retouches_a_directory_outside_the_tree() {
     fs::create_dir(&bait).unwrap();
     fs::set_permissions(&bait, fs::Permissions::from_mode(0o755)).unwrap();
     let bait_mtime = FileTime::from_unix_time(5_000_000, 0);
-    filetime::set_file_mtime(&bait, bait_mtime).unwrap();
+    test_support::file_times::set_file_mtime(&bait, bait_mtime).unwrap();
 
     let mut dir = FileEntry::new_directory("a/b".into(), 0o555);
     dir.set_mtime(1_000_000, 0);
@@ -129,7 +129,7 @@ fn touch_up_dirs_never_retouches_a_directory_outside_the_tree() {
 
     let meta = fs::metadata(&bait).unwrap();
     assert_eq!(
-        FileTime::from_last_modification_time(&meta),
+        test_support::file_times::mtime_of(&meta),
         bait_mtime,
         "touch_up_dirs() re-timed a directory outside the destination"
     );
@@ -163,7 +163,7 @@ fn touch_up_dirs_retouches_a_nested_directory_inside_the_tree() {
 
     let meta = fs::metadata(dest.join("a/b")).unwrap();
     assert_eq!(
-        FileTime::from_last_modification_time(&meta),
+        test_support::file_times::mtime_of(&meta),
         FileTime::from_unix_time(1_000_000, 0)
     );
     if !metadata::am_root() {

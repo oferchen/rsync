@@ -2685,7 +2685,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
     assert_eq!(fs::read(&file_path).unwrap(), b"partial content");
 
     // The retained partial file must have mtime = Unix epoch (1970-01-01).
-    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&file_path).unwrap());
     let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_eq!(
         mtime, unix_epoch,
@@ -2742,7 +2742,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_abort() {
 
     assert!(file_path.exists(), "partial file must be retained on abort");
 
-    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&file_path).unwrap());
     let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_eq!(
         mtime, unix_epoch,
@@ -2801,8 +2801,7 @@ fn partial_mode_partial_dir_does_not_stamp_mtime_zero() {
     );
 
     // partial-dir files should NOT have mtime stamped to epoch.
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(&partial_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&partial_path).unwrap());
     let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_ne!(
         mtime, unix_epoch,
@@ -2858,7 +2857,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
         "partial file must be retained on disconnect"
     );
 
-    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&file_path).unwrap());
     let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_eq!(
         mtime, unix_epoch,
@@ -2929,7 +2928,7 @@ fn verify_failure_keeps_recent_mtime_on_plain_partial() {
         "plain --partial must retain the failed-verify stub at the destination"
     );
 
-    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let mtime = test_support::file_times::mtime_of(&fs::metadata(&file_path).unwrap());
     let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_ne!(
         mtime, unix_epoch,
@@ -3746,7 +3745,7 @@ fn sparse_mtime_config(sparse: bool, _size: u64) -> DiskCommitConfig {
 
 /// Reads the destination file's last-modification time in whole seconds.
 fn dest_mtime_secs(path: &std::path::Path) -> i64 {
-    filetime::FileTime::from_last_modification_time(&fs::metadata(path).unwrap()).unix_seconds()
+    test_support::file_times::mtime_of(&fs::metadata(path).unwrap()).unix_seconds()
 }
 
 /// A sparse payload: leading data, a large zero hole, then trailing data. The

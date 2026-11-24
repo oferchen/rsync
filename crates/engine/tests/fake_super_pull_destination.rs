@@ -93,7 +93,8 @@ fn a_fake_super_pull_onto_a_corrupt_destination_exits_file_io() {
     fs::create_dir_all(root.join("dst")).expect("create dst");
     let bad = root.join("dst/f");
     fs::write(&bad, b"old").expect("write destination");
-    filetime::set_file_mtime(&bad, FileTime::from_unix_time(1_546_300_800, 0)).expect("mtime");
+    ::test_support::file_times::set_file_mtime(&bad, FileTime::from_unix_time(1_546_300_800, 0))
+        .expect("mtime");
     xattr::set(&bad, FAKE_SUPER_XATTR, b"garbage").expect("plant %stat");
 
     let output = pull(&oc, &shell, root, "-a");

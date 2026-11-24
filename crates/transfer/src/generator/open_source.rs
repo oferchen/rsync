@@ -418,7 +418,7 @@ mod tests {
         // Backdate atime to 1 hour ago so a fresh access would be visible.
         let past = SystemTime::now() - Duration::from_secs(3600);
         let past_ft = filetime::FileTime::from_system_time(past);
-        filetime::set_file_atime(&path, past_ft).unwrap();
+        test_support::file_times::set_file_atime(&path, past_ft).unwrap();
 
         let before = std::fs::metadata(&path).unwrap().atime();
 

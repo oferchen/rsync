@@ -538,7 +538,8 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
 /// here rather than silently duplicate or displace the line.
 #[test]
 fn level_2_local_delta_total_reports_real_match_counters() {
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_mtime;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("src");
@@ -1490,8 +1491,10 @@ fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
     // both syncs landing in the same wall-clock second. Both files in each tree
     // share an inode, so stamping the leader stamps the follower too.
     let pinned = filetime::FileTime::from_unix_time(1_000_000_000, 0);
-    filetime::set_file_mtime(from.join("leader.txt"), pinned).expect("pin source mtime");
-    filetime::set_file_mtime(to.join("leader.txt"), pinned).expect("pin dest mtime");
+    test_support::file_times::set_file_mtime(from.join("leader.txt"), pinned)
+        .expect("pin source mtime");
+    test_support::file_times::set_file_mtime(to.join("leader.txt"), pinned)
+        .expect("pin dest mtime");
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -1755,7 +1758,7 @@ fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
         dest_dir.join("staledir"),
         dest_dir.join("staledir/gone.txt"),
     ] {
-        filetime::set_file_mtime(&path, epoch).expect("backdate");
+        test_support::file_times::set_file_mtime(&path, epoch).expect("backdate");
     }
 
     let mut source_operand = source_dir.into_os_string();

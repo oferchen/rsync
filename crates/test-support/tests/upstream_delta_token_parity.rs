@@ -164,9 +164,9 @@ fn pull(client: &Path, server: &Path, basis: &[u8], source: &[u8]) -> (Vec<u8>, 
     let dest = work.path().join("dest.bin");
     fs::write(&src, source).expect("write source");
     fs::write(&dest, basis).expect("write basis");
-    filetime::set_file_mtime(&src, FileTime::from_unix_time(FIXED_MTIME_SECS, 0))
+    test_support::file_times::set_file_mtime(&src, FileTime::from_unix_time(FIXED_MTIME_SECS, 0))
         .expect("pin source mtime");
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         &dest,
         FileTime::from_unix_time(FIXED_MTIME_SECS - 86_400, 0),
     )

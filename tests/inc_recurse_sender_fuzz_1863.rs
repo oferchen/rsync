@@ -83,7 +83,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use checksums::strong::Sha256;
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
+use test_support::file_times::set_file_times;
 
 // ============================================================================
 // PRNG: xorshift64*, no external crate dependency.

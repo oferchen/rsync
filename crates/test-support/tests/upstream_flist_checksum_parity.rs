@@ -91,10 +91,11 @@ fn write_tree(root: &Path, basis: bool) {
         } else {
             FIXED_MTIME_SECS
         };
-        filetime::set_file_mtime(&path, FileTime::from_unix_time(secs, 0)).expect("mtime");
+        test_support::file_times::set_file_mtime(&path, FileTime::from_unix_time(secs, 0))
+            .expect("mtime");
     }
     for dir in ["d1", "d2"] {
-        filetime::set_file_mtime(
+        test_support::file_times::set_file_mtime(
             root.join(dir),
             FileTime::from_unix_time(FIXED_MTIME_SECS, 0),
         )

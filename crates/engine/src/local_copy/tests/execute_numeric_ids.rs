@@ -458,8 +458,8 @@ fn numeric_ids_with_permissions_and_times() {
     assert_eq!(metadata.uid(), test_uid);
     assert_eq!(metadata.gid(), test_gid);
     assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
-    let dest_atime = FileTime::from_last_access_time(&metadata);
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_atime = ::test_support::file_times::atime_of(&metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&metadata);
     // upstream: rsync.c:725-726 - --times alone leaves the access time unchanged.
     assert_ne!(dest_atime, atime, "atime must not be preserved without -U");
     assert_eq!(dest_mtime, mtime);

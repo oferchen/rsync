@@ -3,7 +3,8 @@ use super::*;
 
 #[test]
 fn checksum_with_no_times_preserves_existing_destination() {
-    use filetime::{FileTime, set_file_mtime};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_mtime;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let tmp = test_support::create_tempdir();
@@ -38,7 +39,7 @@ fn checksum_with_no_times_preserves_existing_destination() {
     assert!(stderr.is_empty());
 
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
-    let final_mtime = FileTime::from_last_modification_time(&metadata);
+    let final_mtime = test_support::file_times::mtime_of(&metadata);
     assert_eq!(final_mtime, preserved);
     assert_eq!(
         std::fs::read(destination).expect("read destination"),

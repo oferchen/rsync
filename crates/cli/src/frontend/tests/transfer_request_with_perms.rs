@@ -4,8 +4,9 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn transfer_request_with_perms_preserves_mode() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source-perms.txt");
@@ -30,6 +31,6 @@ fn transfer_request_with_perms_preserves_mode() {
 
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_mtime = test_support::file_times::mtime_of(&metadata);
     assert_eq!(dest_mtime, mtime);
 }

@@ -291,7 +291,7 @@ mod tests {
             0o640,
             "permissions must come from the begin-message entry"
         );
-        let mtime = filetime::FileTime::from_last_modification_time(&meta).unix_seconds();
+        let mtime = test_support::file_times::mtime_of(&meta).unix_seconds();
         assert_eq!(
             mtime, 1_600_000_000,
             "mtime must come from the begin-message entry"

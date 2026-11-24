@@ -5,9 +5,10 @@
 
 mod integration;
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 use integration::helpers::*;
 use std::fs;
+use test_support::file_times::set_file_times;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -218,7 +219,7 @@ fn delta_transfer_preserves_timestamps_nanosecond() {
 
     // Verify timestamp preserved with nanosecond precision
     let dest_meta = fs::metadata(&dest_file).unwrap();
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(
         dest_mtime, mtime,
         "Timestamp should be preserved with nanosecond precision"
@@ -263,7 +264,7 @@ fn delta_transfer_archive_mode() {
         "Permissions should be preserved"
     );
     assert_eq!(
-        FileTime::from_last_modification_time(&dest_meta),
+        test_support::file_times::mtime_of(&dest_meta),
         mtime,
         "Timestamp should be preserved with nanosecond precision"
     );
@@ -324,7 +325,7 @@ fn delta_transfer_empty_file_preserves_mtime() {
         "File should be empty"
     );
 
-    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+    let dest_mtime = test_support::file_times::mtime_of(&fs::metadata(&dest_file).unwrap());
     assert_eq!(
         dest_mtime, target_mtime,
         "Empty file mtime should be preserved"
@@ -433,7 +434,7 @@ fn delta_transfer_empty_file_archive_mode() {
         "Archive mode should preserve permissions for empty file"
     );
     assert_eq!(
-        FileTime::from_last_modification_time(&meta),
+        test_support::file_times::mtime_of(&meta),
         target_mtime,
         "Archive mode should preserve mtime for empty file"
     );

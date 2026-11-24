@@ -29,7 +29,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
-use filetime::{FileTime, set_file_mtime};
+use filetime::FileTime;
+use test_support::file_times::set_file_mtime;
 
 const LOG_FORMAT: &str = "%o %f %l %i";
 
@@ -364,7 +365,8 @@ fn push_logs_name_link_owner_group_mtime_and_perms() {
     fs::set_permissions(&module_dir, fs::Permissions::from_mode(0o755)).expect("chmod mod");
     // 2001-09-09 01:46:40 UTC; the daemon runs with TZ=UTC so `%M` is fixed.
     let stamp = FileTime::from_unix_time(1_000_000_000, 0);
-    filetime::set_symlink_file_times(src.join("lnk"), stamp, stamp).expect("stamp lnk");
+    test_support::file_times::set_symlink_file_times(src.join("lnk"), stamp, stamp)
+        .expect("stamp lnk");
     for path in [src.join("d/f"), src.join("d"), src.clone()] {
         set_file_mtime(&path, stamp).expect("stamp");
     }

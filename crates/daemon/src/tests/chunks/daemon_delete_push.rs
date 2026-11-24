@@ -104,7 +104,7 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
     // on the second push (different mtime forces re-evaluation).
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
     for name in &["file_a.txt", "file_b.txt", "file_c.txt"] {
-        filetime::set_file_mtime(dest_dir.join(name), old_time)
+        ::test_support::file_times::set_file_mtime(dest_dir.join(name), old_time)
             .unwrap_or_else(|e| panic!("backdate dest {name}: {e}"));
     }
 

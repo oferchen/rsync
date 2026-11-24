@@ -286,7 +286,7 @@ fn redo_request_itemizes_an_existing_destination() {
     let dest = TempDir::new().expect("tempdir");
     let existing = dest.path().join("keep");
     std::fs::write(&existing, b"hello").expect("existing destination");
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         &existing,
         filetime::FileTime::from_unix_time(1_000_000_000, 0),
     )

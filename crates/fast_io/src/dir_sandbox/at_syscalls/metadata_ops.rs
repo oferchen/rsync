@@ -143,7 +143,7 @@ pub fn fchownat(
 ///
 /// The leaf is resolved relative to `dirfd`. When `follow_symlinks` is
 /// `false` the helper passes `AT_SYMLINK_NOFOLLOW`, matching the behaviour
-/// of [`filetime::set_symlink_file_times`].
+/// of [`crate::set_path_times`] with `follow_symlinks` false.
 ///
 /// Times are passed as [`filetime::FileTime`] for parity with the rest of
 /// the metadata path which already standardises on that type.
@@ -533,6 +533,22 @@ fn utimensat_omit_raw(
     }
 }
 
+/// Set atime/mtime on `path`, resolved against the working directory, with
+/// `None` slots left unchanged (`UTIME_OMIT`).
+///
+/// The unanchored form behind [`crate::file_times::set_path_times`], for
+/// callers that hold no parent directory descriptor.
+pub(crate) fn utimensat_path(
+    path: &Path,
+    atime: Option<FileTime>,
+    mtime: Option<FileTime>,
+    follow_symlinks: bool,
+) -> io::Result<()> {
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    utimensat_omit_raw(libc::AT_FDCWD, &c_path, atime, mtime, follow_symlinks)
+}
+
 /// Set atime/mtime on `path` after walking its parent through
 /// [`secure_open_dir`](crate::secure_open_dir), with `None` slots left
 /// unchanged (`UTIME_OMIT`).
@@ -546,8 +562,8 @@ fn utimensat_omit_raw(
 /// cannot block the call.
 ///
 /// `follow_symlinks = false` passes `AT_SYMLINK_NOFOLLOW`, matching
-/// [`filetime::set_symlink_file_times`]; `true` follows a symlink leaf,
-/// matching [`filetime::set_file_times`].
+/// [`crate::set_path_times`] with `follow_symlinks` false; `true` follows a
+/// symlink leaf, matching it with `follow_symlinks` true.
 ///
 /// Falls back to a path-based `utimensat(AT_FDCWD, ...)` when `path` has
 /// no parent component (single-component name in the cwd).
@@ -653,9 +669,7 @@ pub fn utimensat_via_sandbox_or_fallback(
     {
         return Ok(());
     }
-    let c_path = CString::new(link_path.as_os_str().as_bytes())
-        .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-    utimensat_omit_raw(libc::AT_FDCWD, &c_path, atime, mtime, follow_symlinks)
+    utimensat_path(link_path, atime, mtime, follow_symlinks)
 }
 
 #[cfg(test)]

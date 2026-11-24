@@ -300,7 +300,7 @@ fn delay_updates_preserves_modification_time() {
 
     assert_eq!(summary.files_copied(), 1);
     let dest_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(dest_mtime, past_time);
 }
 
@@ -1783,9 +1783,8 @@ fn delay_updates_preserves_times_across_multiple_files() {
 
     for (name, _, mtime) in &times {
         let dest_path = dest_root.join(name);
-        let dest_mtime = FileTime::from_last_modification_time(
-            &fs::metadata(&dest_path).expect("dest metadata"),
-        );
+        let dest_mtime =
+            ::test_support::file_times::mtime_of(&fs::metadata(&dest_path).expect("dest metadata"));
         let expected = FileTime::from_unix_time(*mtime, 0);
         assert_eq!(
             dest_mtime, expected,
@@ -2287,9 +2286,8 @@ fn delay_updates_restores_root_directory_mtime_after_rename() {
         .expect("copy succeeds");
     assert_eq!(summary.files_copied(), 1);
 
-    let dest_dir_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&dest_root).expect("dest dir metadata"),
-    );
+    let dest_dir_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_root).expect("dest dir metadata"));
     assert_eq!(
         dest_dir_mtime, past,
         "the delayed-update rename bumps the dir mtime apply_final_directory_metadata \
@@ -2334,7 +2332,7 @@ fn delay_updates_restores_nested_directory_mtime_after_rename() {
         .expect("copy succeeds");
 
     let dest_sub_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_sub).expect("dest sub metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_sub).expect("dest sub metadata"));
     assert_eq!(
         dest_sub_mtime, past,
         "the final touch_up_dirs pass must restore nested directory mtimes too, \
@@ -2415,7 +2413,7 @@ fn delay_updates_writes_through_a_pre_existing_partial_dir() {
 
     let pinned = FileTime::from_unix_time(PINNED_EPOCH, 0);
     set_file_mtime(&partial_dir, pinned).expect("pin partial dir mtime");
-    let stored = FileTime::from_last_modification_time(
+    let stored = ::test_support::file_times::mtime_of(
         &fs::metadata(&partial_dir).expect("partial dir metadata"),
     );
 
@@ -2433,7 +2431,7 @@ fn delay_updates_writes_through_a_pre_existing_partial_dir() {
         )
         .expect("copy succeeds");
 
-    let after = FileTime::from_last_modification_time(
+    let after = ::test_support::file_times::mtime_of(
         &fs::metadata(&partial_dir).expect("partial dir metadata"),
     );
     assert_ne!(

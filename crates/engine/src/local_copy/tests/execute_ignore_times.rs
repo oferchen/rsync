@@ -59,7 +59,7 @@ fn ignore_times_transfers_identical_content() {
 
     // Set matching timestamps (normally this would skip)
     let source_meta = fs::metadata(&source).expect("source metadata");
-    let mtime = FileTime::from_last_modification_time(&source_meta);
+    let mtime = ::test_support::file_times::mtime_of(&source_meta);
     set_file_mtime(&destination, mtime).expect("align times");
 
     let operands = vec![
@@ -996,7 +996,7 @@ fn ignore_times_with_permissions_and_times_preserves_metadata() {
     );
 
     let dest_meta = fs::metadata(&destination).expect("dest metadata");
-    let dest_final_time = FileTime::from_last_modification_time(&dest_meta);
+    let dest_final_time = ::test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_final_time, source_time);
 
     #[cfg(unix)]

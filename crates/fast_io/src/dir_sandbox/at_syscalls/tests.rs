@@ -567,7 +567,7 @@ fn secure_utimes_at_dirfd_sets_mtime_via_shared_parent() {
     )
     .expect("shared-dirfd utimes");
     assert_eq!(
-        filetime::FileTime::from_last_modification_time(&std::fs::metadata(&path).expect("stat")),
+        test_support::file_times::mtime_of(&std::fs::metadata(&path).expect("stat")),
         mtime
     );
 }
@@ -673,8 +673,8 @@ fn utimensat_sets_atime_and_mtime() {
     utimensat(dirfd.as_fd(), OsStr::new("file"), atime, mtime, true).expect("utimensat");
 
     let meta = std::fs::metadata(&path).expect("stat");
-    assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
-    assert_eq!(FileTime::from_last_access_time(&meta), atime);
+    assert_eq!(test_support::file_times::mtime_of(&meta), mtime);
+    assert_eq!(test_support::file_times::atime_of(&meta), atime);
 }
 
 #[test]
@@ -710,7 +710,7 @@ fn utimensat_via_sandbox_takes_at_path_for_single_component() {
     .expect("utimensat sandbox");
 
     let meta = std::fs::metadata(&path).expect("stat");
-    assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
+    assert_eq!(test_support::file_times::mtime_of(&meta), mtime);
 }
 
 #[test]
@@ -736,7 +736,7 @@ fn utimensat_via_sandbox_anchors_a_multi_component_path() {
     .expect("utimensat fallback");
 
     let meta = std::fs::metadata(&path).expect("stat");
-    assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
+    assert_eq!(test_support::file_times::mtime_of(&meta), mtime);
 }
 
 #[test]
@@ -752,7 +752,7 @@ fn utimensat_via_sandbox_falls_back_when_sandbox_absent() {
         .expect("utimensat fallback");
 
     let meta = std::fs::metadata(&path).expect("stat");
-    assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
+    assert_eq!(test_support::file_times::mtime_of(&meta), mtime);
 }
 
 #[test]
@@ -763,7 +763,7 @@ fn utimensat_via_sandbox_symlink_no_follow_preserves_target_mtime() {
     let target = root.join("target");
     std::fs::write(&target, b"x").expect("write target");
     let initial_target_mtime = FileTime::from_unix_time(100, 0);
-    filetime::set_file_times(&target, initial_target_mtime, initial_target_mtime)
+    test_support::file_times::set_file_times(&target, initial_target_mtime, initial_target_mtime)
         .expect("seed target mtime");
     let link = root.join("link");
     symlink(&target, &link).expect("symlink");
@@ -784,7 +784,7 @@ fn utimensat_via_sandbox_symlink_no_follow_preserves_target_mtime() {
 
     let target_meta = std::fs::metadata(&target).expect("stat target");
     assert_eq!(
-        FileTime::from_last_modification_time(&target_meta),
+        test_support::file_times::mtime_of(&target_meta),
         initial_target_mtime,
         "AT_SYMLINK_NOFOLLOW must never chase the symlink to the target"
     );

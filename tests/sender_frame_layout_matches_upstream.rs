@@ -24,7 +24,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
+use test_support::file_times::set_file_times;
 
 /// The 3.5.1 client's half of the recorded session.
 const CLIENT_STREAM: &str = concat!(

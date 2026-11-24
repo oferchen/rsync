@@ -52,13 +52,13 @@ fn names_only_created_or_changed_dirs() {
     // "keep" exists with a matching mtime; "changed" exists with a differing
     // mtime; "new" is absent (will be created).
     std::fs::create_dir(dest.path().join("keep")).unwrap();
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         dest.path().join("keep"),
         filetime::FileTime::from_unix_time(t, 0),
     )
     .unwrap();
     std::fs::create_dir(dest.path().join("changed")).unwrap();
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         dest.path().join("changed"),
         filetime::FileTime::from_unix_time(t, 0),
     )

@@ -37,7 +37,7 @@ fn push_a_fifo(
     let dst = root.join(format!("dst-{tag}"));
     fs::create_dir(&dst).expect("create dst");
     let old = FileTime::from_unix_time(1_546_300_800, 0);
-    filetime::set_file_times(&dst, old, old).expect("backdate dst");
+    test_support::file_times::set_file_times(&dst, old, old).expect("backdate dst");
     let capture = root.join(format!("sent-{tag}"));
     let mut command = Command::new(client);
     command

@@ -1055,9 +1055,8 @@ fn link_dest_skips_symlink_in_reference() {
     // what makes the assertions below discriminating rather than vacuous.
     let real_file = temp.path().join("real_target.txt");
     fs::write(&real_file, b"real content").expect("write real target");
-    let source_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&source_file).expect("source metadata"),
-    );
+    let source_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&source_file).expect("source metadata"));
     set_file_times(&real_file, source_mtime, source_mtime).expect("sync target mtime");
     let link_dest_file = link_dest_dir.join("file.txt");
     std::os::unix::fs::symlink(&real_file, &link_dest_file).expect("create symlink");
@@ -1519,7 +1518,7 @@ fn link_dest_refused_hard_link_creates_the_node_instead() {
             let basis_node = make(&basis_dir);
             // Align mtime so the basis reaches the exact-match tier that
             // attempts the hard link at all.
-            let ftime = FileTime::from_last_modification_time(
+            let ftime = ::test_support::file_times::mtime_of(
                 &fs::symlink_metadata(&source_node).expect("source metadata"),
             );
             // Must be the NOFOLLOW setter, to match the lstat above. Plain
@@ -1528,7 +1527,8 @@ fn link_dest_refused_hard_link_creates_the_node_instead() {
             // waiting for a peer to open the other end, a socket refuses with
             // ENXIO/EOPNOTSUPP, and a symlink is followed to a target that
             // does not exist.
-            filetime::set_symlink_file_times(&basis_node, ftime, ftime).expect("sync basis times");
+            ::test_support::file_times::set_symlink_file_times(&basis_node, ftime, ftime)
+                .expect("sync basis times");
 
             // Trailing slash is load-bearing: it syncs the CONTENTS of source,
             // so the entry's link-dest-relative name is `node` and resolves to
@@ -1617,12 +1617,13 @@ fn link_dest_links_special_when_the_destination_accepts_it() {
     };
     let source_node = make(&source_dir);
     let basis_node = make(&basis_dir);
-    let ftime = FileTime::from_last_modification_time(
+    let ftime = ::test_support::file_times::mtime_of(
         &fs::symlink_metadata(&source_node).expect("source metadata"),
     );
     // NOFOLLOW setter to match the lstat above; plain set_file_times() would
     // open(2) the FIFO and block forever waiting for a peer.
-    filetime::set_symlink_file_times(&basis_node, ftime, ftime).expect("sync basis times");
+    ::test_support::file_times::set_symlink_file_times(&basis_node, ftime, ftime)
+        .expect("sync basis times");
 
     // Trailing slash syncs the CONTENTS, so the link-dest-relative name is
     // `node` and resolves to `previous/node` (see the matrix test above).

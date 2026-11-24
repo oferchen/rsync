@@ -181,7 +181,8 @@ fn daemon_pull_delay_updates_stages_through_tmp_dir() {
     fs::create_dir_all(&dest_dir).expect("create destination dir");
     fs::write(dest_dir.join("payload.bin"), b"stale").expect("seed stale dest payload");
     let old = filetime::FileTime::from_unix_time(946_684_800, 0); // 2000-01-01
-    filetime::set_file_mtime(dest_dir.join("payload.bin"), old).expect("backdate dest");
+    test_support::file_times::set_file_mtime(dest_dir.join("payload.bin"), old)
+        .expect("backdate dest");
 
     // The `.~tmp~/` staging directory the receiver must engage under
     // `--delay-updates`. Pre-created empty: honoring the flag consumes and

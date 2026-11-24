@@ -145,7 +145,7 @@ fn stamp_tree_mtime(root: &Path, mtime: i64) {
             stamp_tree_mtime(&entry.expect("dir entry").path(), mtime);
         }
     }
-    filetime::set_symlink_file_times(root, ft, ft).expect("stamp fixture mtime");
+    test_support::file_times::set_symlink_file_times(root, ft, ft).expect("stamp fixture mtime");
 }
 
 /// Copies `from` into `to` preserving contents, modes and mtimes (dirs
@@ -162,13 +162,13 @@ fn copy_tree(from: &Path, to: &Path) {
             copy_tree(&src, &dst);
         } else {
             fs::copy(&src, &dst).expect("copy tree file");
-            let ft = FileTime::from_last_modification_time(&meta);
-            filetime::set_file_times(&dst, ft, ft).expect("stamp copied mtime");
+            let ft = test_support::file_times::mtime_of(&meta);
+            test_support::file_times::set_file_times(&dst, ft, ft).expect("stamp copied mtime");
         }
     }
     let meta = fs::metadata(from).expect("stat tree root");
-    let ft = FileTime::from_last_modification_time(&meta);
-    filetime::set_file_times(to, ft, ft).expect("stamp copied dir mtime");
+    let ft = test_support::file_times::mtime_of(&meta);
+    test_support::file_times::set_file_times(to, ft, ft).expect("stamp copied dir mtime");
 }
 
 /// One comparable line per filesystem entry: kind, mode, mtime, content,

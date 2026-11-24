@@ -1145,7 +1145,7 @@ fn backdate_source(fx: &Fixture) {
         "src/sub",
         "src",
     ] {
-        filetime::set_file_mtime(fx.root.join(path), when).unwrap();
+        test_support::file_times::set_file_mtime(fx.root.join(path), when).unwrap();
     }
 }
 
@@ -1155,8 +1155,8 @@ fn seed_basis(dest: &Path) {
     fs::create_dir_all(dest).unwrap();
     fs::write(dest.join("a.txt"), b"old\n").unwrap();
     let when = filetime::FileTime::from_unix_time(978_307_200, 0);
-    filetime::set_file_mtime(dest.join("a.txt"), when).unwrap();
-    filetime::set_file_mtime(dest, when).unwrap();
+    test_support::file_times::set_file_mtime(dest.join("a.txt"), when).unwrap();
+    test_support::file_times::set_file_mtime(dest, when).unwrap();
 }
 
 /// The itemize rows of a `-i` replay, without the root-creation notice.

@@ -57,9 +57,10 @@ use std::io::Read;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::sync::{Arc, Mutex};
 
+use ::test_support::file_times::{set_file_mtime, set_symlink_file_times};
 use batch::{BatchConfig, BatchFlags, BatchMode, BatchReader, BatchWriter};
 use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
-use filetime::{FileTime, set_file_mtime, set_symlink_file_times};
+use filetime::FileTime;
 use protocol::CompatibilityFlags;
 use protocol::codec::{NdxCodec, NdxCodecEnum};
 use tempfile::tempdir;

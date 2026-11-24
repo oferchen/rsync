@@ -14,7 +14,8 @@
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_does_not_preserve_directory_mtime() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -36,7 +37,7 @@ fn omit_dir_times_does_not_preserve_directory_mtime() {
         .expect("copy succeeds");
 
     let dest_metadata = fs::metadata(dest_root.join("source")).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
 
     assert_ne!(
         dest_mtime, dir_mtime,
@@ -47,7 +48,8 @@ fn omit_dir_times_does_not_preserve_directory_mtime() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_still_preserves_file_timestamps() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -74,7 +76,7 @@ fn omit_dir_times_still_preserves_file_timestamps() {
         .expect("copy succeeds");
 
     let dest_dir_metadata = fs::metadata(dest_root.join("source")).expect("dest dir metadata");
-    let dest_dir_mtime = FileTime::from_last_modification_time(&dest_dir_metadata);
+    let dest_dir_mtime = ::test_support::file_times::mtime_of(&dest_dir_metadata);
     assert_ne!(
         dest_dir_mtime, dir_mtime,
         "directory mtime should not be preserved"
@@ -82,7 +84,7 @@ fn omit_dir_times_still_preserves_file_timestamps() {
 
     let dest_file = dest_root.join("source").join("file.txt");
     let dest_file_metadata = fs::metadata(&dest_file).expect("dest file metadata");
-    let dest_file_mtime = FileTime::from_last_modification_time(&dest_file_metadata);
+    let dest_file_mtime = ::test_support::file_times::mtime_of(&dest_file_metadata);
     assert_eq!(
         dest_file_mtime, file_mtime,
         "file mtime should still be preserved with --omit-dir-times"
@@ -92,7 +94,8 @@ fn omit_dir_times_still_preserves_file_timestamps() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_works_with_nested_directories() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -133,14 +136,14 @@ fn omit_dir_times_works_with_nested_directories() {
         .join("level3")
         .join("deep_file.txt");
     let dest_file_metadata = fs::metadata(&dest_file).expect("dest file metadata");
-    let dest_file_mtime = FileTime::from_last_modification_time(&dest_file_metadata);
+    let dest_file_mtime = ::test_support::file_times::mtime_of(&dest_file_metadata);
     assert_eq!(
         dest_file_mtime, file_mtime,
         "file mtime should be preserved"
     );
 
     let dest_root_metadata = fs::metadata(dest_root.join("source")).expect("root metadata");
-    let dest_root_mtime = FileTime::from_last_modification_time(&dest_root_metadata);
+    let dest_root_mtime = ::test_support::file_times::mtime_of(&dest_root_metadata);
     assert_ne!(
         dest_root_mtime, root_mtime,
         "root mtime should not be preserved"
@@ -148,7 +151,7 @@ fn omit_dir_times_works_with_nested_directories() {
 
     let dest_level1 = dest_root.join("source").join("level1");
     let dest_level1_metadata = fs::metadata(&dest_level1).expect("level1 metadata");
-    let dest_level1_mtime = FileTime::from_last_modification_time(&dest_level1_metadata);
+    let dest_level1_mtime = ::test_support::file_times::mtime_of(&dest_level1_metadata);
     assert_ne!(
         dest_level1_mtime, level1_mtime,
         "level1 mtime should not be preserved"
@@ -156,7 +159,7 @@ fn omit_dir_times_works_with_nested_directories() {
 
     let dest_level2 = dest_level1.join("level2");
     let dest_level2_metadata = fs::metadata(&dest_level2).expect("level2 metadata");
-    let dest_level2_mtime = FileTime::from_last_modification_time(&dest_level2_metadata);
+    let dest_level2_mtime = ::test_support::file_times::mtime_of(&dest_level2_metadata);
     assert_ne!(
         dest_level2_mtime, level2_mtime,
         "level2 mtime should not be preserved"
@@ -164,7 +167,7 @@ fn omit_dir_times_works_with_nested_directories() {
 
     let dest_level3 = dest_level2.join("level3");
     let dest_level3_metadata = fs::metadata(&dest_level3).expect("level3 metadata");
-    let dest_level3_mtime = FileTime::from_last_modification_time(&dest_level3_metadata);
+    let dest_level3_mtime = ::test_support::file_times::mtime_of(&dest_level3_metadata);
     assert_ne!(
         dest_level3_mtime, level3_mtime,
         "level3 mtime should not be preserved"
@@ -174,7 +177,8 @@ fn omit_dir_times_works_with_nested_directories() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_without_times_flag_has_no_effect() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -200,7 +204,7 @@ fn omit_dir_times_without_times_flag_has_no_effect() {
         .expect("copy succeeds");
 
     let dest_metadata = fs::metadata(dest_root.join("source")).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
 
     // Without --times, the directory mtime should not be preserved regardless
     assert_ne!(dest_mtime, dir_mtime);
@@ -209,7 +213,8 @@ fn omit_dir_times_without_times_flag_has_no_effect() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_with_permissions_preserves_mode() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -236,7 +241,7 @@ fn omit_dir_times_with_permissions_preserves_mode() {
         .expect("copy succeeds");
 
     let dest_metadata = fs::metadata(dest_root.join("source")).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
 
     assert_ne!(dest_mtime, dir_mtime);
 
@@ -246,7 +251,8 @@ fn omit_dir_times_with_permissions_preserves_mode() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_preserves_directory_permissions_multiple_dirs() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -284,8 +290,8 @@ fn omit_dir_times_preserves_directory_permissions_multiple_dirs() {
     let dest_nested_metadata = fs::metadata(&dest_nested).expect("nested metadata");
     assert_eq!(dest_nested_metadata.permissions().mode() & 0o777, 0o700);
 
-    let dest_root_mtime = FileTime::from_last_modification_time(&dest_root_metadata);
-    let dest_nested_mtime = FileTime::from_last_modification_time(&dest_nested_metadata);
+    let dest_root_mtime = ::test_support::file_times::mtime_of(&dest_root_metadata);
+    let dest_nested_mtime = ::test_support::file_times::mtime_of(&dest_nested_metadata);
     assert_ne!(dest_root_mtime, dir_mtime);
     assert_ne!(dest_nested_mtime, dir_mtime);
 }
@@ -293,7 +299,8 @@ fn omit_dir_times_preserves_directory_permissions_multiple_dirs() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_works_in_dry_run_mode() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -322,7 +329,8 @@ fn omit_dir_times_works_in_dry_run_mode() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_with_multiple_source_files() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -359,28 +367,29 @@ fn omit_dir_times_with_multiple_source_files() {
 
     let dest_file1 = dest_root.join("source").join("file1.txt");
     let dest_file1_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file1).expect("file1 metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file1).expect("file1 metadata"));
     assert_eq!(dest_file1_mtime, file1_mtime);
 
     let dest_file2 = dest_root.join("source").join("file2.txt");
     let dest_file2_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file2).expect("file2 metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file2).expect("file2 metadata"));
     assert_eq!(dest_file2_mtime, file2_mtime);
 
     let dest_file3 = dest_root.join("source").join("file3.txt");
     let dest_file3_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file3).expect("file3 metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file3).expect("file3 metadata"));
     assert_eq!(dest_file3_mtime, file3_mtime);
 
     let dest_dir_metadata = fs::metadata(dest_root.join("source")).expect("dir metadata");
-    let dest_dir_mtime = FileTime::from_last_modification_time(&dest_dir_metadata);
+    let dest_dir_mtime = ::test_support::file_times::mtime_of(&dest_dir_metadata);
     assert_ne!(dest_dir_mtime, dir_mtime);
 }
 
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_with_empty_directories() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -406,11 +415,11 @@ fn omit_dir_times_with_empty_directories() {
     let dest_empty = dest_root.join("source").join("empty");
     assert!(dest_empty.is_dir());
 
-    let dest_root_mtime = FileTime::from_last_modification_time(
+    let dest_root_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source")).expect("root metadata"),
     );
     let dest_empty_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_empty).expect("empty metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_empty).expect("empty metadata"));
 
     assert_ne!(dest_root_mtime, dir_mtime);
     assert_ne!(dest_empty_mtime, dir_mtime);
@@ -419,7 +428,8 @@ fn omit_dir_times_with_empty_directories() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_performance_deep_hierarchy() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -462,7 +472,7 @@ fn omit_dir_times_performance_deep_hierarchy() {
     assert!(dest_path.join("deep_file.txt").exists());
 
     let dest_root_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("root metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_root).expect("root metadata"));
     assert_ne!(dest_root_mtime, dir_mtime);
 
     let dest_file = dest_path.join("deep_file.txt");
@@ -475,7 +485,8 @@ fn omit_dir_times_performance_deep_hierarchy() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_with_trailing_slash_source() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -503,16 +514,16 @@ fn omit_dir_times_with_trailing_slash_source() {
     assert!(dest_nested.is_dir());
     assert!(dest_nested.join("file.txt").exists());
 
-    let dest_nested_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(&dest_nested).expect("nested metadata"),
-    );
+    let dest_nested_mtime =
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_nested).expect("nested metadata"));
     assert_ne!(dest_nested_mtime, dir_mtime);
 }
 
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_combined_with_update_flag() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -552,18 +563,19 @@ fn omit_dir_times_combined_with_update_flag() {
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"new content");
 
     let dest_file_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("file metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file).expect("file metadata"));
     assert_eq!(dest_file_mtime, file_mtime);
 
     let dest_dir_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("dir metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_root).expect("dir metadata"));
     assert_ne!(dest_dir_mtime, dir_mtime);
 }
 
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_with_delete_flag() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -596,7 +608,7 @@ fn omit_dir_times_with_delete_flag() {
     assert!(dest_root.join("keep.txt").exists());
 
     let dest_dir_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("dir metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_root).expect("dir metadata"));
     assert_ne!(dest_dir_mtime, dir_mtime);
 }
 
@@ -610,7 +622,8 @@ fn omit_dir_times_in_report_mode() {
 
     #[cfg(unix)]
     {
-        use filetime::{FileTime, set_file_mtime};
+        use ::test_support::file_times::set_file_mtime;
+        use filetime::FileTime;
         let dir_mtime = FileTime::from_unix_time(1_600_000_000, 0);
         set_file_mtime(&nested, dir_mtime).expect("set nested mtime");
         set_file_mtime(&source_root, dir_mtime).expect("set root mtime");
@@ -645,7 +658,8 @@ fn omit_dir_times_in_report_mode() {
 #[cfg(unix)]
 #[test]
 fn without_omit_dir_times_directory_mtime_is_preserved() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -669,7 +683,7 @@ fn without_omit_dir_times_directory_mtime_is_preserved() {
         .expect("copy succeeds");
 
     let dest_metadata = fs::metadata(dest_root.join("source")).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
 
     assert_eq!(
         dest_mtime, dir_mtime,
@@ -680,7 +694,8 @@ fn without_omit_dir_times_directory_mtime_is_preserved() {
 #[cfg(unix)]
 #[test]
 fn without_omit_dir_times_nested_dirs_preserve_mtimes() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -709,13 +724,13 @@ fn without_omit_dir_times_nested_dirs_preserve_mtimes() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_root_mtime = FileTime::from_last_modification_time(
+    let dest_root_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source")).expect("root metadata"),
     );
-    let dest_sub1_mtime = FileTime::from_last_modification_time(
+    let dest_sub1_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("sub1")).expect("sub1 metadata"),
     );
-    let dest_sub2_mtime = FileTime::from_last_modification_time(
+    let dest_sub2_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("sub1").join("sub2")).expect("sub2 metadata"),
     );
 
@@ -736,7 +751,8 @@ fn without_omit_dir_times_nested_dirs_preserve_mtimes() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_incremental_copy_does_not_update_dir_mtime() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -765,7 +781,7 @@ fn omit_dir_times_incremental_copy_does_not_update_dir_mtime() {
         .expect("first copy succeeds");
 
     let _first_dir_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_root).expect("dest metadata"));
 
     // Second copy (incremental) - file unchanged so file matches, but dir
     // timestamp should still not be set from source
@@ -780,7 +796,7 @@ fn omit_dir_times_incremental_copy_does_not_update_dir_mtime() {
         .expect("second copy succeeds");
 
     let second_dir_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_root).expect("dest metadata"));
 
     assert_ne!(
         second_dir_mtime, dir_mtime,
@@ -789,7 +805,7 @@ fn omit_dir_times_incremental_copy_does_not_update_dir_mtime() {
 
     let dest_file = dest_root.join("file.txt");
     let dest_file_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("file metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file).expect("file metadata"));
     assert_eq!(
         dest_file_mtime, file_mtime,
         "file mtime should be preserved on incremental copy"
@@ -799,7 +815,8 @@ fn omit_dir_times_incremental_copy_does_not_update_dir_mtime() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_incremental_with_new_file_preserves_new_file_time() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -847,13 +864,13 @@ fn omit_dir_times_incremental_with_new_file_preserves_new_file_time() {
         .expect("second copy succeeds");
 
     let dest_dir_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_root).expect("dest metadata"));
     assert_ne!(dest_dir_mtime, dir_mtime);
     assert_ne!(dest_dir_mtime, new_dir_mtime);
 
     let dest_file1 = dest_root.join("file1.txt");
     let dest_file1_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file1).expect("file1 metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file1).expect("file1 metadata"));
     assert_eq!(
         dest_file1_mtime, file1_mtime,
         "file1 mtime should be preserved"
@@ -861,7 +878,7 @@ fn omit_dir_times_incremental_with_new_file_preserves_new_file_time() {
 
     let dest_file2 = dest_root.join("file2.txt");
     let dest_file2_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file2).expect("file2 metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file2).expect("file2 metadata"));
     assert_eq!(
         dest_file2_mtime, file2_mtime,
         "file2 mtime should be preserved"
@@ -871,7 +888,8 @@ fn omit_dir_times_incremental_with_new_file_preserves_new_file_time() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_mixed_tree_files_have_correct_timestamps() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -912,15 +930,15 @@ fn omit_dir_times_mixed_tree_files_have_correct_timestamps() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_file_a_mtime = FileTime::from_last_modification_time(
+    let dest_file_a_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("dir_a").join("file_a.txt"))
             .expect("file_a metadata"),
     );
-    let dest_file_b_mtime = FileTime::from_last_modification_time(
+    let dest_file_b_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("dir_b").join("file_b.txt"))
             .expect("file_b metadata"),
     );
-    let dest_file_root_mtime = FileTime::from_last_modification_time(
+    let dest_file_root_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("file_root.txt")).expect("file_root metadata"),
     );
 
@@ -937,13 +955,13 @@ fn omit_dir_times_mixed_tree_files_have_correct_timestamps() {
         "file_root mtime should be preserved"
     );
 
-    let dest_root_mtime = FileTime::from_last_modification_time(
+    let dest_root_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source")).expect("root metadata"),
     );
-    let dest_dir_a_mtime = FileTime::from_last_modification_time(
+    let dest_dir_a_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("dir_a")).expect("dir_a metadata"),
     );
-    let dest_dir_b_mtime = FileTime::from_last_modification_time(
+    let dest_dir_b_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("dir_b")).expect("dir_b metadata"),
     );
 
@@ -964,7 +982,8 @@ fn omit_dir_times_mixed_tree_files_have_correct_timestamps() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_false_explicitly_preserves_dir_mtimes() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
 
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
@@ -989,7 +1008,7 @@ fn omit_dir_times_false_explicitly_preserves_dir_mtimes() {
         .expect("copy succeeds");
 
     let dest_metadata = fs::metadata(dest_root.join("source")).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
 
     assert_eq!(
         dest_mtime, dir_mtime,
@@ -1028,7 +1047,8 @@ fn omit_dir_times_option_builder_round_trip() {
 #[cfg(unix)]
 #[test]
 fn omit_dir_times_with_archive_style_options() {
-    use filetime::{FileTime, set_file_mtime};
+    use ::test_support::file_times::set_file_mtime;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -1065,13 +1085,13 @@ fn omit_dir_times_with_archive_style_options() {
 
     let dest_file = dest_root.join("source").join("subdir").join("file.txt");
     let dest_file_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&dest_file).expect("file metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&dest_file).expect("file metadata"));
     assert_eq!(
         dest_file_mtime, file_mtime,
         "file mtime should be preserved"
     );
 
-    let dest_root_mtime = FileTime::from_last_modification_time(
+    let dest_root_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source")).expect("root metadata"),
     );
     assert_ne!(
@@ -1079,7 +1099,7 @@ fn omit_dir_times_with_archive_style_options() {
         "root dir mtime should not be preserved"
     );
 
-    let dest_nested_mtime = FileTime::from_last_modification_time(
+    let dest_nested_mtime = ::test_support::file_times::mtime_of(
         &fs::metadata(dest_root.join("source").join("subdir")).expect("nested metadata"),
     );
     assert_ne!(

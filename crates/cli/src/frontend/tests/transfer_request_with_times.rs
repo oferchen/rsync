@@ -3,7 +3,8 @@ use super::*;
 
 #[test]
 fn transfer_request_with_times_preserves_timestamp() {
-    use filetime::{FileTime, set_file_times};
+    use filetime::FileTime;
+    use test_support::file_times::set_file_times;
 
     let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source-times.txt");
@@ -24,6 +25,6 @@ fn transfer_request_with_times_preserves_timestamp() {
     assert!(stderr.is_empty());
 
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_mtime = test_support::file_times::mtime_of(&metadata);
     assert_eq!(dest_mtime, mtime);
 }

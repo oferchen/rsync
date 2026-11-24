@@ -837,7 +837,8 @@ fn groupmap_applies_to_directory_tree() {
 #[cfg(unix)]
 #[test]
 fn usermap_works_with_permissions_and_times() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use rustix::fs::{AtFlags, chownat};
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -888,6 +889,6 @@ fn usermap_works_with_permissions_and_times() {
     let dest_metadata = fs::metadata(&destination).expect("dest metadata");
     assert_eq!(dest_metadata.uid(), 2000);
     assert_eq!(dest_metadata.permissions().mode() & 0o777, 0o640);
-    let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_metadata);
     assert_eq!(dest_mtime, mtime);
 }

@@ -85,7 +85,8 @@ fn mode_0000_preserves_across_multiple_files() {
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn mode_0000_with_inplace_update() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -357,7 +358,8 @@ fn mode_0000_with_symlink_preservation() {
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn mode_0000_compare_dest() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -449,7 +451,8 @@ fn mode_0000_size_only_comparison() {
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn mode_0000_checksum_comparison() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
@@ -487,7 +490,7 @@ fn mode_0000_checksum_comparison() {
     assert_eq!(summary.files_copied(), 0);
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&metadata);
+    let dest_mtime = ::test_support::file_times::mtime_of(&metadata);
     assert_eq!(dest_mtime, old_timestamp);
 }
 
@@ -495,7 +498,8 @@ fn mode_0000_checksum_comparison() {
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn mode_0000_preserve_in_existing_file_update() {
-    use filetime::{FileTime, set_file_times};
+    use ::test_support::file_times::set_file_times;
+    use filetime::FileTime;
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");

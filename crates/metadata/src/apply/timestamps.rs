@@ -83,8 +83,9 @@ fn set_times_via(
 
 /// Non-Unix counterpart to [`set_times_via`] using the [`filetime`] crate.
 ///
-/// Windows has no `utimensat`; `filetime` opens the target to set its times.
-/// The `None`-atime case updates only the mtime.
+/// Windows has no `utimensat`; [`fast_io::set_path_times`] opens the path
+/// (the link itself when `follow_symlinks` is false) and leaves a `None` time
+/// unchanged.
 #[cfg(not(unix))]
 fn set_times_via(
     destination: &Path,
@@ -94,22 +95,10 @@ fn set_times_via(
     _parent_walk: super::ParentWalk<'_>,
     _parent_dirfd: super::ParentDirFd<'_>,
 ) -> std::io::Result<()> {
-    match (atime, mtime) {
-        (Some(atime), Some(mtime)) => {
-            if follow_symlinks {
-                filetime::set_file_times(destination, atime, mtime)
-            } else {
-                filetime::set_symlink_file_times(destination, atime, mtime)
-            }
-        }
-        (None, Some(mtime)) => filetime::set_file_mtime(destination, mtime),
-        (Some(atime), None) => {
-            let current = fs::metadata(destination)?;
-            let mtime = FileTime::from_last_modification_time(&current);
-            filetime::set_file_times(destination, atime, mtime)
-        }
-        (None, None) => Ok(()),
+    if atime.is_none() && mtime.is_none() {
+        return Ok(());
     }
+    fast_io::set_path_times(destination, atime, mtime, follow_symlinks)
 }
 
 /// Applies timestamps (atime + mtime) to a path, optionally following symlinks.
@@ -130,7 +119,7 @@ pub(super) fn set_timestamp_like(
     existing: Option<&fast_io::EntryMetadata>,
     options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
-    let modified = FileTime::from_last_modification_time(metadata);
+    let modified = fast_io::modified_filetime(metadata);
 
     // upstream: rsync.c:725-726 - atime is written only when `--atimes`/`-U`
     // is active AND the node is not a directory (`!atimes_ndx || S_ISDIR`
@@ -138,9 +127,8 @@ pub(super) fn set_timestamp_like(
     // unchanged. upstream: rsync.c:745 - when atime IS applied its nanosecond
     // field is forced to zero.
     let apply_atime = options.is_some_and(|o| o.atimes()) && !metadata.file_type().is_dir();
-    let accessed = apply_atime.then(|| {
-        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0)
-    });
+    let accessed = apply_atime
+        .then(|| FileTime::from_unix_time(fast_io::accessed_filetime(metadata).unix_seconds(), 0));
 
     // upstream: rsync.c:733-749 - mtime and atime are checked independently;
     // the utimensat is only skipped when ALL relevant timestamps match.
@@ -237,14 +225,13 @@ pub(super) fn set_timestamp_with_fd(
     existing: Option<&fast_io::EntryMetadata>,
     options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
-    let modified = FileTime::from_last_modification_time(metadata);
+    let modified = fast_io::modified_filetime(metadata);
 
     // upstream: rsync.c:725-726 - atime is written only under `--atimes`/`-U`
     // and never for directories; rsync.c:745 - the applied atime nsec is 0.
     let apply_atime = options.is_some_and(|o| o.atimes()) && !metadata.file_type().is_dir();
-    let accessed = apply_atime.then(|| {
-        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0)
-    });
+    let accessed = apply_atime
+        .then(|| FileTime::from_unix_time(fast_io::accessed_filetime(metadata).unix_seconds(), 0));
 
     // upstream: rsync.c:733-749 - mtime and atime are checked independently
     if let Some(existing) = existing {
@@ -300,7 +287,7 @@ pub(super) fn apply_atime_only_from_metadata(
 ) -> Result<(), MetadataError> {
     // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
     let source_atime =
-        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
+        FileTime::from_unix_time(fast_io::accessed_filetime(metadata).unix_seconds(), 0);
 
     if let Some(existing) = existing
         && existing.accessed_filetime() == source_atime
@@ -315,7 +302,7 @@ pub(super) fn apply_atime_only_from_metadata(
             let meta = fs::metadata(destination).map_err(|error| {
                 MetadataError::new("read current timestamps", destination, error)
             })?;
-            FileTime::from_last_modification_time(&meta)
+            fast_io::modified_filetime(&meta)
         }
     };
 
@@ -346,7 +333,7 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
 ) -> Result<(), MetadataError> {
     // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
     let source_atime =
-        FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
+        FileTime::from_unix_time(fast_io::accessed_filetime(metadata).unix_seconds(), 0);
 
     if let Some(existing) = existing
         && existing.accessed_filetime() == source_atime
@@ -361,7 +348,7 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
             let meta = fs::metadata(destination).map_err(|error| {
                 MetadataError::new("read current timestamps", destination, error)
             })?;
-            FileTime::from_last_modification_time(&meta)
+            fast_io::modified_filetime(&meta)
         }
     };
 
@@ -578,7 +565,7 @@ pub(super) fn apply_atime_only_from_entry(
                 let meta = fs::metadata(destination).map_err(|error| {
                     MetadataError::new("read current timestamps", destination, error)
                 })?;
-                FileTime::from_last_modification_time(&meta)
+                fast_io::modified_filetime(&meta)
             }
         };
         set_entry_times(

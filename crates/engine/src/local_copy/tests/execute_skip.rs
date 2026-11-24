@@ -24,7 +24,7 @@ fn execute_skips_rewriting_identical_destination() {
     fs::write(&destination, b"identical").expect("write destination");
 
     let source_metadata = fs::metadata(&source).expect("source metadata");
-    let source_mtime = FileTime::from_last_modification_time(&source_metadata);
+    let source_mtime = ::test_support::file_times::mtime_of(&source_metadata);
     set_file_mtime(&destination, source_mtime).expect("align destination mtime");
 
     let mut dest_perms = fs::metadata(&destination)
@@ -88,7 +88,7 @@ fn execute_without_times_rewrites_when_checksum_disabled() {
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_matched(), 0);
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    let new_mtime = FileTime::from_last_modification_time(&metadata);
+    let new_mtime = ::test_support::file_times::mtime_of(&metadata);
     assert_ne!(new_mtime, original_mtime);
 }
 
@@ -282,7 +282,7 @@ fn execute_without_times_skips_with_checksum() {
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(summary.regular_files_matched(), 1);
     let metadata = fs::metadata(&destination).expect("dest metadata");
-    let final_mtime = FileTime::from_last_modification_time(&metadata);
+    let final_mtime = ::test_support::file_times::mtime_of(&metadata);
     assert_eq!(final_mtime, preserved_mtime);
 }
 
@@ -867,7 +867,7 @@ fn execute_with_size_only_and_times_preserves_metadata() {
 
     // Times should be updated even though content wasn't copied
     let dest_meta = fs::metadata(&destination).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime, source_time);
 }
 
@@ -1981,7 +1981,7 @@ fn execute_dry_run_reports_skipped_files_as_matched() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    let mtime = FileTime::from_last_modification_time(&fs::metadata(&source).expect("meta"));
+    let mtime = ::test_support::file_times::mtime_of(&fs::metadata(&source).expect("meta"));
     set_file_mtime(&destination, mtime).expect("align times");
 
     let operands = vec![
@@ -2229,7 +2229,7 @@ fn execute_skip_checksum_with_times_syncs_mtime_on_skip() {
     assert_eq!(summary.regular_files_matched(), 1);
     // But mtime should be synced from source
     let final_mtime =
-        FileTime::from_last_modification_time(&fs::metadata(&destination).expect("dest metadata"));
+        ::test_support::file_times::mtime_of(&fs::metadata(&destination).expect("dest metadata"));
     assert_eq!(final_mtime, source_mtime);
 }
 

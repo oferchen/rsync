@@ -112,8 +112,9 @@ fn daemon_delta_transfer_updates_modified_files() {
     // Backdate destination files so quick-check detects them as stale after
     // the source is modified (different mtime triggers re-transfer).
     let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-    filetime::set_file_mtime(dest_dir.join("data.txt"), old_time).expect("backdate dest data.txt");
-    filetime::set_file_mtime(dest_dir.join("other.txt"), old_time)
+    ::test_support::file_times::set_file_mtime(dest_dir.join("data.txt"), old_time)
+        .expect("backdate dest data.txt");
+    ::test_support::file_times::set_file_mtime(dest_dir.join("other.txt"), old_time)
         .expect("backdate dest other.txt");
 
     // Modify source files (append data so delta is beneficial)

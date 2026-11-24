@@ -42,11 +42,12 @@ use std::fs;
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
-use filetime::{FileTime, set_file_times};
+use filetime::FileTime;
 use metadata::{MetadataOptions, apply_file_metadata_with_options};
+use test_support::file_times::set_file_times;
 
 fn mtime_of(path: &Path) -> FileTime {
-    FileTime::from_last_modification_time(&fs::metadata(path).expect("stat"))
+    test_support::file_times::mtime_of(&fs::metadata(path).expect("stat"))
 }
 
 /// A distinctive source mtime the receiver would propagate onto the

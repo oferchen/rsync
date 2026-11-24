@@ -241,7 +241,7 @@ fn sparse_with_inplace_writes_dense() {
 
     // Make destination older so rsync will transfer
     let old_time = filetime::FileTime::from_unix_time(1600000000, 0);
-    filetime::set_file_mtime(&dest_file, old_time).expect("set mtime");
+    test_support::file_times::set_file_mtime(&dest_file, old_time).expect("set mtime");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -520,7 +520,8 @@ fn sparse_works_with_update_flag() {
 
     // Make dest older
     let old_time = filetime::FileTime::from_unix_time(1600000000, 0);
-    filetime::set_file_mtime(dest_dir.join("file.bin"), old_time).expect("set mtime");
+    test_support::file_times::set_file_mtime(dest_dir.join("file.bin"), old_time)
+        .expect("set mtime");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([

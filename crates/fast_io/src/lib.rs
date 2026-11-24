@@ -124,6 +124,8 @@ pub mod dir_sandbox;
 /// Metadata from whichever stat answered: `fstatat` or the path-based call.
 pub mod entry_metadata;
 pub use entry_metadata::{EntryFileType, EntryMetadata};
+pub mod file_times;
+pub use file_times::{accessed_filetime, modified_filetime, set_path_times};
 /// Unix-only: ownership-walk resolution for a sender's `--files-from`
 /// entries, mirroring upstream `filesfrom_link_stat()` (`flist.c:403`).
 #[cfg(unix)]

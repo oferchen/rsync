@@ -44,8 +44,11 @@ fn seed(root: &Path) -> PathBuf {
     }
     fs::write(root.join("src/f"), NEW).expect("write source");
     fs::write(root.join("dst/f"), OLD).expect("write destination");
-    filetime::set_file_mtime(root.join("dst/f"), FileTime::from_unix_time(946_684_800, 0))
-        .expect("backdate destination");
+    test_support::file_times::set_file_mtime(
+        root.join("dst/f"),
+        FileTime::from_unix_time(946_684_800, 0),
+    )
+    .expect("backdate destination");
     let shim = root.join("rsh.sh");
     fs::write(&shim, "#!/bin/sh\nshift\nexec \"$@\"\n").expect("write rsh shim");
     fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).expect("chmod shim");

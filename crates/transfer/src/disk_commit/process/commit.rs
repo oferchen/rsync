@@ -467,7 +467,8 @@ pub(super) fn retain_partial_file(
                     // will actually apply.
                     if zero_mtime {
                         let epoch = filetime::FileTime::from_unix_time(0, 0);
-                        if let Err(e) = filetime::set_file_mtime(dest_path, epoch) {
+                        if let Err(e) = fast_io::set_path_times(dest_path, None, Some(epoch), true)
+                        {
                             logging::debug_log!(
                                 Io,
                                 1,

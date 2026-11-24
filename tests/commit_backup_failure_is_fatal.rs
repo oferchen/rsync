@@ -116,8 +116,11 @@ fn fixture() -> Fixture {
         fs::write(root.join("src/sub").join(&name), NEW).expect("write src");
         let dest = root.join("dst/sub").join(&name);
         fs::write(&dest, OLD).expect("write dst");
-        filetime::set_file_mtime(&dest, filetime::FileTime::from_unix_time(1_000_000, 0))
-            .expect("backdate dst");
+        test_support::file_times::set_file_mtime(
+            &dest,
+            filetime::FileTime::from_unix_time(1_000_000, 0),
+        )
+        .expect("backdate dst");
     }
     let shim = write_rsh_shim(&root);
     Fixture {

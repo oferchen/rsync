@@ -52,7 +52,11 @@ impl Fixture {
             (sub.join("z.txt"), "z\n"),
         ] {
             fs::write(&path, body).unwrap();
-            filetime::set_file_mtime(&path, FileTime::from_unix_time(1_600_000_000, 0)).unwrap();
+            test_support::file_times::set_file_mtime(
+                &path,
+                FileTime::from_unix_time(1_600_000_000, 0),
+            )
+            .unwrap();
         }
         let tagged = Command::new("setfattr")
             .args(["-n", "user.x", "-v", "1"])

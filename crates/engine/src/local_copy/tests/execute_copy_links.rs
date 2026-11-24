@@ -612,7 +612,7 @@ fn copy_links_preserves_timestamps_from_referent() {
 
     // The destination mtime should come from the target, not the symlink
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
-    let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let dest_mtime = ::test_support::file_times::mtime_of(&dest_meta);
     assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
