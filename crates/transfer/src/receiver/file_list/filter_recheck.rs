@@ -72,7 +72,9 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         // upstream: flist.c:1367 - `!trust_sender_filter` guards the whole
         // re-check (options.c:2675-2676/main.c:1552 set it for local/--trust-sender).
-        if self.config.trust_sender {
+        // upstream: options.c:2729-2730 - `read_batch` sets it too, so a replay
+        // never re-checks the recorded list against the reader's own filters.
+        if self.config.trust_sender || self.local_replay {
             return Ok(());
         }
 

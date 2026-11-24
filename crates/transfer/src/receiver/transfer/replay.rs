@@ -6,10 +6,13 @@
 //! `recv_files()` reads each `NDX + iflags` row off `f_in` and obeys it -
 //! non-transfer itemize rows are logged and skipped, transfer rows carry
 //! their own recorded sum head and delta tokens (`receiver.c:844-1066`).
-//! The record-time generator's choices (which files to update, which rows to
-//! itemize) therefore rule the replay, exactly as they do upstream where the
-//! replaying generator's requests fall into a consumer-less pipe.
+//! The record-time generator's choices (which rows to itemize, which data
+//! the stream carries) therefore rule the replay. The replaying generator
+//! still decides which recorded updates are applied: upstream's receiver
+//! reads its requests back from `batch_gen_fd` and skips every recorded
+//! update it did not ask for (`receiver.c:772-803`, `:980-993`).
 
+use std::collections::HashSet;
 use std::io::{self, Read, Write};
 
 use logging::{PhaseTimer, debug_log, info_log};
@@ -32,6 +35,42 @@ use crate::token_reader::TokenReader;
 use crate::transfer_ops::usable_basis;
 use crate::transfer_ops::wire_basis::WireBasis;
 
+/// The replaying generator's requests: what upstream's generator writes to
+/// `batch_gen_fd` and `gen_wants_ndx()` reads back (`receiver.c:772-803`).
+#[derive(Default)]
+struct GeneratorWants {
+    /// Requested flat indices, ascending: file lists arrive in flat-index
+    /// order and each list's requests are sorted.
+    files: Vec<usize>,
+    /// Hard-link groups with a requested member.
+    hlink_groups: HashSet<u32>,
+}
+
+impl GeneratorWants {
+    fn request(&mut self, flat_idx: usize, entry: &protocol::flist::FileEntry) {
+        self.files.push(flat_idx);
+        if let Some(group) = entry.hardlink_idx() {
+            self.hlink_groups.insert(group);
+        }
+    }
+
+    /// Whether the recorded update for `entry` was asked for.
+    ///
+    /// Deliberate, temporary deviation: a hard-link group is decided as a
+    /// whole, where upstream asks per file index (receiver.c:772-803). The
+    /// recording carries the group's data under the member rsync 3.5.2
+    /// transfers (the last), while oc's generator requests another member, so
+    /// a per-file check would skip the group's only data row and leave every
+    /// member unwritten. Task 772 makes oc transfer upstream's member; this
+    /// rule then reverts to the per-file check.
+    fn wants(&self, flat_idx: usize, entry: &protocol::flist::FileEntry) -> bool {
+        self.files.binary_search(&flat_idx).is_ok()
+            || entry
+                .hardlink_idx()
+                .is_some_and(|group| self.hlink_groups.contains(&group))
+    }
+}
+
 impl ReceiverContext {
     /// Drives the receiver over a recorded batch stream, sender-driven.
     ///
@@ -48,8 +87,8 @@ impl ReceiverContext {
     /// The generator half still runs locally, exactly as upstream's forked
     /// generator does on `--read-batch` (`main.c:652-664`): directories,
     /// symlinks and specials are created, and metadata-only fixes for
-    /// up-to-date entries are applied - only its outbound requests are
-    /// discarded.
+    /// up-to-date entries are applied - and its requests decide which recorded
+    /// updates are applied (`receiver.c:980-993`).
     pub(in crate::receiver) fn run_replay<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -90,6 +129,10 @@ impl ReceiverContext {
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
         let mut generated_segments = 0usize;
+        // upstream: main.c:652-661 - the replaying generator writes every index
+        // it wants to `batch_gen_fd`, and receiver.c:772-803 gen_wants_ndx()
+        // reads them back to decide each recorded row.
+        let mut wanted = GeneratorWants::default();
         let (mut metadata_errors, mut stats) = if inc_recurse {
             // upstream: under INC_RECURSE the replaying generator takes each
             // file list as it arrives (generator.c:2770-2841), and the recorded
@@ -110,6 +153,7 @@ impl ReceiverContext {
                 writer,
                 &mut metadata_errors,
                 &mut stats,
+                &mut wanted,
             )?;
             (metadata_errors, stats)
         } else {
@@ -183,11 +227,10 @@ impl ReceiverContext {
                 )?;
             }
 
-            // Quick-check walk for its side effects only (metadata-only fixes,
-            // upstream generator.c:2288 set_file_attrs for identical files). The
-            // returned request list is discarded: the recorded stream, not the
-            // local plan, decides what is transferred.
-            self.build_files_to_transfer(
+            // Quick-check walk: metadata-only fixes for identical files
+            // (upstream generator.c:2288 set_file_attrs) and the request list
+            // the row loop consults.
+            let requested = self.build_files_to_transfer(
                 writer,
                 dest_dir,
                 #[cfg(unix)]
@@ -199,6 +242,9 @@ impl ReceiverContext {
                 acl_cache.as_ref(),
                 acl_id_map.as_deref(),
             )?;
+            for (flat_idx, ..) in requested {
+                wanted.request(flat_idx, &self.file_list[flat_idx]);
+            }
             self.no_transfer_itemize.borrow_mut().clear();
             // The generator half above itemizes against the LOCAL quick-check (it
             // classifies which files it would transfer), but on a replay the
@@ -223,6 +269,16 @@ impl ReceiverContext {
             self.negotiated_algorithms.map(|n| n.compression)
         };
         let mut token_reader = TokenReader::new(compression, u32::from(self.protocol.as_u8()))?;
+        // Trailing whole-file digest length of a recorded delta, for rows whose
+        // data is discarded rather than applied.
+        let discard_digest_len = ChecksumVerifier::new(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        )
+        .digest_len();
+        let mut skip_notice: Vec<u8> = Vec::new();
 
         let preserve_xattrs = self.config.flags.xattrs;
         let want_xattr_optim = self.protocol.as_u8() >= 31
@@ -268,6 +324,7 @@ impl ReceiverContext {
                     writer,
                     &mut metadata_errors,
                     &mut stats,
+                    &mut wanted,
                 )?;
                 gap_heads = self.gap_ndx_heads();
             }
@@ -357,6 +414,28 @@ impl ReceiverContext {
                     "got transfer request in phase 2 [receiver]",
                 ));
             }
+            // upstream: receiver.c:975-993 - a recorded update the replaying
+            // generator did not ask for still counts as transferred, is
+            // announced, and has its data discarded; the destination is left
+            // alone. Redo-phase rows (we_want_redo) are applied as recorded.
+            if phase == 0 && !wanted.wants(flat_idx, &file_entry) {
+                files_transferred += 1;
+                transferred_file_size += file_entry.size();
+                skip_notice.clear();
+                skip_notice.extend_from_slice(b"(Skipping batched update for \"");
+                skip_notice.extend_from_slice(relative_path.as_os_str().as_encoded_bytes());
+                skip_notice.extend_from_slice(b"\")\n");
+                self.emit_info_bytes(writer, &skip_notice)?;
+                let sum_head = SumHead::read(reader)?;
+                token_reader.reset();
+                crate::delta_apply::discard_delta_stream(
+                    reader,
+                    &mut token_reader,
+                    sum_head.layout(),
+                    discard_digest_len,
+                )?;
+                continue;
+            }
 
             // upstream: receiver.c:1060-1066 - a transfer row must name a
             // regular file.
@@ -442,19 +521,12 @@ impl ReceiverContext {
             let (file, mut temp_guard) = match open_result {
                 Ok(pair) => pair,
                 Err(open_err) => {
-                    let checksum_len = ChecksumVerifier::new(
-                        self.negotiated_algorithms.as_ref(),
-                        self.protocol,
-                        self.checksum_seed,
-                        self.compat_flags.as_ref(),
-                    )
-                    .digest_len();
                     token_reader.reset();
                     crate::delta_apply::discard_delta_stream(
                         reader,
                         &mut token_reader,
-                        u64::from(sum_head.count),
-                        checksum_len,
+                        sum_head.layout(),
+                        discard_digest_len,
                     )?;
                     // upstream: receiver.c:1243 "open %s failed" (inplace) vs
                     // receiver.c:466 "mkstemp %s failed" (temp file).
@@ -832,8 +904,9 @@ impl ReceiverContext {
     ///
     /// - `generator.c:2770-2841` - each list's directory, `delete_in_dir()`,
     ///   then `recv_generator()` over its entries, as the list arrives.
-    /// - `main.c:652-664` - on `--read-batch` that generator runs locally and
-    ///   its requests go to a pipe nothing reads.
+    /// - `main.c:652-661` - on `--read-batch` that generator runs locally and
+    ///   writes the indices it wants to `batch_gen_fd`, which the receiver
+    ///   reads back; each list's requests are added to `wanted`.
     #[allow(clippy::too_many_arguments)]
     fn generate_replay_segments<W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
@@ -843,6 +916,7 @@ impl ReceiverContext {
         writer: &mut W,
         metadata_errors: &mut Vec<(std::path::PathBuf, String)>,
         stats: &mut TransferStats,
+        wanted: &mut GeneratorWants,
     ) -> io::Result<()> {
         let walk_dirs = !self.config.flags.dry_run;
         while *generated < self.ndx_segments.len() {
@@ -903,7 +977,9 @@ impl ReceiverContext {
             *self.itemize_rows.borrow_mut() = recorded_rows;
             *self.event_rows.borrow_mut() = recorded_events;
             *self.no_transfer_itemize.borrow_mut() = recorded_no_transfer;
-            walked?;
+            for (flat_idx, ..) in walked? {
+                wanted.request(flat_idx, &self.file_list[flat_idx]);
+            }
         }
         Ok(())
     }

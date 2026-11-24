@@ -2748,9 +2748,13 @@ test_compressed_batch_delta_interop() {
     return 1
   fi
 
-  # Step 2: oc-rsync reads the compressed delta batch.
+  # Step 2: oc-rsync reads the compressed delta batch. It replays with -I,
+  # as the batch was recorded: -I is not a batch stream flag (batch.c:59-95),
+  # and without it the replaying generator finds large.dat current (same
+  # size, same mtime second) and skips its row, so the cell would no longer
+  # test the delta it recorded.
   local rc1=0
-  timeout "$hard_timeout" "$oc_bin" -av \
+  timeout "$hard_timeout" "$oc_bin" -avI \
       --read-batch="$batch_file" --timeout=10 \
       "${delta_read_dest}/" \
       >"${log}.compress-delta-read.out" 2>"${log}.compress-delta-read.err" || rc1=$?

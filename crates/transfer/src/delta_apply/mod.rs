@@ -37,6 +37,6 @@ pub use applicator::{
     BasisWriterKind, DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, apply_delta_stream,
     discard_delta_stream,
 };
-pub(crate) use block::{block_span, check_block_index};
+pub(crate) use block::block_span;
 pub use checksum::ChecksumVerifier;
 pub use sparse::SparseWriteState;

@@ -781,9 +781,6 @@ fn replay_up_to_date_is_a_noop_on_both() {
 /// wants: `(Skipping batched update for "NAME")` per receiver.c:980-991,
 /// printed at default verbosity with exit 0.
 #[test]
-#[ignore = "known divergence: oc --read-batch is silent on an up-to-date replay while \
-            upstream prints one (Skipping batched update for \"NAME\") line per \
-            recorded file (receiver.c:980-991); exit codes and trees already match"]
 fn replay_up_to_date_skipping_notices_match_upstream() {
     let Some(harness) = ParityHarness::new(&build_basic_src, &build_basic_seed) else {
         return;

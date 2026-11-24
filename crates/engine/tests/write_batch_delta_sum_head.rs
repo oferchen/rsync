@@ -50,8 +50,14 @@ fn write_trailer(writer: &Mutex<BatchWriter>) {
 /// Replays `batch` into `dest` through the live `--read-batch` path (core
 /// `ReceiverContext::for_batch_replay`), the code upstream-compatible replay
 /// runs.
+///
+/// `--ignore-times` is not a recorded stream flag (upstream batch.c:59-95), so
+/// the replay is given it as the recording was: otherwise the same-size basis
+/// written in the same second passes the replaying generator's quick check and
+/// the recorded update is skipped, as rsync 3.5.2 skips it.
 fn read_batch(batch: &std::path::Path, dest: &std::path::Path) {
     let out = std::process::Command::new(test_support::oc_rsync_bin())
+        .arg("--ignore-times")
         .arg(format!("--read-batch={}", batch.display()))
         .arg(format!("{}/", dest.display()))
         .output()
