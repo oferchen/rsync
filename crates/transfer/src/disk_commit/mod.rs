@@ -31,6 +31,8 @@ mod writer;
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, unix))]
+mod tests_one_inplace;
 #[cfg(test)]
 mod tests_partial_interrupt_parity;
 #[cfg(test)]

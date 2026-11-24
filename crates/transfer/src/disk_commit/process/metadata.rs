@@ -237,6 +237,7 @@ mod tests {
             checksum_verifier: None,
             is_device_target: false,
             is_inplace: false,
+            one_inplace_target: None,
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,

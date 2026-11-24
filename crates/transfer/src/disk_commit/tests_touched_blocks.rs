@@ -24,6 +24,7 @@ fn begin(file_path: &Path, target_size: u64, is_inplace: bool, append_offset: u6
         checksum_verifier: None,
         is_device_target: false,
         is_inplace,
+        one_inplace_target: None,
         append_offset,
         xattr_list: None,
         xattr_basis: None,

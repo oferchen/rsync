@@ -22,6 +22,7 @@ fn inplace_begin(path: &Path) -> BeginMessage {
         checksum_verifier: None,
         is_device_target: false,
         is_inplace: true,
+        one_inplace_target: None,
         append_offset: 0,
         xattr_list: None,
         xattr_basis: None,
