@@ -18,13 +18,13 @@ upstream's 3.5.2 test suite. One entry per change; see the linked PRs for detail
 
 ### Upstream 3.5.2 Alignment
 
-- **Security (CVE-2026-119741):** Bounded consecutive weak-checksum collision checks in `crates/matching` (`MAX_COLLISION_SKIP = 32`) and fixed duplicate-chain exhaustion in `hash_search` (#8383)
+- **Security (CVE-2026-119741):** After four consecutive offsets whose weak-checksum candidates all fail the strong check, the sender and the local copy skip a block's length less one byte as literal data, as rsync 3.5.2's `hash_search()` does, so repeated collisions no longer force a strong checksum at every byte; duplicate-chain exhaustion in `hash_search` is fixed too (#8383)
 - **Enhancements:** Added `--nice=<SPEC>` / `--no-nice` (CPU nice via `rustix` and Linux I/O priority), `--delay-symlinks` / `--no-delay-symlinks` (deferring symlink creation until after file transfers, protocol >= 29), and 3.5.2 human-readable (`48.8Mi`, `782,448B`, `113,295B/s`) and `--stats` / `--max-delete` thousands-separator formatting (#8383)
 - **Bug fixes:** Fixed interrupted `--append` / `--inplace` trailing buffer duplication, `EMLINK` hard-link fallback recovery, password files with an empty first line, Unix-socket stdin daemon activation, `--files-from` daemon subdirectory confinement, `--max-alloc` delete-queue overflow and quiet-daemon `MSG_DELETED` suppression, terminal control-character escaping, and daemon `--delete -i` upload itemization (#8383)
 
 ### Security
 
-**CVE index.** Of the 33 rsync 3.5.0 CVEs, 27 are fixed, 1 is partially fixed and 5 do not apply. Status and evidence per CVE are in [SECURITY.md](./SECURITY.md); this table lists the merged PRs.
+**CVE index.** Of the 33 rsync 3.5.0 CVEs, 29 are fixed, 1 is partially fixed, 1 is unverified and 2 do not apply. Status and evidence per CVE are in [SECURITY.md](./SECURITY.md); this table lists the merged PRs.
 
 | CVE | Status | PRs |
 |---|---|---|
@@ -48,14 +48,14 @@ upstream's 3.5.2 test suite. One entry per change; see the linked PRs for detail
 | CVE-2026-53803 | Fixed | #7439, #7441, #7443, #8108 |
 | CVE-2026-70452 | Fixed | #7314 |
 | CVE-2026-70453 | Fixed | #7293, #7878 |
-| CVE-2026-70456 | Not applicable | #8186 |
-| CVE-2026-70458 | Not applicable | #8173 |
+| CVE-2026-70456 | Fixed | #8186 |
+| CVE-2026-70458 | Fixed | #8173 |
 | CVE-2026-70459 | Fixed | #7625 |
 | CVE-2026-70462 | Fixed | #7347 |
 | CVE-2026-70463 | Fixed | #7345 |
 | CVE-2026-70464 | Fixed | #7688, #7754, #8002 |
 
-The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are fixed, with their upstream testsuite cells passing; CVE-2026-53783, 70454 and 70461 do not apply.
+The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are fixed, with their upstream testsuite cells passing; CVE-2026-53783 and 70454 do not apply; CVE-2026-70461 is unverified, because its testsuite cell skips on every leg.
 
 **Path confinement (CVE-2026-53795 family)**
 - Confine destination writes and source reads against symlink races through one shared per-component resolver (#7393, #7349)
@@ -159,6 +159,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Write received xattrs through a leaf pinned beneath the destination root, and on Linux ACLs too, special files included; macOS and the BSDs apply ACLs by path, as upstream does (CVE-2026-53799, #8167, #8201)
 - Bump `rustls-webpki` to 0.103.16, which rejects certificate paths through the distrusted emSign intermediates (RUSTSEC-2026-0382, #8228)
 - Bump `crypto-bigint`, `ctutils` and the `zstd` crates for RUSTSEC-2026-0385, 0387, 0391, 0398, 0403 and 0410; the bundled libzstd stays 1.5.7, so compressed bytes on the wire are unchanged (#8245)
+- Bump `url` to 2.5.9 for RUSTSEC-2026-0592 (#8719)
 - A destination swapped after the receiver entered it no longer redirects the remaining path-based reads: the `--inplace --backup` pre-image (and the stat taken from it), the `--partial-dir`, `--fuzzy` and backup basis opens, the `--fuzzy` directory scan, the local copy's delta-basis reads and, on Linux, the default-ACL read open beneath the pinned destination; without `/proc/self/fd` the default ACL is read through a descriptor opened beneath the pin, and an unreadable default ACL prints rsync 3.5.2's `falling back on umask` warning (CVE-2026-53796, #8712)
 - A relative `--partial-dir` is resolved through the secure walk, as rsync 3.5.2's `secure_relative_open()` does: a partial dir that is a symlink to an absolute path or above the destination is no basis, a refused basis open falls back to a whole-file transfer instead of exiting 11, and the partial-dir entry is removed only when it was the basis (CVE-2026-53796, #8758)
 
@@ -205,8 +206,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `scripts/perf_gate.py`: same-run A/B of oc-rsync against rsync 3.5.2 (and an optional third side) per cell and transport, recording wall, CPU, peak RSS, `--stats` wire bytes and `strace -c` syscall counts as TSV, with a 1/100-scale `--self-test` (#8702)
 
 ### Changed
-- `-vvv` and `-vvvv` no longer turn on the oc-only Landlock and seccomp trace lines, which rsync 3.5.2 does not print; `--debug=landlock`, `--debug=seccomp` or `--debug=sandbox` still show them (#8709)
 
+- `-vvv` and `-vvvv` no longer turn on the oc-only Landlock and seccomp trace lines, which rsync 3.5.2 does not print; `--debug=landlock`, `--debug=seccomp` or `--debug=sandbox` still show them (#8709)
 - Renamed `--parallel-delta-scan` to `--parallel-delta` (with `--no-parallel-delta` to opt out) and enabled it by default (#8382)
 - Split CI into dedicated PR (`ci.yml`), master-push (`ci-master.yml`), and nightly (`ci-nightly.yml`) workflows with shared composite setup actions, and aligned `README.md` badges (#8376, #8377, #8378, #8379)
 - Converted remaining `//` doc comments on `pub` items to `///` rustdoc across workspace crates and removed ASCII divider banners (#8380)
@@ -222,7 +223,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - All six Windows validation suites run on every master push (#8385)
 - Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape (#8080)
 - rsync 3.5.0 and 3.5.1 join the interop matrix as gating peers, with an upstream-baseline oracle in the harness (#7290, #7337, #8033)
-- Release benchmarks compare against rsync 3.5.1, 3.5.0 and 3.4.4 on Linux and macOS, and report peak RSS for every mode (#7595, #8106)
+- Release benchmarks compare against rsync 3.5.2, 3.5.1 and 3.4.4 on Linux and macOS, and report peak RSS for every mode (#7595, #8106, #8386)
 - The remote shell's stderr is inherited, as upstream `piped_child()` leaves it (`pipe.c:48-97`): ssh's messages reach the terminal byte for byte, as soon as they are written and once, instead of being captured and re-printed by oc-rsync (#8224)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
 - `--safe-links` is evaluated on the receiver only, as upstream does (#7763, #7777)
@@ -290,12 +291,15 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - On Linux, oc-rsync opts out of transparent huge pages at startup. On a host with THP set to `always`, the kernel backed jemalloc extents with 2 MiB pages, adding about 40 MiB to peak memory and making it swing from run to run: a 100k-file pull now peaks at about 24 MiB instead of 61-66 MiB, and a 1 GiB delta pull at 30 MiB (client) and 93 MiB (server) instead of 67-71 MiB and 133-141 MiB, with CPU unchanged (#8342)
 
 ### Fixed
+
 - `--read-batch` applies only the recorded updates the destination needs, like rsync 3.5.2: a file that is up to date, newer under `-u`, already present under `--ignore-existing`, or outside `--max-size`/`--min-size` is left alone and announced with `(Skipping batched update for "NAME")`, instead of being rewritten from the batch. A replay no longer checks the recorded file list against its own `--exclude` rules, so it completes instead of aborting with `rejecting excluded file-list name`. Deliberate difference from rsync 3.5.2: when a skipped `-z` (zlib) delta has block matches, 3.5.2 discards it without feeding those blocks to the inflater and aborts with `inflate returned -3` (exit 12); oc keeps the inflater history in step and completes the replay. Read side only, no wire change (#8746)
 - `--backup-dir` naming the destination itself (`.`, `./`, `././` or empty) without `--suffix` is refused with `--suffix cannot be empty when --backup-dir is the same as the dest dir` (exit 1) instead of backing each file up onto itself, like rsync 3.5.2; an oc server receiver given such a `--backup-dir` refuses it the same way instead of deleting each destination file (#8744)
 - Without incremental recursion, a receiver now aborts with `ABORTING due to invalid path from sender: <dir>/<name>` and the code-2 `[generator=...]` trailer, exit 2 (12 from a daemon below protocol 31, which closes the connection after the report), when the sender lists an entry whose parent directory is not in the file list, as rsync 3.5.2's generator does; it used to keep going and fail later with exit 23. oc checks the whole list before generating anything, so the destination is left untouched, where 3.5.2 has already run `--delete-before` and created the directories that sort before the bad entry. As in 3.5.2, `--list-only` is not checked, a dry run skips entries below a directory the destination lacks, and under `--delete-missing-args` a missing argument below an absent directory prints `WARNING: parent dir is absent in the file list: <dir>` instead (#8745)
 - An entry whose missing parent sits below a listed directory no longer aborts when rsync 3.5.2 skips it: below a directory `--existing` skips, or one whose mkdir fails, it is skipped as in 3.5.2 (exit 0, or exit 23 with `*** Skipping any contents from this failed directory ***`). Such an entry is now decided when the directory pass reaches it, so when it does abort, the directories before it already exist, as in 3.5.2 (#8761)
 - Under `--delete-missing-args`, a missing argument below a missing directory no longer makes that directory on the receiver, and the sender reports the missing implied parent as `file has vanished: "<path>"` and exits 24, or `symlink has no referent` (exit 23) for a dangling symlink, as rsync 3.5.2 does; it used to be skipped silently with exit 0. A local copy still skips it silently (#8761)
 - A daemon module chrooted to its own root (`use chroot = yes`, no `/./` in the path) with symlink munging off now stores pushed symlink targets as sent, as rsync 3.5.2 does: `/etc/passwd` and `../escape` used to land as `etc/passwd` and `escape`. Targets are still sanitized for a module outside a chroot or one split by `/./`, the only modules where rsync 3.5.2 sets `sanitize_paths` (#8764)
+- `--delete-missing-args` now removes what a missing operand names the way upstream's `delete_item()` does: a trailing-slash operand under `--relative` is a missing argument like any other on a local copy, `--delete` / `--force` empty a directory leaf by leaf with one itemized row per entry and the `--max-delete` cap applied inside it, a remote receiver itemizes the removal instead of printing an absolute path, and `--dry-run` reports the rows instead of ending in a protocol error (#8706)
+- `--delete-delay` now holds its deletions until the transfer is over under `--max-delete` and `--one-file-system` too, spending the cap in replay order as upstream does. A subdirectory left non-empty at the cap counts as skipped, a kept directory is named relative to the destination at any verbosity (twice below the cap, as upstream's failed rmdir does), and a daemon no longer ignores a pushed `--max-delete=0` (#8706)
 - io_uring zero-copy sends (`--zero-copy`) no longer fail a transfer with `Out of memory` when the user's locked-memory budget (`RLIMIT_MEMLOCK`) cannot pin the pages: the kernel's `ENOMEM` or `ENOBUFS` refusal is answered by sending the same bytes with an ordinary copying send, counted in the `--io-uring-status` SEND_ZC counters (#8713)
 - `OC_CONSECUTIVE_MATCH`: the sender trusts a matched block only when the next window matches the next basis block, as zsync's `seq_matches` does; it used to accept any matching block, which let the halved strong sum pass up to 2^27 times more false matches than rsync 3.5.2's full one. The wire is unchanged (#8715)
 - Client and daemon environment follow rsync 3.5.2: `DISPLAY` is dropped unless `SSH_ASKPASS` is set; a daemon reached over a remote shell gets `RSYNC_PORT` as the named port or 0, not 873, and a `RSYNC_CONNECT_PROG` program gets no `RSYNC_PORT`; `RSYNC_OLD_ARGS` is read before `RSYNC_PROTECT_ARGS`; `RSYNC_ICONV` applies on a client even with `-s`; daemon exec hooks and the name converter run through `$RSYNC_SHELL -c`, else `/bin/sh -c` (#8710)
@@ -310,7 +314,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A daemon picks the strongest auth digest it shares with the client, as rsync 3.5.2 does, instead of the first name the client lists; a client that lists `md5` before `sha512` is now challenged with SHA-512 (#8416)
 - A sender using the lazy incremental file-list producer reports a refused directory (`opendir ... failed`, past the 1024-deep descriptor stack) before the sub-list, like 3.5.2 (#8415)
 - A rule refused out of a per-directory merge file prints its text on its own line above the `syntax or usage error` trailer, as rsync 3.5.2 does, on a push and a local copy; a local copy refuses an operand directory's bad merge file before creating the destination (#8407)
-
 - Local copy: an existing file is no longer replaced by a directory when the copy would put more than one entry, or a lone directory, in its place (`-r src/dir file`, also under `--force`); it is left alone and the copy exits 3 like rsync 3.5.2. The destination's role now follows the file list's entry count, not the operand count, so a missing operand no longer makes it a directory and `-R` implied directories do; a missing parent of a single-file destination exits 3 (`change_dir#3`), a failed destination mkdir exits 11, and a symlink to a directory is entered without `--keep-dirlinks` (#8410)
 - Report OS errors as `strerror (errno)` like 3.5.1's `rsyserr` (#8354)
 - Poll the remote shell with `WNOHANG` on a failed exit and signal it (#8372)
@@ -897,8 +900,6 @@ user-facing work; consult the linked PRs for full detail.
 
 ### Fixed
 
-- `--delete-missing-args` now removes what a missing operand names the way upstream's `delete_item()` does: a trailing-slash operand under `--relative` is a missing argument like any other on a local copy, `--delete` / `--force` empty a directory leaf by leaf with one itemized row per entry and the `--max-delete` cap applied inside it, a remote receiver itemizes the removal instead of printing an absolute path, and `--dry-run` reports the rows instead of ending in a protocol error (#8706)
-- `--delete-delay` now holds its deletions until the transfer is over under `--max-delete` and `--one-file-system` too, spending the cap in replay order as upstream does. A subdirectory left non-empty at the cap counts as skipped, a kept directory is named relative to the destination at any verbosity (twice below the cap, as upstream's failed rmdir does), and a daemon no longer ignores a pushed `--max-delete=0` (#8706)
 **Daemon**
 - Survive transient `accept(2)` errors (`ECONNABORTED`/`EMFILE`) under load instead of treating them as fatal (#6763)
 - Enable `SO_KEEPALIVE` on accepted client sockets and align listener socket options with upstream (`SO_REUSEADDR` only by default, honor `--port 0`) (#6720, #6562)

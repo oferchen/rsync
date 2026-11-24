@@ -51,12 +51,12 @@ Outcomes, counted from each leg's committed manifest:
 
 | leg | pass | fail | skip |
 |---|---:|---:|---:|
-| Linux, non-root, pipe | 290 | 0 | 86 |
+| Linux, non-root, pipe | 288 | 0 | 88 |
 | Linux, root, pipe | 319 | 0 | 57 |
-| Linux, non-root, tcp | 137 | 0 | 31 |
+| Linux, non-root, tcp | 136 | 0 | 32 |
 | Linux, root, tcp | 156 | 0 | 12 |
-| macOS, non-root, pipe | 262 | 0 | 114 |
-| macOS, root, pipe | 292 | 0 | 84 |
+| macOS, non-root, pipe | 260 | 0 | 116 |
+| macOS, root, pipe | 290 | 0 | 86 |
 | macOS, non-root, tcp | 133 | 0 | 35 |
 | macOS, root, tcp | 151 | 0 | 17 |
 
@@ -123,24 +123,24 @@ cargo build --workspace --release
 | `acl` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `metadata` | yes | ACLs (`-A`) via `exacl`; NTFS ACLs via `windows-rs`. | stable |
 | `iconv` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `protocol` | yes | Filename charset conversion (`--iconv`). | stable |
 | `idn` | workspace, `core` | yes | IDNA A-label conversion of host names (upstream `SUPPORT_IDN`). Without it, hosts are used as typed and `--version` reports `no IDN`. | stable |
-| `parallel` | workspace, `cli`, `engine`, `checksums`, `signature` | yes | Rayon-based parallel file and checksum work. | stable |
-| `io_uring` | workspace, `transfer`, `fast_io` | yes | Linux 5.6+ batched I/O with runtime fallback. | stable |
+| `parallel` | workspace, `cli`, `core`, `engine`, `checksums`, `signature` | yes | Rayon-based parallel file and checksum work. | stable |
+| `io_uring` | workspace, `core`, `transfer`, `fast_io` | yes | Linux 5.6+ batched I/O with runtime fallback. | stable |
 | `sqpoll-mlock-basis` | `fast_io` | yes | Pins the mmap'd basis window with `mlock(2)` so an SQPOLL ring can stay on beside an mmap basis reader. | stable |
-| `iocp` | workspace, `transfer`, `fast_io` | yes | Windows I/O Completion Ports. | stable |
-| `copy_file_range` | workspace, `fast_io` | yes | Compatibility alias; the syscall is always compiled with runtime detection. | stable |
+| `iocp` | workspace, `core`, `transfer`, `fast_io` | yes | Windows I/O Completion Ports. | stable |
+| `copy_file_range` | workspace, `core`, `fast_io` | yes | Compatibility alias; the syscall is always compiled with runtime detection. | stable |
 | `async` | workspace, `core`, `engine`, `daemon`, `bandwidth`, `protocol` | yes | tokio for async I/O paths. | stable |
 | `embedded-ssh` | workspace, `cli`, `core`, `rsync_io` | yes | Built-in SSH client for `ssh://` operands. | stable |
 | `ssh-config-parse` | `rsync_io` | yes | `ssh_config` reader for the embedded client and the SSH compression warning. | stable |
-| `openssl` | workspace, `checksums` | no | MD4/MD5 through system OpenSSL. | stable |
-| `openssl-vendored` | workspace, `checksums` | no | As `openssl`, statically linked. | stable |
+| `openssl` | workspace, `core`, `checksums` | no | MD4/MD5 through system OpenSSL. | stable |
+| `openssl-vendored` | workspace, `core`, `checksums` | no | As `openssl`, statically linked. | stable |
 | `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` for the daemon. | stable |
 | `quic` | workspace, `cli`, `core`, `daemon`, `rsync_io`, `transfer`, `test-support` | yes | QUIC transport (see [QUIC transport](#quic-transport)). | stable |
-| `iouring-send-zc` | workspace, `fast_io` | yes | io_uring `SEND_ZC` socket writes (Linux 6.0+). Built in, but used only when the local node asks for zero-copy (see [Performance tuning](#performance-tuning)). | stable |
+| `iouring-send-zc` | workspace, `core`, `fast_io` | yes | io_uring `SEND_ZC` socket writes (Linux 6.0+). Built in, but used only when the local node asks for zero-copy (see [Performance tuning](#performance-tuning)). | stable |
 | `daemon-zero-copy` | `daemon` | yes | Lets a daemon sender use `SEND_ZC` when zero-copy is requested. | stable |
-| `daemon-seccomp` | workspace, `daemon` | no | seccomp allowlist for daemon workers. Once compiled in, it is on at runtime; opt out with `OC_RSYNC_NO_SECCOMP=1`. | opt-in |
+| `daemon-seccomp` | workspace, `core`, `daemon` | no | seccomp allowlist for daemon workers. Once compiled in, it is on at runtime; opt out with `OC_RSYNC_NO_SECCOMP=1`. | opt-in |
 | `incremental-flist` | `transfer` | yes | Gates tests only. The incremental receiver is chosen at runtime from the negotiated flags (#7968). | stable |
 | `lazy-metadata` | `engine` | yes | Defers `stat()` until metadata is needed. | stable |
-| `mmap-free-basis` | workspace, `engine`, `fast_io` | no | Reads the basis without mmap, through io_uring where available or buffered I/O. | experimental |
+| `mmap-free-basis` | workspace, `core`, `engine`, `fast_io` | no | Reads the basis without mmap, through io_uring where available or buffered I/O. | experimental |
 | `multi-producer` | `engine` | no | Relaxes the single-producer invariant on `WorkQueueSender`. | experimental |
 | `thread-slab-pool` | `engine`, `transfer` | no | Per-thread slab in front of `BufferPool`. | experimental |
 | `parallel-delete-consumer` | `engine` | no | Parallel consumer for delete operations that keeps the wire order. | experimental |
@@ -320,7 +320,7 @@ Legend: ✓ supported, ⚠ partial, ✗ not implemented.
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.2, 3.5.1, 3.5.0 and 3.4.4 across local, SSH and daemon modes (#8106). It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
+Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.2, 3.5.1 and 3.4.4 across local, SSH and daemon modes (#8106). It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
 
 Releases up to and including v0.6.4 predate this harness: their report compares against 3.4.4 only, without peak RSS, corpus rate or spread. The chart above comes from the latest release, so read that release's `benchmark_report.md` for what it measured.
 
@@ -338,7 +338,7 @@ The SSH throughput check (SSR-1) compares a release build of oc-rsync against up
 
 ## Security
 
-Of the 33 CVEs fixed upstream in rsync 3.5.0, 27 are fixed in oc-rsync, 1 is partially fixed and 5 do not apply. The partial one is CVE-2026-53796: every non-daemon receiver pins its destination for data, but metadata calls after a destination swap are still path-based. The 2024 and rsync 3.4.3 CVEs are fixed, mitigated or do not affect oc-rsync. rsync 3.5.1 names no CVE; of its nine security-relevant fixes, seven are mirrored and two do not apply. rsync 3.5.2 fixes CVE-2026-119741 (weak-checksum collision bound) along with `--files-from` subdirectory confinement, `--max-alloc` delete-queue overflow, terminal control-character escaping, and IPv6 `hosts allow`/`hosts deny` forward-DNS matching. Unsafe code is confined to a few crates that wrap platform FFI and SIMD.
+Of the 33 CVEs fixed upstream in rsync 3.5.0, 29 are fixed in oc-rsync, 1 is partially fixed, 1 is unverified and 2 do not apply. The partial one is CVE-2026-53796: every non-daemon receiver pins its destination and resolves its reads and writes beneath it, but a few paths are not yet anchored; [`SECURITY.md`](./SECURITY.md) lists them. The unverified one is CVE-2026-70461: safe Rust rules out its heap write, but no test yet shows the implied-include escaping matches upstream. The 2024 and rsync 3.4.3 CVEs are fixed, mitigated or do not affect oc-rsync. rsync 3.5.1 names no CVE; of its nine security-relevant fixes, seven are mirrored and two do not apply. rsync 3.5.2 fixes CVE-2026-119741 (weak-checksum collision bound) along with `--files-from` subdirectory confinement, `--max-alloc` delete-queue overflow, terminal control-character escaping, and IPv6 `hosts allow`/`hosts deny` forward-DNS matching. Unsafe code is confined to a few crates that wrap platform FFI and SIMD.
 
 [`SECURITY.md`](./SECURITY.md) has the per-CVE evidence, the unsafe-code policy, fuzzing and how to report a vulnerability. [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) maps each CVE to its upstream fix, its upstream test cells and the Rust tests that pin it.
 
