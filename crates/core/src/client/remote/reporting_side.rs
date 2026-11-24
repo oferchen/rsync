@@ -185,6 +185,12 @@ pub(crate) fn local_failure_error(
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
     {
+        // upstream: generator.c:1750-1752 - a violation the receiving side's
+        // generator raises is reported by that process, under its own role.
+        let role = match side {
+            ReportingSide::PostFork { .. } if violation.raised_by_generator() => Role::Generator,
+            _ => role,
+        };
         let report = match violation.cause_line() {
             Some(line) => cause_line_error(line.to_owned(), ExitCode::Protocol, role),
             None => remote_exit_error(ExitCode::Protocol, role),

@@ -51,6 +51,15 @@ impl SortKey {
         }
     }
 
+    /// The key of a bare name of the given kind, for a lookup probe.
+    fn for_name(bytes: &[u8], is_dir: bool) -> Self {
+        Self {
+            index: 0,
+            is_dir,
+            last_slash: memrchr(b'/', bytes).map_or(u32::MAX, |p| p as u32),
+        }
+    }
+
     fn has_slash_at_or_after(&self, pos: usize) -> bool {
         self.last_slash != u32::MAX && self.last_slash as usize >= pos
     }
@@ -91,12 +100,32 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     compare_with_keys(&bytes_a, &key_a, &bytes_b, &key_b)
 }
 
+/// Compares a list entry with a bare `name` of the given kind, as `f_name_cmp`
+/// would compare it with an entry of that name, without building one.
+pub(super) fn compare_entry_with_name(
+    entry: &FileEntry,
+    name: &[u8],
+    name_is_dir: bool,
+    protocol_pre29: bool,
+) -> Ordering {
+    let bytes = entry.name_bytes();
+    if protocol_pre29 {
+        return compare_with_keys_pre29(&bytes, name);
+    }
+    let key_a = SortKey::for_name(&bytes, entry.is_dir());
+    compare_with_keys(&bytes, &key_a, name, &SortKey::for_name(name, name_is_dir))
+}
+
 /// Compares two file entries using upstream's protocol < 29 `f_name_cmp`.
 ///
 /// The pre-29 counterpart of [`compare_file_entries`]; see
 /// `compare_with_keys_pre29` for the ordering rule.
+///
+/// Public because a receiver that keeps its list in wire order (`--iconv`)
+/// must sort a view of it in the same order it would have sorted the list
+/// below protocol 29, to search it as upstream searches `flist->sorted`.
 #[must_use]
-pub(crate) fn compare_file_entries_pre29(a: &FileEntry, b: &FileEntry) -> Ordering {
+pub fn compare_file_entries_pre29(a: &FileEntry, b: &FileEntry) -> Ordering {
     compare_with_keys_pre29(&a.name_bytes(), &b.name_bytes())
 }
 

@@ -40,6 +40,8 @@
 //! - [`iconv_wire_order`] - regression coverage for the receiver-side
 //!   `--iconv` ordering invariant (file_list stays in sender wire-emit
 //!   order, never re-sorted on local-charset bytes).
+//! - [`parent_check`] - without INC_RECURSE, an entry whose parent directory
+//!   is not in the list aborts the transfer (generator.c:1730-1752).
 
 mod crtime_wire;
 mod dedup;
@@ -56,6 +58,7 @@ mod implied_recheck;
 mod incremental_directories;
 mod missing_args_sentinel;
 mod ndx_convert;
+mod parent_check;
 mod proto_io_error;
 mod receive_counters;
 mod segment_delete;

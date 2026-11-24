@@ -28,6 +28,7 @@ mod filter_recheck;
 mod hardlinks;
 mod id_lists;
 mod on_demand;
+mod parent_check;
 mod prune;
 mod receive;
 mod sanitize;

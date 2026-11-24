@@ -29,6 +29,9 @@ pub(crate) enum ExitReader {
     UnforkedReceiver,
     /// The receiver child after the fork (`am_receiver`).
     ForkedReceiver,
+    /// The receiving side's generator, exiting on a failure of its own after
+    /// the fork (`am_generator`, with `am_receiver` clear).
+    Generator,
 }
 
 impl ExitReader {
@@ -38,6 +41,21 @@ impl ExitReader {
             Self::Sender => "sender",
             Self::UnforkedReceiver => "Receiver",
             Self::ForkedReceiver => "receiver",
+            Self::Generator => "generator",
+        }
+    }
+
+    /// The reader for a receiving side's own failure: the generator when it
+    /// raised `error`, else the receiver, forked or not.
+    pub(crate) fn for_receiver(error: &io::Error, forked: bool) -> Self {
+        let generator = error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
+            .is_some_and(protocol::ProtocolViolation::raised_by_generator);
+        match (generator, forked) {
+            (true, _) => Self::Generator,
+            (false, true) => Self::ForkedReceiver,
+            (false, false) => Self::UnforkedReceiver,
         }
     }
 }
@@ -151,7 +169,7 @@ pub(crate) const fn echo_for(
         (None, ExitReader::UnforkedReceiver) => Some(Echo::Empty),
         (None, _) => None,
         (Some(_), _) if protocol < 31 => None,
-        (Some(code), ExitReader::ForkedReceiver) => Some(Echo::Code(code)),
+        (Some(code), ExitReader::ForkedReceiver | ExitReader::Generator) => Some(Echo::Code(code)),
         (Some(_), _) => Some(Echo::Empty),
     }
 }
@@ -261,7 +279,7 @@ mod tests {
     #[test]
     fn echo_follows_read_a_msg() {
         use Echo::{Code, Empty};
-        use ExitReader::{ForkedReceiver, Sender, UnforkedReceiver};
+        use ExitReader::{ForkedReceiver, Generator, Sender, UnforkedReceiver};
         let cases = [
             (UnforkedReceiver, None, 32, Some(Empty)),
             (ForkedReceiver, None, 32, None),
@@ -273,6 +291,9 @@ mod tests {
             (Sender, Some(11), 31, Some(Empty)),
             (Sender, Some(11), 30, None),
             (ForkedReceiver, Some(11), 30, None),
+            (Generator, None, 32, None),
+            (Generator, Some(11), 32, Some(Code(11))),
+            (Generator, Some(11), 30, None),
         ];
         for (reader, received, protocol, expected) in cases {
             assert_eq!(
@@ -305,10 +326,11 @@ mod tests {
 
     /// cleanup.c:242-253 with io.c:1073-1075: only a daemon socket waits, only
     /// for a nonzero code that is not a transport failure, and below protocol
-    /// 31 only the forked receiver.
+    /// 31 only the forked receiver - not the generator, whose abort would
+    /// otherwise hold the connection for a client nobody told to exit.
     #[test]
     fn waiting_follows_exit_cleanup() {
-        use ExitReader::{ForkedReceiver, Sender, UnforkedReceiver};
+        use ExitReader::{ForkedReceiver, Generator, Sender, UnforkedReceiver};
         assert!(waits_for_peer(11, 32, Sender, true));
         assert!(waits_for_peer(11, 32, UnforkedReceiver, true));
         assert!(!waits_for_peer(11, 32, UnforkedReceiver, false));
@@ -318,6 +340,32 @@ mod tests {
         }
         assert!(!waits_for_peer(11, 30, UnforkedReceiver, true));
         assert!(waits_for_peer(11, 30, ForkedReceiver, true));
+        assert!(waits_for_peer(2, 31, Generator, true));
+        assert!(!waits_for_peer(2, 30, Generator, true));
+        assert!(!waits_for_peer(2, 29, Generator, true));
+    }
+
+    /// WHY: only the generator's own abort is the generator's exit; any other
+    /// receiving-side failure keeps the receiver's rows above.
+    #[test]
+    fn the_generator_exits_only_on_its_own_failure() {
+        let own = protocol::generator_protocol_violation("ABORTING");
+        assert_eq!(ExitReader::for_receiver(&own, true), ExitReader::Generator);
+        assert_eq!(ExitReader::for_receiver(&own, false), ExitReader::Generator);
+        let other = protocol::protocol_violation("bad");
+        assert_eq!(
+            ExitReader::for_receiver(&other, true),
+            ExitReader::ForkedReceiver
+        );
+        assert_eq!(
+            ExitReader::for_receiver(&other, false),
+            ExitReader::UnforkedReceiver
+        );
+        let io = io::Error::other("disk");
+        assert_eq!(
+            ExitReader::for_receiver(&io, true),
+            ExitReader::ForkedReceiver
+        );
     }
 
     /// A peer stream of multiplexed frames, ending at `eof`.

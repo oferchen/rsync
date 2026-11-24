@@ -1483,12 +1483,14 @@ fn run_server_on_core(
     match outcome {
         Ok(stats) => Ok(stats),
         Err(error) => {
+            // upstream: generator.c:1750-1752 - the parent-dir abort exits from
+            // the generator process, so cleanup.c:247 sees `am_receiver` clear.
             let exit_reader = match role {
                 ServerRole::Generator => error_exit::ExitReader::Sender,
-                ServerRole::Receiver if fork_point.total_read_at_fork().is_some() => {
-                    error_exit::ExitReader::ForkedReceiver
-                }
-                ServerRole::Receiver => error_exit::ExitReader::UnforkedReceiver,
+                ServerRole::Receiver => error_exit::ExitReader::for_receiver(
+                    &error,
+                    fork_point.total_read_at_fork().is_some(),
+                ),
             };
             let exit_code = match remote_exit_code(&error) {
                 // upstream: io.c:1899-1937 - the peer's code is answered, then
@@ -1517,6 +1519,11 @@ fn run_server_on_core(
                         negotiated_protocol,
                         error_exit_reaches_peer,
                     );
+                    // upstream: cleanup.c:257-258 - a generator that sends no
+                    // MSG_ERROR_EXIT still flushes the report it queued.
+                    if exit_reader == error_exit::ExitReader::Generator {
+                        let _ = writer.flush_all_pending();
+                    }
                     error_exit::local_exit_code(&error)
                 }
             };
