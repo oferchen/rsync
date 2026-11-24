@@ -1014,7 +1014,7 @@ impl GeneratorContext {
         let mut meta = match metadata {
             Ok(meta) => meta,
             Err(e) => {
-                self.report_child_stat_error(&path, &e);
+                self.report_child_stat_error(&path, &e, false);
                 return None;
             }
         };
@@ -1060,7 +1060,7 @@ impl GeneratorContext {
                 match fast_io::pinned_root::metadata(&path) {
                     Ok(followed) => meta = followed,
                     Err(e) => {
-                        self.report_child_stat_error(&path, &e);
+                        self.report_child_stat_error(&path, &e, false);
                         return None;
                     }
                 }
@@ -1076,10 +1076,21 @@ impl GeneratorContext {
     /// dereferenced the entry, ENOENT on a path that `lstat` still shows as a
     /// symlink is a dangling link: reported as "symlink has no referent" under
     /// FERROR_XFER with IOERR_GENERAL (exit 23), never as a vanished file (24).
-    fn report_child_stat_error(&mut self, path: &Path, e: &io::Error) {
+    ///
+    /// `copy_links_forced` is set for an implied parent, which upstream stats
+    /// with `copy_links` on whatever the options say (flist.c:2504).
+    pub(super) fn report_child_stat_error(
+        &mut self,
+        path: &Path,
+        e: &io::Error,
+        copy_links_forced: bool,
+    ) {
         let flags = &self.config.flags;
         if e.kind() == io::ErrorKind::NotFound
-            && (flags.copy_links || flags.copy_unsafe_links || flags.copy_dirlinks)
+            && (copy_links_forced
+                || flags.copy_links
+                || flags.copy_unsafe_links
+                || flags.copy_dirlinks)
             && fast_io::pinned_root::symlink_metadata(path).is_ok_and(|m| m.is_symlink())
         {
             let text = format!(

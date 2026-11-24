@@ -94,17 +94,17 @@ fn listed(entries: Vec<FileEntry>, tweak: impl FnOnce(&mut ServerConfig)) -> Rec
     ctx
 }
 
-fn check(ctx: &ReceiverContext) -> (io::Result<()>, Vec<String>) {
+fn check(ctx: &ReceiverContext) -> (io::Result<Vec<usize>>, Vec<String>) {
     check_into(ctx, Path::new("/nonexistent-dest"))
 }
 
-fn check_into(ctx: &ReceiverContext, dest: &Path) -> (io::Result<()>, Vec<String>) {
+fn check_into(ctx: &ReceiverContext, dest: &Path) -> (io::Result<Vec<usize>>, Vec<String>) {
     let mut errors = Errors::default();
     let result = ctx.abort_on_entry_without_parent(dest, &mut errors);
     (result, errors.0)
 }
 
-fn abort_line(result: io::Result<()>) -> String {
+fn abort_line<T: std::fmt::Debug>(result: io::Result<T>) -> String {
     let err = result.expect_err("the list names an entry whose parent was not sent");
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     let violation = err
@@ -403,5 +403,90 @@ fn without_implied_dirs_a_dry_run_skips_only_entries_under_the_missing_directory
     assert!(
         check_into(&implied_sent, dest.path()).0.is_ok(),
         "by depth alone `bM/x` is below the missing `a`"
+    );
+}
+
+/// The probe's list below a listed directory: `d/M/yz` arrives where
+/// `d/Mxyz` was sent, so `d/M` is missing but `d` is listed.
+fn orphan_below_listed_dir() -> Vec<FileEntry> {
+    vec![dir("."), dir("d"), file("d/M/yz"), dir("zz"), file("zz/q")]
+}
+
+fn index_of(ctx: &ReceiverContext, name: &str) -> usize {
+    ctx.file_list
+        .iter_indexed()
+        .find(|(_, e)| e.path() == Path::new(name))
+        .map(|(idx, _)| idx)
+        .expect("listed")
+}
+
+/// WHY: whether rsync 3.5.2 aborts on `d/M/yz` depends on `d`: an entry below
+/// a directory whose mkdir fails or that `--existing` skips returns before
+/// the parent check (generator.c:1685-1695 `skip_dir`). While `d` is not yet
+/// a directory at the destination, only the directory pass can tell, so the
+/// entry is deferred; once `d` exists it can never be `skip_dir`, so the
+/// check aborts at once.
+#[test]
+fn an_orphan_below_a_listed_directory_the_destination_lacks_is_deferred() {
+    let dest = tempfile::tempdir().expect("tempdir");
+    let ctx = received(32, &orphan_below_listed_dir(), |_| {});
+    let (result, errors) = check_into(&ctx, dest.path());
+    assert_eq!(result.unwrap(), [index_of(&ctx, "d/M/yz")]);
+    assert!(errors.is_empty());
+
+    std::fs::write(dest.path().join("d"), b"not a directory").unwrap();
+    assert_eq!(
+        check_into(&ctx, dest.path()).0.unwrap(),
+        [index_of(&ctx, "d/M/yz")],
+        "a non-directory in the way is replaced (or fails) at the walk"
+    );
+
+    std::fs::remove_file(dest.path().join("d")).unwrap();
+    std::fs::create_dir(dest.path().join("d")).unwrap();
+    assert_eq!(
+        abort_line(check_into(&ctx, dest.path()).0),
+        "ABORTING due to invalid path from sender: d/M/yz"
+    );
+}
+
+/// WHY: a dry run never makes directories, so nothing is left for the walk to
+/// decide; `dry_missing_dir` (generator.c:1883) already covers the missing
+/// `d`, and an existing `d` aborts.
+#[test]
+fn a_dry_run_defers_nothing() {
+    let dest = tempfile::tempdir().expect("tempdir");
+    let dry = received(32, &orphan_below_listed_dir(), |c| c.flags.dry_run = true);
+    assert!(check_into(&dry, dest.path()).0.unwrap().is_empty());
+    std::fs::create_dir(dest.path().join("d")).unwrap();
+    assert_eq!(
+        abort_line(check_into(&dry, dest.path()).0),
+        "ABORTING due to invalid path from sender: d/M/yz"
+    );
+}
+
+/// WHY: at the walk the deferred entry is skipped exactly when `skip_dir`
+/// covers it - a directory above it failed its mkdir (generator.c:1922) or
+/// `--existing` found it missing (:1798) - and aborts with the same line
+/// otherwise.
+#[test]
+fn a_deferred_orphan_is_skipped_only_below_a_skipped_directory() {
+    use crate::receiver::directory::FailedDirectories;
+    let ctx = received(32, &orphan_below_listed_dir(), |_| {});
+    let idx = index_of(&ctx, "d/M/yz");
+
+    let mut failed = FailedDirectories::new();
+    failed.mark_failed("d");
+    assert!(ctx.check_deferred_orphan(idx, &failed).is_ok());
+
+    let mut existing = FailedDirectories::new();
+    existing.mark_missing("d");
+    assert!(ctx.check_deferred_orphan(idx, &existing).is_ok());
+
+    let mut unrelated = FailedDirectories::new();
+    unrelated.mark_failed("zz");
+    unrelated.mark_missing("zz");
+    assert_eq!(
+        abort_line(ctx.check_deferred_orphan(idx, &unrelated)),
+        "ABORTING due to invalid path from sender: d/M/yz"
     );
 }
