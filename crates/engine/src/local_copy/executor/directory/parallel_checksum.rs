@@ -137,8 +137,8 @@ fn prefetch_checksums(pairs: &[FilePair], algorithm: SignatureAlgorithm) -> Hash
     });
 
     let mut decisions = HashMap::with_capacity(pairs.len());
-    for (pair, sides) in same_size.iter().zip(digests.chunks_exact(2)) {
-        decisions.insert(pair.source.clone(), sides_match(&sides[0], &sides[1]));
+    for (pair, [source, destination]) in same_size.iter().zip(digests.as_chunks::<2>().0) {
+        decisions.insert(pair.source.clone(), sides_match(source, destination));
     }
     for pair in resized {
         decisions.insert(pair.source.clone(), false);

@@ -545,7 +545,6 @@ pub unsafe fn post_completion(
 /// Returns a registered handler plus the receiver; the handler can be
 /// passed to [`CompletionPump::register`], and the receiver blocks until
 /// the worker fires it.
-#[must_use]
 pub fn oneshot_handler() -> (
     CompletionHandler,
     std::sync::mpsc::Receiver<io::Result<u32>>,

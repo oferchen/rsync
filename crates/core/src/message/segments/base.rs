@@ -127,7 +127,6 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(collected.concat(), message.to_bytes().unwrap());
     /// ```
     #[inline]
-    #[must_use]
     pub fn iter_bytes(
         &self,
     ) -> impl ExactSizeIterator<Item = &'_ [u8]> + DoubleEndedIterator + FusedIterator + '_ {

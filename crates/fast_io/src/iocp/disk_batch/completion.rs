@@ -126,6 +126,24 @@ pub fn clear_injected_completion_faults_for_test() {
     FAULT_INJECT_COMPLETION_CODE.store(0, Ordering::SeqCst);
 }
 
+/// Decrements `counter` unless it is already zero and returns the value it
+/// held, or `None` when it was zero.
+fn decrement_if_armed(counter: &AtomicUsize) -> Option<usize> {
+    let mut current = counter.load(Ordering::SeqCst);
+    while current != 0 {
+        match counter.compare_exchange_weak(
+            current,
+            current - 1,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(prev) => return Some(prev),
+            Err(actual) => current = actual,
+        }
+    }
+    None
+}
+
 /// Returns `Some(os_error)` if the current completion should be reported as
 /// faulted, decrementing the armed count. `None` in the dormant production
 /// case after a single relaxed load.
@@ -133,12 +151,7 @@ fn take_injected_completion_fault() -> Option<i32> {
     if FAULT_INJECT_COMPLETION_COUNT.load(Ordering::Relaxed) == 0 {
         return None;
     }
-    let prev = FAULT_INJECT_COMPLETION_COUNT
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| match n {
-            0 => None,
-            n => Some(n - 1),
-        })
-        .ok()?;
+    let prev = decrement_if_armed(&FAULT_INJECT_COMPLETION_COUNT)?;
     if prev >= 1 {
         let code = FAULT_INJECT_COMPLETION_CODE.load(Ordering::SeqCst);
         if code != 0 {
@@ -158,12 +171,7 @@ pub(super) fn take_injected_write_error() -> Option<i32> {
         return None;
     }
     // Slow path uses SeqCst to interleave correctly with the arming store.
-    let prev = FAULT_INJECT_COUNTDOWN
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| match n {
-            0 => None,
-            n => Some(n - 1),
-        })
-        .ok()?;
+    let prev = decrement_if_armed(&FAULT_INJECT_COUNTDOWN)?;
     if prev == 1 {
         let code = FAULT_INJECT_ERROR_CODE.swap(0, Ordering::SeqCst);
         if code != 0 {

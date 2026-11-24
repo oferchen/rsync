@@ -143,7 +143,7 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
             url_results.push(result);
         }
 
-        url_results.sort_by(|a, b| a.mean.cmp(&b.mean));
+        url_results.sort_by_key(|r| r.mean);
         all_results.push(BenchmarkResultSet {
             url: url.clone(),
             url_name,

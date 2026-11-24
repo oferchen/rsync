@@ -575,8 +575,8 @@ fn accumulate_chunk_scalar_raw(
         return (s1, s2, len);
     }
 
-    let mut iter = chunk.chunks_exact(4);
-    for block in &mut iter {
+    let (blocks, tail) = chunk.as_chunks::<4>();
+    for block in blocks {
         s1 = s1.wrapping_add(sign_extend_byte(block[0]));
         s2 = s2.wrapping_add(s1);
 
@@ -590,7 +590,7 @@ fn accumulate_chunk_scalar_raw(
         s2 = s2.wrapping_add(s1);
     }
 
-    for &byte in iter.remainder() {
+    for &byte in tail {
         s1 = s1.wrapping_add(sign_extend_byte(byte));
         s2 = s2.wrapping_add(s1);
     }

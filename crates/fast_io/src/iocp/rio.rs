@@ -87,10 +87,11 @@ const RIO_INVALID_CQ: RIO_CQ = -1;
 /// Defaults to [`RioMode::Off`] until NET-RIO.4 benchmarks validate the
 /// dispatcher and NET-RIO.5 flips the production default to `Auto`. The env
 /// var is read via [`rio_enabled_from_env`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RioMode {
     /// RIO disabled regardless of availability. Daemon uses the existing
     /// IOCP `WSARecv` / `WSASend` socket path.
+    #[default]
     Off,
     /// RIO is attempted: when the extension function table resolves the
     /// daemon switches to the RIO dispatcher; otherwise it transparently
@@ -99,12 +100,6 @@ pub enum RioMode {
     /// RIO is required: callers should error out (or log loudly) when the
     /// extension is unavailable. Useful for benchmarking and CI gating.
     On,
-}
-
-impl Default for RioMode {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 /// Environment variable that selects the RIO mode at process start.

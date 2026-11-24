@@ -139,7 +139,7 @@ pub fn generate_file_signature<R: Read>(
 
         for (i, (rolling, strong)) in batch_rolling[..batch_count]
             .iter()
-            .zip(strong_digests.into_iter())
+            .zip(strong_digests)
             .enumerate()
         {
             blocks.push(SignatureBlock::new((index + i) as u64, *rolling, strong));

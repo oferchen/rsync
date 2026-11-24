@@ -201,7 +201,6 @@ where
 }
 
 /// Converts a numeric exit code into an [`std::process::ExitCode`].
-#[must_use]
 pub fn exit_code_from(status: i32) -> std::process::ExitCode {
     let clamped = status.clamp(0, MAX_EXIT_CODE);
     std::process::ExitCode::from(clamped as u8)

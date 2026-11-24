@@ -1425,7 +1425,7 @@ impl ReceiverContext {
                     .lock()
                     .expect("dir_perm_restores poisoned"),
             );
-            recorded.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
+            recorded.sort_by_key(|r| std::cmp::Reverse(r.0.components().count()));
             for (dir_path, mode) in recorded {
                 let _ = writer.maybe_send_keepalive_once_written();
                 if let Err(e) = super::dest_chmod(sandbox, dest_dir, &dir_path, mode) {

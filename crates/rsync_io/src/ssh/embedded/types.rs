@@ -12,7 +12,7 @@
 /// `SSH_STRICT_HOSTKEY_*` constants (openssh/readconf.h:225-228).
 ///
 /// upstream: openssh/readconf.c:1019-1028 `multistate_strict_hostkey[]`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum StrictHostKeyChecking {
     /// Reject connections to hosts with unknown or mismatched keys.
     ///
@@ -36,6 +36,7 @@ pub enum StrictHostKeyChecking {
     ///
     /// Default mode, matching OpenSSH behavior. Falls back to rejection
     /// when no TTY is available (e.g., backgrounded or piped).
+    #[default]
     Ask,
 }
 
@@ -82,19 +83,14 @@ impl StrictHostKeyChecking {
     }
 }
 
-impl Default for StrictHostKeyChecking {
-    fn default() -> Self {
-        Self::Ask
-    }
-}
-
 /// IP version preference for DNS resolution.
 ///
 /// Controls whether the SSH transport resolves hostnames to IPv4 or IPv6
 /// addresses. Mirrors the SSH `-4`/`-6` flag behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum IpPreference {
     /// Let the system choose based on available addresses.
+    #[default]
     Auto,
     /// Prefer IPv6 addresses when both are available. Mirrors `ssh -6` with
     /// fallback to IPv4.
@@ -103,12 +99,6 @@ pub enum IpPreference {
     ForceV4,
     /// Only resolve and connect to IPv6 addresses. Mirrors `ssh -6`.
     ForceV6,
-}
-
-impl Default for IpPreference {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 #[cfg(test)]

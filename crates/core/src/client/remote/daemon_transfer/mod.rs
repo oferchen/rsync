@@ -64,14 +64,12 @@ use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments}
 ///
 /// Deviation from upstream: `quic://` is an oc-only transport.
 fn is_daemon_url(operand: &str) -> bool {
-    if operand.starts_with("rsync://") || operand.starts_with("RSYNC://") {
-        return true;
-    }
+    let rsync = operand.starts_with("rsync://") || operand.starts_with("RSYNC://");
     #[cfg(feature = "quic")]
-    if operand.starts_with("quic://") || operand.starts_with("QUIC://") {
-        return true;
-    }
-    false
+    let quic = operand.starts_with("quic://") || operand.starts_with("QUIC://");
+    #[cfg(not(feature = "quic"))]
+    let quic = false;
+    rsync || quic
 }
 
 /// Parses the transfer's daemon operand, in either the `rsync://` URL or the

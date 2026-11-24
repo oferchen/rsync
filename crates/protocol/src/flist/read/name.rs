@@ -312,9 +312,5 @@ fn needs_cleaning(name: &[u8]) -> bool {
     }
 
     // Trailing slash
-    if name[name.len() - 1] == b'/' {
-        return true;
-    }
-
-    false
+    name[name.len() - 1] == b'/'
 }

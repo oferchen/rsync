@@ -202,7 +202,7 @@ pub fn output_flist(
     let high = entries
         .iter()
         .rposition(FileEntry::is_active)
-        .map_or_else(|| entries.len().max(1) - 1, |h| h);
+        .unwrap_or_else(|| entries.len().max(1) - 1);
     debug_log!(
         Flist,
         3,

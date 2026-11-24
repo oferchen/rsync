@@ -11,7 +11,6 @@ use std::process::ExitCode;
 /// focused on a single execution path. The helper forwards its arguments and
 /// I/O handles to the CLI crate and normalises the returned status via the
 /// shared exit-code mapper.
-#[must_use]
 pub fn run_with<I, Out, Err>(args: I, stdout: &mut Out, stderr: &mut Err) -> ExitCode
 where
     I: IntoIterator,

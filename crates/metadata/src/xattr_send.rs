@@ -229,78 +229,6 @@ fn without_macos_auto_xattrs(list: &XattrList) -> XattrList {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{XattrRole, XattrSendOptions, XattrSyncFilters};
-
-    /// The filter chain governs the selection as soon as EITHER half carries a
-    /// rule: upstream's `saw_xattr_filter` (exclude.c:1440) is a process-wide
-    /// latch set by any `x` rule, not a per-side one, and it is what suppresses
-    /// the namespace screen for the whole read.
-    #[test]
-    fn governs_selection_when_either_half_carries_a_rule() {
-        let admit_all = |_: &str| true;
-        assert!(!XattrSyncFilters::default().governs_selection());
-        assert!(
-            XattrSyncFilters {
-                source: Some(&admit_all),
-                destination: None,
-            }
-            .governs_selection()
-        );
-        assert!(
-            XattrSyncFilters {
-                source: None,
-                destination: Some(&admit_all),
-            }
-            .governs_selection()
-        );
-        assert!(XattrSyncFilters::uniform(&admit_all).governs_selection());
-    }
-
-    /// `user_only` is a function of the role first and privilege second.
-    ///
-    /// Reading it off `am_root` alone would confine an unprivileged *sender*
-    /// to `user.*` and drop SELinux labels from the wire; reading it off the
-    /// role alone would let a root generator ignore namespaces it can store.
-    ///
-    /// upstream: xattrs.c:249 - `int user_only = am_sender ? 0 : !am_root;`
-    #[test]
-    fn user_only_mirrors_the_upstream_ternary() {
-        assert!(!XattrRole::Sender.user_only(false));
-        assert!(!XattrRole::Sender.user_only(true));
-        assert!(XattrRole::Generator.user_only(false));
-        assert!(!XattrRole::Generator.user_only(true));
-    }
-
-    /// The options record derives `user_only` from the fields it carries, so a
-    /// call site cannot set the privilege level and forget the role.
-    #[test]
-    fn options_derive_user_only_from_role_and_privilege() {
-        let generator = XattrSendOptions::new(XattrRole::Generator);
-        assert!(generator.user_only(), "unprivileged generator");
-        assert!(
-            !XattrSendOptions {
-                am_root: true,
-                ..generator
-            }
-            .user_only(),
-            "root generator",
-        );
-        assert!(!XattrSendOptions::new(XattrRole::Sender).user_only());
-    }
-
-    /// The role also drives the `rsync.%FOO` strip, which is why it is a field
-    /// rather than something inferred from the preservation level.
-    ///
-    /// upstream: xattrs.c:274 - `am_sender && preserve_xattrs < 2`
-    #[test]
-    fn is_sender_reports_the_upstream_am_sender_global() {
-        assert!(XattrRole::Sender.is_sender());
-        assert!(!XattrRole::Generator.is_sender());
-    }
-}
-
 #[cfg(all(test, target_os = "macos", feature = "xattr"))]
 mod macos_provenance_tests {
     use super::{XattrRole, XattrSendOptions, dest_xattrs_differ};
@@ -422,5 +350,77 @@ impl std::fmt::Debug for XattrSyncFilters<'_> {
             .field("source", &self.source.is_some())
             .field("destination", &self.destination.is_some())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{XattrRole, XattrSendOptions, XattrSyncFilters};
+
+    /// The filter chain governs the selection as soon as EITHER half carries a
+    /// rule: upstream's `saw_xattr_filter` (exclude.c:1440) is a process-wide
+    /// latch set by any `x` rule, not a per-side one, and it is what suppresses
+    /// the namespace screen for the whole read.
+    #[test]
+    fn governs_selection_when_either_half_carries_a_rule() {
+        let admit_all = |_: &str| true;
+        assert!(!XattrSyncFilters::default().governs_selection());
+        assert!(
+            XattrSyncFilters {
+                source: Some(&admit_all),
+                destination: None,
+            }
+            .governs_selection()
+        );
+        assert!(
+            XattrSyncFilters {
+                source: None,
+                destination: Some(&admit_all),
+            }
+            .governs_selection()
+        );
+        assert!(XattrSyncFilters::uniform(&admit_all).governs_selection());
+    }
+
+    /// `user_only` is a function of the role first and privilege second.
+    ///
+    /// Reading it off `am_root` alone would confine an unprivileged *sender*
+    /// to `user.*` and drop SELinux labels from the wire; reading it off the
+    /// role alone would let a root generator ignore namespaces it can store.
+    ///
+    /// upstream: xattrs.c:249 - `int user_only = am_sender ? 0 : !am_root;`
+    #[test]
+    fn user_only_mirrors_the_upstream_ternary() {
+        assert!(!XattrRole::Sender.user_only(false));
+        assert!(!XattrRole::Sender.user_only(true));
+        assert!(XattrRole::Generator.user_only(false));
+        assert!(!XattrRole::Generator.user_only(true));
+    }
+
+    /// The options record derives `user_only` from the fields it carries, so a
+    /// call site cannot set the privilege level and forget the role.
+    #[test]
+    fn options_derive_user_only_from_role_and_privilege() {
+        let generator = XattrSendOptions::new(XattrRole::Generator);
+        assert!(generator.user_only(), "unprivileged generator");
+        assert!(
+            !XattrSendOptions {
+                am_root: true,
+                ..generator
+            }
+            .user_only(),
+            "root generator",
+        );
+        assert!(!XattrSendOptions::new(XattrRole::Sender).user_only());
+    }
+
+    /// The role also drives the `rsync.%FOO` strip, which is why it is a field
+    /// rather than something inferred from the preservation level.
+    ///
+    /// upstream: xattrs.c:274 - `am_sender && preserve_xattrs < 2`
+    #[test]
+    fn is_sender_reports_the_upstream_am_sender_global() {
+        assert!(XattrRole::Sender.is_sender());
+        assert!(!XattrRole::Generator.is_sender());
     }
 }

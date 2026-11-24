@@ -141,7 +141,7 @@ impl LocalSlab {
     /// Returns `true` when this return triggers a periodic donation.
     pub(super) fn should_donate(&mut self) -> bool {
         self.return_count = self.return_count.wrapping_add(1);
-        self.return_count % DONATION_INTERVAL == 0 && !self.buffers.is_empty()
+        self.return_count.is_multiple_of(DONATION_INTERVAL) && !self.buffers.is_empty()
     }
 
     /// Returns the current retained byte total. Tests-only inspector.

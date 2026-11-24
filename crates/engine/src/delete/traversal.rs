@@ -128,10 +128,8 @@ impl DirTraversalCursor {
         loop {
             // Inspect the top frame without holding a mutable borrow
             // across the subsequent `self.stack.push` / `pop` calls.
-            let (dir, ix) = match self.stack.last() {
-                Some(frame) => (frame.dir.clone(), frame.next_child_ix),
-                None => return None,
-            };
+            let frame = self.stack.last()?;
+            let (dir, ix) = (frame.dir.clone(), frame.next_child_ix);
             let next_child = self
                 .child_dirs
                 .get(&dir)

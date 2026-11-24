@@ -435,11 +435,7 @@ fn matrix_expected_enabled(branding: &WorkspaceBranding, os: &str, arch: &str) -
         return Some(*enabled);
     }
 
-    if os == "windows" && arch == "x86" {
-        return Some(false);
-    }
-
-    Some(true)
+    Some(!(os == "windows" && arch == "x86"))
 }
 
 fn expected_target(os: &str, arch: &str) -> Option<&'static str> {

@@ -385,13 +385,15 @@ fn classify_mount_point(buf: &[u8]) -> ReparseKind {
     let path_buffer_start = MOUNT_POINT_PATH_BUFFER_OFFSET;
     let name_start = path_buffer_start + substitute_offset;
     let name_end = name_start + substitute_length;
-    if name_end > buf.len() || (name_end - name_start) % size_of::<u16>() != 0 {
+    if name_end > buf.len() || !(name_end - name_start).is_multiple_of(size_of::<u16>()) {
         return ReparseKind::Junction;
     }
 
     let wide: Vec<u16> = buf[name_start..name_end]
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
         .collect();
 
     if substitute_name_is_volume(&wide) {
@@ -717,7 +719,7 @@ fn decode_utf16_name(
     if name_length == 0 {
         return Ok(OsString::new());
     }
-    if name_length % size_of::<u16>() != 0 {
+    if !name_length.is_multiple_of(size_of::<u16>()) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("{label} length {name_length} not a multiple of 2"),
@@ -742,8 +744,10 @@ fn decode_utf16_name(
         ));
     }
     let wide: Vec<u16> = buf[name_start..name_end]
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
         .collect();
     Ok(OsString::from_wide(&wide))
 }

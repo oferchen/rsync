@@ -192,7 +192,7 @@ impl VmspliceFileWriter {
         if chunk.len() < VMSPLICE_MIN_CHUNK {
             return false;
         }
-        if (chunk.as_ptr() as usize) % ASSUMED_PAGE_SIZE != 0 {
+        if !(chunk.as_ptr() as usize).is_multiple_of(ASSUMED_PAGE_SIZE) {
             return false;
         }
         is_splice_available()
