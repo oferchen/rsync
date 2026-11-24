@@ -59,17 +59,17 @@ fn single_byte_matches_formula() {
         assert_eq!(
             checksum.digest().sum1(),
             expected_s1,
-            "s1 mismatch for byte {byte:#02x}"
+            "s1 mismatch for byte {byte:#04x}"
         );
         assert_eq!(
             checksum.digest().sum2(),
             expected_s2,
-            "s2 mismatch for byte {byte:#02x}"
+            "s2 mismatch for byte {byte:#04x}"
         );
         assert_eq!(
             checksum.value(),
             expected_value,
-            "value mismatch for byte {byte:#02x}"
+            "value mismatch for byte {byte:#04x}"
         );
     }
 }

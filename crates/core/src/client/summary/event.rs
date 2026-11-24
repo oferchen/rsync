@@ -800,8 +800,7 @@ mod tests {
         let relative = Path::new("file.txt");
         let result = ClientEvent::resolve_destination_path(root, relative);
         assert!(
-            result == PathBuf::from("/dest/file.txt")
-                || result == PathBuf::from("/dest/file.txt/file.txt")
+            result == Path::new("/dest/file.txt") || result == Path::new("/dest/file.txt/file.txt")
         );
     }
 }

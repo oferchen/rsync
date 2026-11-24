@@ -298,8 +298,7 @@ fn progress_multiple_files_shows_correct_xfr_and_to_chk() {
     // The last xfr line should have to-chk=0/N (all checked)
     let last_xfr_line = normalized
         .lines()
-        .filter(|l| l.contains("xfr#3"))
-        .next_back()
+        .rfind(|l| l.contains("xfr#3"))
         .expect("should have xfr#3 line");
     assert!(
         last_xfr_line.contains("to-chk=0/"),

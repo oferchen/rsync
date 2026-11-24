@@ -45,8 +45,7 @@ fn build_index(data: &[u8]) -> DeltaSignatureIndex {
 
 fn scattered_edits(size: usize, seed: u64, change_count: usize) -> Vec<u8> {
     let mut data = pseudo_random(size, seed);
-    if change_count > 0 {
-        let spacing = size / change_count;
+    if let Some(spacing) = size.checked_div(change_count) {
         for i in 0..change_count {
             data[(i * spacing).min(size - 1)] ^= 0xff;
         }

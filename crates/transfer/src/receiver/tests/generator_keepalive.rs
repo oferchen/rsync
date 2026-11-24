@@ -89,14 +89,14 @@ fn assert_only_keepalives(bytes: &[u8]) {
         !bytes.is_empty(),
         "expected at least one keepalive frame, got none"
     );
-    assert_eq!(
-        bytes.len() % KEEPALIVE_FRAME.len(),
-        0,
+    let (frames, partial) = bytes.as_chunks::<{ KEEPALIVE_FRAME.len() }>();
+    assert!(
+        partial.is_empty(),
         "captured bytes are not a whole number of keepalive frames: {bytes:?}"
     );
-    for chunk in bytes.chunks_exact(KEEPALIVE_FRAME.len()) {
+    for chunk in frames {
         assert_eq!(
-            chunk, KEEPALIVE_FRAME,
+            *chunk, KEEPALIVE_FRAME,
             "captured a non-keepalive frame: {bytes:?}"
         );
     }

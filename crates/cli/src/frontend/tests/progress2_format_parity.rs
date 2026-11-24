@@ -386,8 +386,7 @@ fn progress2_multiple_files_sequential_xfr_indices() {
     // The last final tick should show to-chk=0/N (all files done)
     let last_xfr_line = lines
         .iter()
-        .filter(|l| l.contains("xfr#"))
-        .next_back()
+        .rfind(|l| l.contains("xfr#"))
         .expect("should have xfr lines");
     assert!(
         last_xfr_line.contains("to-chk=0/"),

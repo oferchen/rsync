@@ -459,7 +459,7 @@ mod checksum_positions {
         let file_size = OVER_FOUR_GB;
 
         // Calculate number of blocks
-        let num_blocks = file_size / block_size + if file_size % block_size > 0 { 1 } else { 0 };
+        let num_blocks = file_size.div_ceil(block_size);
 
         // Last block should be beyond 4GB
         let last_block_start = (num_blocks - 1) * block_size;

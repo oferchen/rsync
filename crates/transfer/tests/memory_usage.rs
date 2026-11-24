@@ -329,6 +329,7 @@ fn peak_memory_single_large_allocation() {
     for size in allocation_sizes {
         current_memory -= size;
     }
+    assert_eq!(current_memory, 0);
 
     // Peak should be sum of all allocations (if none freed during)
     let expected_peak: usize = allocation_sizes.iter().sum();

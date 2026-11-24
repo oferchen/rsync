@@ -47,8 +47,11 @@ impl Fixture {
         fs::write(src.join("b"), b"bbbbbbbb\n").expect("write b");
         fs::write(src.join("big"), vec![b'z'; 100_000]).expect("write big");
         for name in ["a", "b", "big"] {
-            filetime::set_file_mtime(src.join(name), FileTime::from_unix_time(SRC_MTIME, 0))
-                .expect("stamp source");
+            test_support::file_times::set_file_mtime(
+                src.join(name),
+                FileTime::from_unix_time(SRC_MTIME, 0),
+            )
+            .expect("stamp source");
         }
         let batch = root.path().join("batch");
         let recorded = root.path().join("recorded");
@@ -83,8 +86,11 @@ impl Fixture {
         let dest = self.dest(name);
         for file in ["a", "b", "big"] {
             fs::copy(self.src().join(file), dest.join(file)).expect("copy");
-            filetime::set_file_mtime(dest.join(file), FileTime::from_unix_time(SRC_MTIME, 0))
-                .expect("stamp dest");
+            test_support::file_times::set_file_mtime(
+                dest.join(file),
+                FileTime::from_unix_time(SRC_MTIME, 0),
+            )
+            .expect("stamp dest");
         }
         dest
     }
@@ -203,7 +209,7 @@ fn replay_with_update_keeps_a_newer_destination_file() {
     let fx = Fixture::new();
     let dest = fx.dest("newer");
     fs::write(dest.join("a"), b"NEWERdst\n").expect("seed newer");
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         dest.join("a"),
         FileTime::from_unix_time(SRC_MTIME + 86_400, 0),
     )
@@ -224,7 +230,7 @@ fn replay_with_ignore_existing_keeps_an_existing_file() {
     let fx = Fixture::new();
     let dest = fx.dest("existing");
     fs::write(dest.join("a"), b"OLDdst\n").expect("seed existing");
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         dest.join("a"),
         FileTime::from_unix_time(SRC_MTIME - 86_400, 0),
     )
@@ -332,8 +338,11 @@ impl CompressedDeltaFixture {
         fs::write(recorded.join("large.dat"), vec![b'A'; LARGE_LEN]).expect("seed large");
         fs::write(recorded.join("z.txt"), b"old z\n").expect("seed z");
         for name in ["large.dat", "z.txt"] {
-            filetime::set_file_mtime(src.join(name), FileTime::from_unix_time(SRC_MTIME, 0))
-                .expect("stamp source");
+            test_support::file_times::set_file_mtime(
+                src.join(name),
+                FileTime::from_unix_time(SRC_MTIME, 0),
+            )
+            .expect("stamp source");
         }
         let batch = root.path().join("batch");
         let out = Command::new(recorder)
@@ -359,7 +368,7 @@ impl CompressedDeltaFixture {
         let dest = self.root.path().join(name);
         fs::create_dir_all(&dest).expect("create dest");
         fs::write(dest.join("large.dat"), vec![b'A'; LARGE_LEN]).expect("seed large");
-        filetime::set_file_mtime(
+        test_support::file_times::set_file_mtime(
             dest.join("large.dat"),
             FileTime::from_unix_time(SRC_MTIME, 0),
         )

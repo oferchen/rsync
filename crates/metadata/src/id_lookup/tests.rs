@@ -109,8 +109,8 @@ fn lookup_group_name_nonexistent_gid_returns_none() {
 #[test]
 fn lookup_group_by_name_root_returns_gid() {
     let result = lookup_group_by_name(b"root");
-    if result.is_ok() && result.as_ref().unwrap().is_some() {
-        assert_eq!(result.unwrap().unwrap(), 0);
+    if let Ok(Some(gid)) = result {
+        assert_eq!(gid, 0);
     } else {
         // On macOS, root group might be called "wheel"
         let wheel_result = lookup_group_by_name(b"wheel");
