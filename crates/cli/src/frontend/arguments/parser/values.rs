@@ -29,7 +29,19 @@ pub(crate) fn join_os_values(values: Option<impl Iterator<Item = OsString>>) -> 
 /// value such as `.//` becomes `/`, exactly as in upstream.
 // upstream: options.c:2514-2517
 pub(crate) fn strip_backup_dir_dot_prefix(dir: OsString) -> OsString {
-    let bytes = dir.as_encoded_bytes();
+    let skip = backup_dir_dot_prefix_len(dir.as_encoded_bytes());
+    if skip == 0 {
+        dir
+    } else {
+        drop_ascii_prefix(&dir, skip)
+    }
+}
+
+/// Returns the length of the leading `./` pairs and lone `.` that rsync strips
+/// from a `--backup-dir` value. The prefix is ASCII, so the length is also a
+/// valid `str` boundary.
+// upstream: options.c:2514-2517
+pub(crate) fn backup_dir_dot_prefix_len(bytes: &[u8]) -> usize {
     let mut skip = 0;
     while bytes[skip..].starts_with(b"./") {
         skip += 2;
@@ -37,11 +49,19 @@ pub(crate) fn strip_backup_dir_dot_prefix(dir: OsString) -> OsString {
     if &bytes[skip..] == b"." {
         skip += 1;
     }
-    if skip == 0 {
-        dir
+    skip
+}
+
+/// Upstream's refusal of an empty backup suffix when no usable backup dir is
+/// left; `backup_dir_given` selects which of its two wordings applies.
+// upstream: options.c:2536-2540
+pub(crate) fn empty_backup_suffix_error(backup_dir_given: bool) -> String {
+    let reason = if backup_dir_given {
+        "when --backup-dir is the same as the dest dir"
     } else {
-        drop_ascii_prefix(&dir, skip)
-    }
+        "without a --backup-dir"
+    };
+    format!("--suffix cannot be empty {reason}")
 }
 
 /// Returns `value` without its first `len` bytes, which must all be ASCII.

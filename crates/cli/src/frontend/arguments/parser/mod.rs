@@ -17,6 +17,7 @@ mod tests;
 
 pub use coerce::ChecksumThreadsSetting;
 pub use entry::parse_args;
+pub(crate) use values::{backup_dir_dot_prefix_len, empty_backup_suffix_error};
 
 use super::{
     BandwidthArgument, ParsedArgs, detect_program_name, env_iconv_default, env_max_alloc_default,

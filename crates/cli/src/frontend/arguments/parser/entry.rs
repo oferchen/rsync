@@ -32,7 +32,7 @@ use super::flags::{
     archive_aware_flag, leveled_flag_pair, tri_state_flag_negative_first,
     tri_state_flag_positive_first,
 };
-use super::values::{join_os_values, strip_backup_dir_dot_prefix};
+use super::values::{empty_backup_suffix_error, join_os_values, strip_backup_dir_dot_prefix};
 use super::{
     BandwidthArgument, ParsedArgs, detect_program_name, env_iconv_default, env_max_alloc_default,
     resolve_arg_protection,
@@ -1542,14 +1542,9 @@ fn parsed_args_from_matches(
             .as_ref()
             .map_or(backup_dir_given, |suffix| suffix.is_empty())
     {
-        let reason = if backup_dir_given {
-            "when --backup-dir is the same as the dest dir"
-        } else {
-            "without a --backup-dir"
-        };
         return Err(clap::Error::raw(
             clap::error::ErrorKind::ValueValidation,
-            format!("--suffix cannot be empty {reason}\n"),
+            format!("{}\n", empty_backup_suffix_error(backup_dir_given)),
         ));
     }
 

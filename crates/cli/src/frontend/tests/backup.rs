@@ -225,3 +225,59 @@ fn backup_dir_naming_the_destination_with_a_suffix_backs_up_beside_the_file() {
         );
     }
 }
+
+/// A server receiver applies the same rule: rsync 3.5.2 refuses a
+/// destination-named `--backup-dir` with exit 1 before any transfer. Without
+/// the refusal the receiver renames each file onto itself and loses it.
+// upstream: options.c:2514-2540, refused unless `am_server && am_sender`
+#[test]
+fn server_receiver_refuses_a_backup_dir_naming_the_destination() {
+    for spelling in [".", "./", "././", ""] {
+        let tmp = test_support::create_tempdir();
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir_all(&dest_dir).expect("create dest dir");
+        std::fs::write(dest_dir.join("file.txt"), b"old data").expect("seed dest");
+        let (code, _stdout, stderr) = run_with_args([
+            OsString::from(RSYNC),
+            OsString::from("--server"),
+            OsString::from("-rb"),
+            OsString::from(format!("--backup-dir={spelling}")),
+            OsString::from("."),
+            dest_dir.clone().into_os_string(),
+        ]);
+        let rendered = String::from_utf8_lossy(&stderr);
+        assert_eq!(code, 1, "--backup-dir={spelling:?}: {rendered}");
+        assert!(
+            rendered
+                .contains("--suffix cannot be empty when --backup-dir is the same as the dest dir"),
+            "--backup-dir={spelling:?}: {rendered}"
+        );
+        assert_eq!(
+            std::fs::read(dest_dir.join("file.txt")).expect("read dest"),
+            b"old data",
+            "--backup-dir={spelling:?}"
+        );
+    }
+}
+
+/// A server sender never backs anything up, and upstream exempts it from the
+/// check (`!am_server || !am_sender`), so it must not print the refusal.
+// upstream: options.c:2536
+#[test]
+fn server_sender_does_not_refuse_a_backup_dir_naming_the_destination() {
+    let tmp = test_support::create_tempdir();
+    let (_code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-rb"),
+        OsString::from("--backup-dir=."),
+        OsString::from("."),
+        tmp.path().as_os_str().to_os_string(),
+    ]);
+    let rendered = String::from_utf8_lossy(&stderr);
+    assert!(
+        !rendered.contains("--suffix cannot be empty"),
+        "a server sender must not refuse: {rendered}"
+    );
+}

@@ -21,5 +21,6 @@ pub(crate) use env::{env_iconv_default, env_max_alloc_default, resolve_arg_prote
 pub use parsed_args::ParsedArgs;
 pub(crate) use parser::ChecksumThreadsSetting;
 pub use parser::parse_args;
+pub(crate) use parser::{backup_dir_dot_prefix_len, empty_backup_suffix_error};
 pub(crate) use program_name::{ProgramName, detect_program_name};
 pub(crate) use stop::StopRequest;
