@@ -246,7 +246,7 @@ pub fn classify_reparse_point(handle: &impl AsRawHandle) -> io::Result<ReparseKi
 /// # Errors
 ///
 /// Surfaces the underlying `CreateFileW` or `DeviceIoControl` failure as
-/// [`io::Error`] via [`io::Error::last_os_error`]. Callers that want to
+/// [`io::Error`] via `io::Error::last_os_error`. Callers that want to
 /// treat classification failures as non-fatal (for example, falling back
 /// to a plain symlink emission) should match on the error and continue.
 ///

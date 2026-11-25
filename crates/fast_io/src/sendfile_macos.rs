@@ -78,7 +78,7 @@ impl std::error::Error for PartialSend {}
 /// - `EAGAIN` / `EWOULDBLOCK` is surfaced as
 ///   [`io::ErrorKind::WouldBlock`] carrying a [`PartialSend`]
 ///   payload with the bytes-sent prefix.
-/// - All other errnos surface via [`io::Error::last_os_error`].
+/// - All other errnos surface via `io::Error::last_os_error`.
 ///
 /// # Platform support
 ///

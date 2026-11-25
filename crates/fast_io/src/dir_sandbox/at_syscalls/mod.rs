@@ -100,7 +100,7 @@ use filetime::FileTime;
 /// disambiguate end-of-stream from a real error).
 ///
 /// Kept private to this module: callers should prefer
-/// [`std::io::Error::last_os_error`] for syscalls that do not need the
+/// `std::io::Error::last_os_error` for syscalls that do not need the
 /// pre-clear contract.
 fn errno_location() -> *mut libc::c_int {
     // SAFETY: each libc accessor is documented as never failing and

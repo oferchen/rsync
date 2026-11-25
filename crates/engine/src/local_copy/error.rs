@@ -20,7 +20,7 @@ use super::filter_program::{
 /// Rust's `std::io::Error` `Display`, which renders `" (os error <errno>)"`.
 /// Errors without an OS errno fall back to the `Display` string verbatim.
 ///
-/// An [`io::Error`] built with [`io::Error::new`] around a custom payload
+/// An [`io::Error`] built with `io::Error::new` around a custom payload
 /// reports no `raw_os_error()` even when the payload forwards the platform
 /// error's `Display`, so the trailing `" (os error N)"` is recovered from the
 /// rendered text as well. Without that, wrapping an error anywhere in the I/O
