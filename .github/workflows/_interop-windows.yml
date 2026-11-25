@@ -89,7 +89,7 @@ jobs:
       # reliable way to get a real upstream rsync binary on a Windows
       # GitHub runner. Chocolatey's `rsync` package is unmaintained.
       - name: Install MSYS2 with rsync
-        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
         with:
           msystem: MSYS
           update: false

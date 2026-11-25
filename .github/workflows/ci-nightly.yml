@@ -53,7 +53,7 @@ jobs:
         shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
         key: test
     - name: Install cargo-nextest
-      uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f
+      uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c
       with:
         tool: cargo-nextest
     - name: Regenerate Cargo.lock
@@ -243,7 +243,7 @@ jobs:
       with:
         shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
     - name: Install cargo-nextest
-      uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f
+      uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c
       with:
         tool: cargo-nextest
     - name: Build
