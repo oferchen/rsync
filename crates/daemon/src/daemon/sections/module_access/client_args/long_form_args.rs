@@ -569,6 +569,7 @@ fn apply_long_form_args(
                     .strip_prefix("--log-format=")
                     .or_else(|| arg.strip_prefix("--out-format="))
                 {
+                    config.flags.info_flags.log_format = true;
                     if fmt.contains("%i") {
                         config.flags.info_flags.itemize = true;
                     }

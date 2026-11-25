@@ -833,8 +833,10 @@ where
     }
 
     if let Some(fmt) = &long_flags.log_format {
+        config.flags.info_flags.log_format = true;
         apply_log_format_itemize(fmt, &mut config.flags.info_flags);
     }
+    config.deletion.suppress_msg_deleted = !config.flags.info_flags.reports_deletions();
 
     // upstream: rsync.c:88 setup_iconv() - server opens iconv against the
     // wire's UTF-8 charset using the local-side spec forwarded by the client

@@ -3,15 +3,14 @@
 //! Upstream prints a local copy's totals from the socketpair between its two
 //! forked halves (main.c:334-335 handle_stats), and oc-rsync replays that
 //! stream through a wire model. Each cell builds a single-directory fixture
-//! below one 64 KiB buffer, where 3.5.1's totals are stable from run to run,
+//! below one 64 KiB buffer, where 3.5.2's totals are stable from run to run,
 //! and asserts the totals exactly.
 //!
 //! Every fixture pins names, sizes, contents, modes and mtimes, and the cells
 //! run with `-rt` so no owner names or ids reach the file list: the pinned
-//! totals recorded from rsync 3.5.1 then hold on any machine and filesystem.
-//! When an rsync 3.5.1 oracle resolves (`OC_RSYNC_UPSTREAM_RSYNC`, the interop
-//! install, the upstream build tree, then `/usr/bin/rsync`, each banner
-//! checked), every cell also runs it on the same fixture and compares live.
+//! totals recorded from rsync 3.5.2 then hold on any machine and filesystem.
+//! When the rsync 3.5.2 oracle resolves (`require_upstream_rsync`), every
+//! cell also runs it on the same fixture and compares live.
 
 #![cfg(unix)]
 
@@ -22,8 +21,9 @@ use std::process::Command;
 
 use filetime::FileTime;
 use test_support::file_times::set_file_mtime;
+use test_support::{UpstreamVersion, require_upstream_rsync};
 
-const ORACLE_VERSION: &str = "3.5.1";
+const ORACLE_VERSION: &str = "3.5.2";
 /// Every fixture entry's mtime: 2023-11-14 22:13:20 UTC, nanoseconds zero.
 const MTIME: i64 = 1_700_000_000;
 
@@ -31,37 +31,11 @@ fn oc_rsync() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// Resolves an rsync whose `--version` banner names [`ORACLE_VERSION`].
+/// The rsync 3.5.2 oracle, banner-checked by the shared resolver.
 fn upstream_rsync() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
-        candidates.push(PathBuf::from(explicit));
-    }
-    if let Some(installed) = test_support::upstream_install_bin(ORACLE_VERSION) {
-        candidates.push(installed);
-    }
-    if let Some(root) = test_support::workspace_root() {
-        candidates.push(root.join(format!(
-            "target/interop/upstream-src/rsync-{ORACLE_VERSION}/rsync"
-        )));
-    }
-    candidates.push(PathBuf::from("/usr/bin/rsync"));
-    candidates.into_iter().find(|candidate| {
-        Command::new(candidate)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .and_then(|banner| banner.lines().next().map(str::to_owned))
-            // The release banner reads `version 3.5.1  protocol`; a git
-            // build (`3.5.1-g<hash>`) is a different program.
-            .is_some_and(|first| {
-                first.starts_with("rsync") && first.contains(&format!(" version {ORACLE_VERSION} "))
-            })
-    })
+    require_upstream_rsync(UpstreamVersion::V3_5_2).map(|upstream| upstream.binary().to_path_buf())
 }
 
-/// Deterministic, incompressible-looking content.
 fn content(seed: u64, len: usize) -> Vec<u8> {
     let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     (0..len)
@@ -162,9 +136,9 @@ impl Fixture {
     }
 }
 
-/// Asserts a cell whose sent total 3.5.1 itself splits across a varying
+/// Asserts a cell whose sent total upstream itself splits across a varying
 /// number of frames: the received total is exact, and the sent total must be
-/// one of the values 3.5.1 printed for the same fixture.
+/// one of the values upstream printed for the same fixture.
 fn check_sent_within(fixture: Fixture, args: &[&str], sent: &[u64], received: u64) {
     let (oc_sent, oc_received) = totals(&oc_rsync(), fixture, args);
     assert_eq!(
@@ -232,12 +206,17 @@ fn run_totals(binary: &Path, src: &Path, dst: &Path, args: &[&str]) -> (u64, u64
     (field("Total bytes sent:"), field("Total bytes received:"))
 }
 
-/// Asserts oc's totals for a cell against the 3.5.1 recording and, when an
-/// oracle is installed, against a live 3.5.1 run of the same fixture.
+/// Asserts oc's totals for a cell against the upstream recording and, when
+/// the 3.5.2 oracle resolves, that a live run of it on the same fixture
+/// prints the recording too.
 fn check(fixture: Fixture, args: &[&str], pinned: (u64, u64)) {
     let oc = totals(&oc_rsync(), fixture, args);
     if let Some(upstream) = upstream_rsync() {
         let live = totals(&upstream, fixture, args);
+        assert_eq!(
+            live, pinned,
+            "live rsync {ORACLE_VERSION} vs its recording for {args:?}"
+        );
         assert_eq!(oc, live, "oc vs live rsync {ORACLE_VERSION} for {args:?}");
     }
     assert_eq!(
@@ -285,22 +264,25 @@ fn delta_transfer_totals_match_upstream() {
 /// halves pinned to the same CPUs (`taskset -c 0,1`), 9 of 40 runs printed
 /// sent 54: the sender's echo shares a frame with its NDX_DONE when the
 /// generator has not yet read it (io.c:perform_io()). Received is always 22.
+///
+/// A live rsync 3.5.2 run on the same fixture prints totals within this set.
 #[test]
 fn dry_run_totals_match_upstream() {
     check_sent_within(Fixture::WholeFile, &["-rtn"], &[54, 58], 22);
 }
 
-/// `--delete`: each deleted name arrives as `MSG_DELETED` (the directory's
-/// with a trailing NUL, log.c:913-916), and the delete statistics ride in
-/// the phase tail.
+/// `--delete` without per-item output: the delete statistics ride in the
+/// phase tail, and no deleted name is sent, because the server half sends
+/// `MSG_DELETED` only under `INFO_GTE(DEL, 1) || stdout_format`
+/// (log.c:997-1006).
 ///
-/// Recorded from rsync 3.5.1 (the release tarball build, protocol 33) on this
+/// Recorded from rsync 3.5.2 (the release tarball build, protocol 33) on this
 /// fixture, five runs, all identical:
 /// `rsync -rt --delete --stats src/ dst` printed
-/// `Total bytes sent: 48` and `Total bytes received: 32`.
+/// `Total bytes sent: 48` and `Total bytes received: 19`.
 #[test]
 fn delete_totals_match_upstream() {
-    check(Fixture::Extraneous, &["-rt", "--delete"], (48, 32));
+    check(Fixture::Extraneous, &["-rt", "--delete"], (48, 19));
 }
 
 /// `--delete-after` holds the last NDX_DONE back until after the delete
@@ -310,6 +292,8 @@ fn delete_totals_match_upstream() {
 /// fixture, five runs, all identical:
 /// `rsync -rt --delete-after --stats src/ dst` printed
 /// `Total bytes sent: 46` and `Total bytes received: 11`.
+///
+/// A live rsync 3.5.2 run on the same fixture prints the same totals.
 #[test]
 fn delete_after_totals_match_upstream() {
     check(Fixture::Extraneous, &["-rt", "--delete-after"], (46, 11));
@@ -356,23 +340,25 @@ fn file_list_follows_readdir_order_like_upstream() {
 /// Recorded from rsync 3.5.1 (the release tarball build, protocol 33), ten runs, all
 /// identical: `rsync -rt --no-i-r --stats src/ dst` printed sent 46,
 /// received 12.
+///
+/// A live rsync 3.5.2 run on the same fixture prints the same totals.
 #[test]
 fn flat_list_up_to_date_totals_match_upstream() {
     check(Fixture::UpToDate, &["-rt", "--no-i-r"], (46, 12));
 }
 
-/// A flat list with deletions: the delete statistics and `MSG_DELETED`
-/// frames ride in the phase tail as with incremental lists.
+/// A flat list with deletions: the delete statistics ride in the phase tail
+/// as with incremental lists, again with no `MSG_DELETED` (log.c:997-1006).
 ///
-/// Recorded from rsync 3.5.1, ten runs, all identical:
+/// Recorded from rsync 3.5.2, ten runs, all identical:
 /// `rsync -rt --no-i-r --delete --stats src/ dst` printed sent 46,
-/// received 32.
+/// received 19.
 #[test]
 fn flat_list_delete_totals_match_upstream() {
     check(
         Fixture::Extraneous,
         &["-rt", "--no-i-r", "--delete"],
-        (46, 32),
+        (46, 19),
     );
 }
 
@@ -382,6 +368,8 @@ fn flat_list_delete_totals_match_upstream() {
 /// Recorded from rsync 3.5.1, ten runs: `rsync -rt --no-i-r --stats src/ dst`
 /// always printed received 38; sent was 5092 (seven runs) or 5096 (three),
 /// as the sender's reply was or was not split from its NDX_DONE.
+///
+/// A live rsync 3.5.2 run on the same fixture prints totals within this set.
 #[test]
 fn flat_list_transfer_totals_match_upstream() {
     check_sent_within(
@@ -427,6 +415,8 @@ fn set_fixture_xattrs(src: &Path) -> std::io::Result<()> {
 /// Recorded from rsync 3.5.1 (the release tarball build, protocol 33),
 /// ten runs, all identical: `rsync -rtX --stats src/ dst` printed
 /// sent 467, received 60.
+///
+/// A live rsync 3.5.2 run on the same fixture prints the same totals.
 #[test]
 fn xattr_totals_match_upstream() {
     let dir = tempfile::tempdir().expect("tempdir");

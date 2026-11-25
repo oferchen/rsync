@@ -65,6 +65,7 @@ pub struct WireTotals {
     compat_flags: CompatibilityFlags,
     itemize_unchanged: bool,
     reports_created_directory: bool,
+    reports_deletions: bool,
 }
 
 impl WireTotals {
@@ -77,7 +78,19 @@ impl WireTotals {
             compat_flags,
             itemize_unchanged: false,
             reports_created_directory: false,
+            reports_deletions: false,
         }
+    }
+
+    /// Records whether the server half reports each deletion to the client.
+    ///
+    /// upstream: log.c:997-1006 `log_delete()` sends a deleted name as
+    /// `MSG_DELETED` only under `INFO_GTE(DEL, 1) || stdout_format`, and
+    /// options.c:2576-2579 sets `stdout_format` from `INFO_GTE(NAME, 1)`.
+    #[must_use]
+    pub const fn with_deletion_reports(mut self, reports: bool) -> Self {
+        self.reports_deletions = reports;
+        self
     }
 
     /// Records whether the receiver announces the destination root it
@@ -378,9 +391,13 @@ impl WireTally {
 
     /// Records a deletion the generator reports to the client.
     ///
-    /// upstream: log.c:998-1001 `log_delete()` - a server half sends every
-    /// deleted name as `MSG_DELETED`, a directory with its trailing NUL.
+    /// upstream: log.c:997-1006 `log_delete()` - a server half sends a deleted
+    /// name as `MSG_DELETED`, a directory with its trailing NUL, only when the
+    /// client asked for per-item output (see [`WireTotals::with_deletion_reports`]).
     pub(crate) fn deleted(&mut self, relative: &Path, is_dir: bool) {
+        if !self.totals.reports_deletions {
+            return;
+        }
         let name = relative.as_os_str().as_encoded_bytes().len() as u64;
         self.deleted += protocol::MESSAGE_HEADER_LEN as u64 + name + u64::from(is_dir);
     }

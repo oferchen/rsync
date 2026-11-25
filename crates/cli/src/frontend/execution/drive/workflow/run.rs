@@ -1437,6 +1437,15 @@ where
                 } else {
                     verbosity > 0
                 },
+        )
+        // upstream: log.c:997-1006 - the server half sends deleted names
+        // only under `INFO_GTE(DEL, 1) || stdout_format`; options.c:2560-2579
+        // sets `stdout_format` from `--out-format`, `-i` or `INFO_GTE(NAME, 1)`.
+        .with_deletion_reports(
+            out_format.is_some()
+                || itemize_changes
+                || logging::info_gte(logging::InfoFlag::Del, 1)
+                || logging::info_gte(logging::InfoFlag::Name, 1),
         );
         builder = builder.wire_totals(Some(totals));
     }

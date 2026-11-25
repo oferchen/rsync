@@ -81,13 +81,15 @@ fn apply_forwarded_output_words(client_args: &[String], max_verbosity: i32) -> b
         }
     }
     // upstream: clientserver.c:1226-1230 - remember an explicit deletion
-    // output request (from `-v` or `--info=del`) before `max verbosity`
-    // clamps `INFO_DEL`.
-    let del_requested = logging::info_gte(logging::InfoFlag::Del, 1);
+    // output request before `max verbosity` clamps `INFO_DEL`; the
+    // `stdout_format` that `INFO_GTE(NAME, 1)` sets (options.c:2576-2579) is
+    // likewise fixed before the clamp.
+    let deletions_requested = logging::info_gte(logging::InfoFlag::Del, 1)
+        || logging::info_gte(logging::InfoFlag::Name, 1);
     if let Ok(level) = u8::try_from(max_verbosity) {
         logging::limit_output_verbosity(level);
     }
-    del_requested
+    deletions_requested
 }
 /// Applies module directives that force transfer-time behavior onto the
 /// per-session [`ServerConfig`], mirroring the daemon-only overrides upstream
@@ -283,11 +285,16 @@ fn build_server_config(
             // it here; without that, daemon-side `info_log!`/`debug_log!`
             // emissions stay silent regardless of the client's `-v`, since the
             // daemon's startup `apply_verbosity` only seeded the accept loop.
+            // upstream: clientserver.c:1226-1230 runs before
+            // limit_output_verbosity(), so a `-v` the module clamps still asks
+            // for deletion names.
+            let verbose_requested = cfg.flags.verbose_level > 0;
             crate::daemon::apply_verbosity(apply_output_verbosity_limit(
                 &mut cfg,
                 module.max_verbosity,
             ));
-            let del_requested = apply_forwarded_output_words(client_args, module.max_verbosity);
+            let levels_request_deletions =
+                apply_forwarded_output_words(client_args, module.max_verbosity);
             // upstream: log.c:424-426 - a quiet server drops FINFO before
             // framing it.
             logging::set_quiet(cfg.flags.quiet);
@@ -341,7 +348,8 @@ fn build_server_config(
                 return Ok(None);
             }
 
-            cfg.deletion.suppress_msg_deleted = !del_requested && !cfg.flags.info_flags.itemize;
+            cfg.deletion.suppress_msg_deleted =
+                !(verbose_requested || levels_request_deletions || cfg.flags.info_flags.log_format);
             apply_daemon_niceness(client_args);
 
             // upstream: token.c:55-66 `init_compression_level()` - when -z is in
