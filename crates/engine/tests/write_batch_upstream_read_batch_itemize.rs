@@ -2,17 +2,11 @@
 //! upstream rsync `--read-batch` replay of an oc-produced batch must
 //! itemize a fresh file as created and count it in `--stats`.
 //!
-//! `#[ignore]`d because it requires a locally built upstream rsync 3.5.1
-//! (`target/interop/upstream-src/rsync-3.5.1/rsync`), which is not present
-//! on a bare checkout; build it with `bash tools/ci/run_interop.sh` or by
-//! hand (`git clone --branch v3.5.1
-//! https://github.com/RsyncProject/rsync.git` then `./configure
-//! --disable-md2man --disable-openssl --disable-xxhash --disable-zstd
-//! --disable-lz4 && make`). Run explicitly with `--ignored` once built. This
-//! mirrors the `require_upstream`/`upstream_rsync()` convention in
-//! `crates/core/tests/common/mod.rs`: a missing oracle binary panics loudly
-//! rather than silently reporting a pass, so an accidental `--ignored` run
-//! on a machine without the harness cannot be mistaken for oracle coverage.
+//! Needs the rsync 3.5.2 oracle, resolved by
+//! `test_support::require_upstream_rsync` (`OC_RSYNC_UPSTREAM_BIN_3_5_2`, or
+//! the install `tools/ci/run_interop.sh build-only` makes). Without it the
+//! test prints a skip line and returns; under `OC_RSYNC_UPSTREAM_COMPAT=1`,
+//! as the interop job's oracle step runs it, a missing oracle fails.
 //!
 //! The always-run companion `write_batch_new_file_iflags.rs` pins the same
 //! defect at the byte level without needing upstream; this test additionally
@@ -32,12 +26,11 @@
 //!   string rendering: `+` fill when `ITEM_IS_NEW` is set).
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use tempfile::tempdir;
-use test_support::{Deadlined, run_deadlined};
+use test_support::{Deadlined, UpstreamVersion, run_deadlined};
 
 /// Wall-clock budget for the upstream `--read-batch` subprocess. Generous
 /// for a single small file, but still bounded - see `crates/test-support/
@@ -45,47 +38,12 @@ use test_support::{Deadlined, run_deadlined};
 /// descendant of it) is never safe in a test harness.
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Locally built upstream rsync 3.5.1, source-tree layout (binary sits at
-/// the source root after `make`, not under `upstream-install/`).
-fn upstream_3_5_1() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/interop/upstream-src/rsync-3.5.1/rsync"
-    ))
-}
-
-/// Panics unless `path` is a genuine upstream rsync binary, naming the
-/// reason it was rejected rather than reporting a bare "not found" - see
-/// `crates/core/tests/common/mod.rs::upstream_banner_check` for the same
-/// check applied elsewhere in this codebase.
-fn require_upstream(path: &Path) {
-    if !path.exists() {
-        panic!(
-            "upstream rsync 3.5.1 required for this oracle test, but {} is absent. \
-             Build it with `bash tools/ci/run_interop.sh` or by hand (see this file's \
-             module doc). This test is #[ignore]d for that reason - run with --ignored \
-             once the binary exists.",
-            path.display()
-        );
-    }
-    let Ok(output) = Command::new(path).arg("--version").output() else {
-        panic!(
-            "{} exists but `--version` failed to execute",
-            path.display()
-        );
-    };
-    let banner = String::from_utf8_lossy(&output.stdout);
-    let first = banner.lines().next().unwrap_or_default();
-    if !(first.starts_with("rsync  version 3.5.1") && first.contains("protocol version")) {
-        panic!("{} is not upstream rsync 3.5.1: {first:?}", path.display());
-    }
-}
-
 #[test]
-#[ignore = "requires a locally built upstream rsync 3.5.1; run with --ignored"]
 fn upstream_read_batch_itemizes_new_file_as_created() {
-    let upstream = upstream_3_5_1();
-    require_upstream(&upstream);
+    let Some(oracle) = test_support::require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let upstream = oracle.binary();
     let oc_rsync = test_support::oc_rsync_bin();
 
     let temp = tempdir().expect("tempdir");
@@ -124,7 +82,7 @@ fn upstream_read_batch_itemizes_new_file_as_created() {
     // role reading from the batch file; `run_deadlined` sets stdin to null
     // for both and bounds the whole run, so neither can block on a stdin
     // read that never arrives nor hang the harness past the budget.
-    let mut read_cmd = Command::new(&upstream);
+    let mut read_cmd = Command::new(upstream);
     read_cmd
         .arg("-avi")
         .arg(format!("--read-batch={}", batch_path.display()))

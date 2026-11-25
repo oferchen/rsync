@@ -1,7 +1,7 @@
 //! Shared harness for `--delete-*` event-order interop tests vs upstream rsync.
 //!
 //! These tests assert that oc-rsync emits the same per-directory sequence of
-//! `unlink`/`rmdir`/`unlinkat` syscalls as upstream rsync 3.4.1 for every
+//! `unlink`/`rmdir`/`unlinkat` syscalls as upstream rsync 3.5.2 for every
 //! supported deletion timing mode (`--delete-during`, `--delete-before`,
 //! `--delete-after`, `--delete-delay`) plus `--delete-excluded`. The harness
 //! drives each binary under `strace -f -e trace=unlink,rmdir,unlinkat,openat`
@@ -154,6 +154,7 @@ pub enum PairOutcome {
 /// chosen by the caller).
 pub fn run_pair_capture(
     scenario: &Scenario,
+    upstream_bin: &Path,
     delete_mode_flags: &[&str],
     extra_flags: &[&str],
 ) -> io::Result<PairOutcome> {
@@ -167,19 +168,9 @@ pub fn run_pair_capture(
             "strace not found on PATH; required for syscall capture".to_string(),
         ));
     }
-    let upstream_bin = match locate_upstream_rsync() {
-        Some(p) => p,
-        None => {
-            return Ok(PairOutcome::Skipped(
-                "no upstream rsync found (set OC_RSYNC_UPSTREAM or install \
-                 target/interop/upstream-install/<ver>/bin/rsync)"
-                    .to_string(),
-            ));
-        }
-    };
     let oc_bin = locate_oc_rsync();
 
-    let upstream = run_one_capture(scenario, &upstream_bin, delete_mode_flags, extra_flags)?;
+    let upstream = run_one_capture(scenario, upstream_bin, delete_mode_flags, extra_flags)?;
     let oc_rsync = run_one_capture(scenario, &oc_bin, delete_mode_flags, extra_flags)?;
     Ok(PairOutcome::Captured { upstream, oc_rsync })
 }
@@ -597,37 +588,6 @@ pub fn locate_oc_rsync() -> PathBuf {
         built.display()
     );
     built
-}
-
-/// Locate an upstream rsync binary. Honours `OC_RSYNC_UPSTREAM`, then the
-/// `target/interop/upstream-install/<ver>/bin/rsync` cache, then `which`.
-pub fn locate_upstream_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("OC_RSYNC_UPSTREAM") {
-        let path = PathBuf::from(p);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for version in ["3.4.2", "3.4.1", "3.1.3", "3.0.9"] {
-        let in_tree = manifest_dir
-            .join("target/interop/upstream-install")
-            .join(version)
-            .join("bin/rsync");
-        if in_tree.is_file() {
-            return Some(in_tree);
-        }
-    }
-    let which = Command::new("sh")
-        .arg("-c")
-        .arg("command -v rsync 2>/dev/null")
-        .output()
-        .ok()?;
-    if !which.status.success() {
-        return None;
-    }
-    let path = PathBuf::from(String::from_utf8(which.stdout).ok()?.trim());
-    if path.is_file() { Some(path) } else { None }
 }
 
 /// Convenience: log a skip reason and exit the test successfully.

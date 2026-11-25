@@ -266,29 +266,6 @@ hosts deny = *
 }
 
 #[test]
-#[ignore = "requires rsync binary for interop testing"]
-fn interop_with_system_rsync() {
-    use std::process::Command;
-
-    // Check if system rsync is available
-    let rsync_check = Command::new("rsync").arg("--version").output();
-
-    if rsync_check.is_err() {
-        eprintln!("System rsync not available, skipping interop test");
-        return;
-    }
-
-    let test_dir = TestDir::new().expect("create test dir");
-    let _src_dir = test_dir.mkdir("src").expect("create src dir");
-    let _dest_dir = test_dir.mkdir("dest").expect("create dest dir");
-
-    // In a full implementation:
-    // 1. Start oc-rsyncd on a test port
-    // 2. Use system rsync to connect and transfer files
-    // 3. Verify the transfer was successful
-}
-
-#[test]
 fn protocol_version_negotiation_sequence() {
     // Document the expected protocol negotiation sequence
     // 1. Server sends: @RSYNCD: <version> [digests...]

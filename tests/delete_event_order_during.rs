@@ -1,4 +1,4 @@
-//! G1 / #2275 - `--delete-during` event-order parity vs upstream rsync 3.4.1.
+//! G1 / #2275 - `--delete-during` event-order parity vs upstream rsync 3.5.2.
 //!
 //! Asserts that oc-rsync's per-directory `unlink`/`rmdir` burst sequence
 //! matches upstream's when running with `--delete-during`. Upstream rsync's
@@ -25,8 +25,12 @@ use integration::delete_event_order_harness::{
 
 #[test]
 fn delete_event_order_during_matches_upstream() {
+    let Some(oracle) = test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
+        return;
+    };
     let scenario = Scenario::during_default();
-    let outcome = match run_pair_capture(&scenario, &["--delete-during"], &[]) {
+    let outcome = match run_pair_capture(&scenario, oracle.binary(), &["--delete-during"], &[]) {
         Ok(o) => o,
         Err(e) => panic!("harness failure: {e}"),
     };

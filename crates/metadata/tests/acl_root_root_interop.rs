@@ -27,9 +27,9 @@
 //!   IS `0` (root would silently resolve every wire id and bypass the
 //!   unmappable path under test), or the chosen sentinel UID/GID
 //!   unexpectedly resolves via `getent`.
-//! - An upstream `rsync` binary cannot be located (the `OC_RSYNC_UPSTREAM`
-//!   env var, then `target/interop/upstream-install/<ver>/bin/rsync`, then
-//!   `command -v rsync`).
+//! - The rsync 3.5.2 oracle is not installed (resolved by
+//!   `test_support::require_upstream_rsync`; under
+//!   `OC_RSYNC_UPSTREAM_COMPAT=1` a missing oracle fails instead).
 //! - The backing filesystem refuses POSIX ACL writes (no `acl` mount
 //!   option on `/tmp` is the common case; skip rather than fail).
 //!
@@ -61,7 +61,6 @@
 
 #![cfg(all(target_os = "linux", feature = "acl"))]
 
-use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -92,44 +91,12 @@ fn is_root() -> bool {
     rustix::process::geteuid().as_raw() == 0
 }
 
-/// Locate an upstream rsync binary.
-///
-/// Order:
-/// 1. `OC_RSYNC_UPSTREAM` env var pointing at a binary.
-/// 2. The in-tree interop cache at
-///    `target/interop/upstream-install/<ver>/bin/rsync` (3.4.2, 3.4.1,
-///    3.1.3 in that preference order).
-/// 3. `command -v rsync` on PATH.
+/// The rsync 3.5.2 oracle, resolved and banner-checked by
+/// `test_support::require_upstream_rsync`: `None` after a skip line when it is
+/// not installed, and a test failure instead under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 fn locate_upstream_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("OC_RSYNC_UPSTREAM") {
-        let path = PathBuf::from(p);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(workspace_root) = manifest_dir.parent().and_then(Path::parent) {
-        for version in ["3.4.2", "3.4.1", "3.1.3"] {
-            let candidate = workspace_root
-                .join("target/interop/upstream-install")
-                .join(version)
-                .join("bin/rsync");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    let which = Command::new("sh")
-        .arg("-c")
-        .arg("command -v rsync 2>/dev/null")
-        .output()
-        .ok()?;
-    if !which.status.success() {
-        return None;
-    }
-    let path_str = String::from_utf8(which.stdout).ok()?;
-    let path = PathBuf::from(path_str.trim());
-    if path.is_file() { Some(path) } else { None }
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+        .map(|oracle| oracle.binary().to_path_buf())
 }
 
 /// Run an rsync-style binary with a wall-clock timeout. Returns the
@@ -425,18 +392,12 @@ struct Harness {
 
 impl Harness {
     fn try_new() -> Option<Self> {
+        let upstream_bin = locate_upstream_rsync()?;
         if !is_root() {
             skip("requires root (geteuid() != 0); root-to-root invariant cannot be exercised");
             return None;
         }
         let oc_bin = test_support::oc_rsync_bin();
-        let Some(upstream_bin) = locate_upstream_rsync() else {
-            skip(
-                "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
-                 target/interop/upstream-install/, or install rsync on PATH)",
-            );
-            return None;
-        };
         let scratch = match Scratch::try_new() {
             Ok(s) => s,
             Err(e) => {
@@ -614,6 +575,7 @@ impl NonRootHarness {
     where
         F: FnOnce(&Path) -> Result<(), String>,
     {
+        let upstream_bin = locate_upstream_rsync()?;
         if is_root() {
             skip(
                 "requires non-root user with ACL write permission; \
@@ -629,13 +591,6 @@ impl NonRootHarness {
             return None;
         }
         let oc_bin = test_support::oc_rsync_bin();
-        let Some(upstream_bin) = locate_upstream_rsync() else {
-            skip(
-                "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
-                 target/interop/upstream-install/, or install rsync on PATH)",
-            );
-            return None;
-        };
         let scratch = match Scratch::try_new() {
             Ok(s) => s,
             Err(e) => {
@@ -736,6 +691,7 @@ struct ReverseHarness {
 
 impl ReverseHarness {
     fn try_new() -> Option<Self> {
+        let upstream_bin = locate_upstream_rsync()?;
         if is_root() {
             skip(
                 "requires non-root user with ACL write permission; \
@@ -758,13 +714,6 @@ impl ReverseHarness {
             return None;
         }
         let oc_bin = test_support::oc_rsync_bin();
-        let Some(upstream_bin) = locate_upstream_rsync() else {
-            skip(
-                "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
-                 target/interop/upstream-install/, or install rsync on PATH)",
-            );
-            return None;
-        };
         let scratch = match Scratch::try_new() {
             Ok(s) => s,
             Err(e) => {

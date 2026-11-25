@@ -1,4 +1,4 @@
-//! G5 / #2279 - `--delete-excluded` event-order parity vs upstream rsync 3.4.1.
+//! G5 / #2279 - `--delete-excluded` event-order parity vs upstream rsync 3.5.2.
 //!
 //! Asserts that `--delete-excluded` combined with each timing mode
 //! (`--delete-during`, `--delete-before`, `--delete-after`, `--delete-delay`)
@@ -68,9 +68,14 @@ fn assert_timing_invariant(label: &str, mode: &str, events: &[Event]) {
 }
 
 fn run_combo(mode: &str) {
+    let Some(oracle) = test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
+        return;
+    };
     let scenario = Scenario::excluded_default();
     let outcome = match run_pair_capture(
         &scenario,
+        oracle.binary(),
         &[mode, "--delete-excluded"],
         &["--exclude=*.bak"],
     ) {

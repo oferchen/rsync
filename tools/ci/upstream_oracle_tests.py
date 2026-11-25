@@ -12,6 +12,12 @@ The binary set is derived, never pinned: every top-level `tests/*.rs` file
 that calls the resolver, in the root `bin` package or under `crates/*/`. A
 new oracle test is picked up on the next run.
 
+A cell that needs a job of its own (a release-profile benchmark, a long fuzz
+run) is listed in EXCLUDED with the workflow job that runs it instead. `args`
+refuses to run while an entry is stale, so an exclusion cannot quietly turn
+into a cell nothing runs: the file must exist, still call the resolver, and
+be named by its job.
+
 Usage:
     python3 tools/ci/upstream_oracle_tests.py args
         Print the nextest selection, one argument per line
@@ -35,6 +41,11 @@ RESOLVER_CALL = re.compile(r"\brequire_upstream_rsync\(")
 SKIP_LINE = "Skipping upstream-compat test:"
 TESTS_RUN = re.compile(r"^\s*Summary \[.*?\]\s+(\d+) tests? run", re.MULTILINE)
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+JOB_KEY = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+
+# Oracle cells kept out of the interop oracle step, each mapped to the
+# (workflow file, job id) that runs it.
+EXCLUDED: dict[str, tuple[str, str]] = {}
 
 
 def package_name(manifest: Path) -> str:
@@ -42,17 +53,23 @@ def package_name(manifest: Path) -> str:
         return tomllib.load(handle)["package"]["name"]
 
 
-def oracle_binaries(root: Path) -> list[tuple[str, str]]:
+def oracle_binaries(
+    root: Path, excluded: dict[str, tuple[str, str]] | None = None
+) -> list[tuple[str, str]]:
     """Return sorted (package, test binary) pairs that call the resolver.
 
+    Sources listed in `excluded` (paths relative to `root`) are left out.
     Raises ValueError for a call in a nested test module, whose binary
     cannot be named from its path.
     """
+    skip = set(EXCLUDED if excluded is None else excluded)
     test_dirs = [root / "tests"] + sorted(root.glob("crates/*/tests"))
     cells: set[tuple[str, str]] = set()
     for tests in test_dirs:
         package = package_name(tests.parent / "Cargo.toml")
         for source in sorted(tests.rglob("*.rs")):
+            if source.relative_to(root).as_posix() in skip:
+                continue
             if not RESOLVER_CALL.search(source.read_text(encoding="utf-8")):
                 continue
             if source.parent != tests:
@@ -62,6 +79,58 @@ def oracle_binaries(root: Path) -> list[tuple[str, str]]:
                 )
             cells.add((package, source.stem))
     return sorted(cells)
+
+
+def job_block(workflow: str, job: str) -> str | None:
+    """Return the text of `job` under the workflow's top-level `jobs:` map."""
+    lines = workflow.splitlines()
+    try:
+        start = lines.index("jobs:") + 1
+    except ValueError:
+        return None
+    block: list[str] | None = None
+    for line in lines[start:]:
+        if line and not line.startswith(" "):
+            break
+        key = JOB_KEY.match(line)
+        if key:
+            if block is not None:
+                break
+            if key.group(1) == job:
+                block = []
+            continue
+        if block is not None:
+            block.append(line)
+    return None if block is None else "\n".join(block)
+
+
+def stale_exclusions(
+    root: Path, excluded: dict[str, tuple[str, str]] | None = None
+) -> list[str]:
+    """Return why each exclusion is stale (empty when every entry holds).
+
+    An entry holds when its source exists, still calls the resolver, and the
+    named workflow job mentions the source's test binary.
+    """
+    problems = []
+    for source, (workflow, job) in sorted((EXCLUDED if excluded is None else excluded).items()):
+        path = root / source
+        if not path.is_file():
+            problems.append(f"excluded {source} no longer exists")
+            continue
+        if not RESOLVER_CALL.search(path.read_text(encoding="utf-8")):
+            problems.append(f"excluded {source} no longer calls require_upstream_rsync")
+            continue
+        workflow_path = root / workflow
+        if not workflow_path.is_file():
+            problems.append(f"excluded {source}: workflow {workflow} does not exist")
+            continue
+        block = job_block(workflow_path.read_text(encoding="utf-8"), job)
+        if block is None:
+            problems.append(f"excluded {source}: {workflow} has no job {job}")
+        elif not re.search(rf"\b{re.escape(path.stem)}\b", block):
+            problems.append(f"excluded {source}: job {job} in {workflow} does not run it")
+    return problems
 
 
 def nextest_args(cells: list[tuple[str, str]]) -> list[str]:
@@ -106,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     options = parser.parse_args(argv)
 
     if options.command == "args":
+        stale = stale_exclusions(options.root)
+        for problem in stale:
+            print(f"error: {problem}", file=sys.stderr)
+        if stale:
+            return 2
         try:
             cells = oracle_binaries(options.root)
         except ValueError as error:

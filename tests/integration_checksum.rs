@@ -564,9 +564,9 @@ fn no_checksum_disables_checksum_mode() {
     );
 }
 
-/// Helper to run upstream rsync command
-fn run_upstream_rsync(args: &[&str]) -> Option<std::process::Output> {
-    Command::new("rsync")
+/// Runs the rsync 3.5.2 oracle `upstream` with `args`.
+fn run_upstream_rsync(upstream: &Path, args: &[&str]) -> Option<std::process::Output> {
+    Command::new(upstream)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -576,11 +576,10 @@ fn run_upstream_rsync(args: &[&str]) -> Option<std::process::Output> {
 
 #[test]
 fn upstream_comparison_checksum_skips_identical() {
-    // Skip if upstream rsync not available
-    if run_upstream_rsync(&["--version"]).is_none() {
-        eprintln!("Skipping upstream comparison test: rsync not available");
+    let Some(oracle) = test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
         return;
-    }
+    };
 
     let test_dir = TestDir::new().expect("create test dir");
 
@@ -597,12 +596,15 @@ fn upstream_comparison_checksum_skips_identical() {
 
     // Dest file is backdated via filetime - no sleep needed to detect writes
 
-    let upstream_output = run_upstream_rsync(&[
-        "--checksum",
-        "-v",
-        upstream_src.to_str().unwrap(),
-        upstream_dest.to_str().unwrap(),
-    ])
+    let upstream_output = run_upstream_rsync(
+        oracle.binary(),
+        &[
+            "--checksum",
+            "-v",
+            upstream_src.to_str().unwrap(),
+            upstream_dest.to_str().unwrap(),
+        ],
+    )
     .expect("run upstream rsync");
 
     // Test with oc-rsync
@@ -645,11 +647,10 @@ fn upstream_comparison_checksum_skips_identical() {
 
 #[test]
 fn upstream_comparison_checksum_transfers_different() {
-    // Skip if upstream rsync not available
-    if run_upstream_rsync(&["--version"]).is_none() {
-        eprintln!("Skipping upstream comparison test: rsync not available");
+    let Some(oracle) = test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
         return;
-    }
+    };
 
     let test_dir = TestDir::new().expect("create test dir");
 
@@ -666,11 +667,14 @@ fn upstream_comparison_checksum_transfers_different() {
     set_file_mtime(&upstream_src, same_time).unwrap();
     set_file_mtime(&upstream_dest, same_time).unwrap();
 
-    let upstream_output = run_upstream_rsync(&[
-        "--checksum",
-        upstream_src.to_str().unwrap(),
-        upstream_dest.to_str().unwrap(),
-    ])
+    let upstream_output = run_upstream_rsync(
+        oracle.binary(),
+        &[
+            "--checksum",
+            upstream_src.to_str().unwrap(),
+            upstream_dest.to_str().unwrap(),
+        ],
+    )
     .expect("run upstream rsync");
 
     // Test with oc-rsync
@@ -707,11 +711,10 @@ fn upstream_comparison_checksum_transfers_different() {
 
 #[test]
 fn upstream_comparison_checksum_with_itemize() {
-    // Skip if upstream rsync not available
-    if run_upstream_rsync(&["--version"]).is_none() {
-        eprintln!("Skipping upstream comparison test: rsync not available");
+    let Some(oracle) = test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
         return;
-    }
+    };
 
     let test_dir = TestDir::new().expect("create test dir");
 
@@ -723,12 +726,15 @@ fn upstream_comparison_checksum_with_itemize() {
         .write_file("upstream_dest.txt", b"content B")
         .unwrap();
 
-    let upstream_output = run_upstream_rsync(&[
-        "--checksum",
-        "-i",
-        upstream_src.to_str().unwrap(),
-        upstream_dest.to_str().unwrap(),
-    ])
+    let upstream_output = run_upstream_rsync(
+        oracle.binary(),
+        &[
+            "--checksum",
+            "-i",
+            upstream_src.to_str().unwrap(),
+            upstream_dest.to_str().unwrap(),
+        ],
+    )
     .expect("run upstream rsync");
 
     let oc_src = test_dir.write_file("oc_src.txt", b"content A").unwrap();

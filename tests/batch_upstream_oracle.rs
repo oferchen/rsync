@@ -1,18 +1,16 @@
 //! Byte-level oracle for the files `--write-batch` produces.
 //!
-//! Each cell records the same fixture with oc and with upstream rsync 3.5.1,
+//! Each cell records the same fixture with oc and with upstream rsync 3.5.2,
 //! running both from the same working directory with the same relative
 //! operands, and compares what lands on disk: whether the batch and its `.sh`
 //! exist, the batch header bytes, and the `.sh` text with only `argv[0]`
 //! masked (it is the path of whichever binary ran).
 //!
-//! Every cell also asserts a pinned expectation recorded from rsync 3.5.1, so
-//! the cell still fails on a regression where no oracle is installed. When
-//! the oracle resolves, the live comparison runs as well; it is located like
-//! the other root oracle suites: `OC_RSYNC_UPSTREAM_RSYNC`, then
-//! `target/interop/upstream-install/3.5.1/bin/rsync`, then the
-//! `upstream-src` build tree, then `/usr/bin/rsync` - each banner-verified
-//! as 3.5.1, since only that release defines the expected bytes.
+//! Every cell also asserts a pinned expectation recorded from rsync 3.5.1
+//! (3.5.2 writes the same bytes for every cell), so the cell still fails on a
+//! regression where no oracle is installed. When the 3.5.2 oracle resolves
+//! through `test_support::require_upstream_rsync`, the live comparison runs as
+//! well; under `OC_RSYNC_UPSTREAM_COMPAT=1` a missing oracle fails.
 
 #![cfg(unix)]
 
@@ -22,43 +20,19 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const ORACLE_VERSION: &str = "3.5.1";
+const ORACLE_VERSION: &str = "3.5.2";
 
 /// The binary under test (`env!`: the variable exists only at compile time).
 fn oc_rsync() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// Resolves an rsync whose `--version` banner names [`ORACLE_VERSION`].
+/// The rsync 3.5.2 oracle, resolved and banner-checked by
+/// `test_support::require_upstream_rsync`: `None` after a skip line when it is
+/// not installed, and a test failure instead under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 fn upstream_rsync() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
-        candidates.push(PathBuf::from(explicit));
-    }
-    if let Some(installed) = test_support::upstream_install_bin(ORACLE_VERSION) {
-        candidates.push(installed);
-    }
-    if let Some(root) = test_support::workspace_root() {
-        candidates.push(root.join(format!(
-            "target/interop/upstream-src/rsync-{ORACLE_VERSION}/rsync"
-        )));
-    }
-    candidates.push(PathBuf::from("/usr/bin/rsync"));
-    let found = candidates.into_iter().find(|candidate| {
-        Command::new(candidate)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .and_then(|banner| banner.lines().next().map(str::to_owned))
-            .is_some_and(|first| {
-                first.starts_with("rsync") && first.contains(&format!(" version {ORACLE_VERSION}"))
-            })
-    });
-    if found.is_none() {
-        eprintln!("no rsync {ORACLE_VERSION} oracle; checking pinned expectations only");
-    }
-    found
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+        .map(|oracle| oracle.binary().to_path_buf())
 }
 
 /// What one `--write-batch` invocation left behind.
@@ -1021,7 +995,6 @@ fn inc_recurse_batch_round_trips(dirs: usize, files: usize) {
         }
     }
     let Some(upstream) = upstream_rsync() else {
-        eprintln!("skip placement: no rsync {ORACLE_VERSION} oracle installed");
         return;
     };
     assert_eq!(

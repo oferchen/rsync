@@ -165,41 +165,12 @@ fn an_absolute_operand_is_reported_unchanged() {
     assert_named(&output, &absolute, "absolute operand");
 }
 
-/// Locates a real upstream rsync 3.x, either where the interop harness installs
-/// it or where it builds it, and verifies the `--version` banner so macOS's
-/// `openrsync` shim cannot stand in for it.
+/// The rsync 3.5.2 oracle, resolved and banner-checked by
+/// `test_support::require_upstream_rsync`: `None` after a skip line when it is
+/// not installed, and a test failure instead under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 fn upstream_rsync() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
-        candidates.push(PathBuf::from(explicit));
-    }
-    for version in ["3.5.0", "3.4.4"] {
-        if let Some(installed) = test_support::upstream_install_bin(version) {
-            candidates.push(installed);
-        }
-        if let Some(root) = test_support::workspace_root() {
-            candidates.push(
-                root.join("target")
-                    .join("interop")
-                    .join("upstream-src")
-                    .join(format!("rsync-{version}"))
-                    .join("rsync"),
-            );
-        }
-    }
-
-    candidates.into_iter().find(|candidate| {
-        Command::new(candidate)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .is_some_and(|text| {
-                text.lines()
-                    .next()
-                    .is_some_and(|line| line.starts_with("rsync") && line.contains(" version 3."))
-            })
-    })
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+        .map(|oracle| oracle.binary().to_path_buf())
 }
 
 /// Extracts the quoted name from the first `link_stat` line, if any.
@@ -218,7 +189,6 @@ fn quoted_link_stat_name(output: &Output) -> Option<String> {
 #[test]
 fn the_quoted_name_matches_a_real_rsync() {
     let Some(upstream) = upstream_rsync() else {
-        eprintln!("skip: no upstream rsync 3.x binary available");
         return;
     };
 

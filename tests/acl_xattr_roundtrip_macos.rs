@@ -1,4 +1,4 @@
-//! macOS round-trip parity: Apple-specific xattrs vs upstream rsync 3.4.1
+//! macOS round-trip parity: Apple-specific xattrs vs upstream rsync 3.5.2
 //! with `-aAX`.
 //!
 //! Apple stamps user-facing data into xattrs that drive Finder behaviour:
@@ -29,7 +29,7 @@ use std::process::Command;
 
 use integration::acl_xattr_interop_harness::{
     GATE_ENV_VAR, MetadataRecord, aax_args, command_on_path, diff_snapshots, gate_enabled,
-    locate_oc_rsync, locate_upstream_rsync, make_scratch, run_rsync, skip, snapshot,
+    locate_oc_rsync, make_scratch, run_rsync, skip, snapshot,
 };
 
 /// macOS Finder requires exactly 32 bytes for `com.apple.FinderInfo`. We
@@ -113,6 +113,10 @@ struct TestContext {
 
 impl TestContext {
     fn try_setup() -> Option<Self> {
+        let upstream_bin =
+            test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)?
+                .binary()
+                .to_path_buf();
         if !gate_enabled() {
             skip(&format!(
                 "{GATE_ENV_VAR} not set to 1; opt in to run ACL/xattr interop tests"
@@ -124,16 +128,6 @@ impl TestContext {
             return None;
         }
         let oc_bin = locate_oc_rsync();
-        let upstream_bin = match locate_upstream_rsync() {
-            Some(p) => p,
-            None => {
-                skip(
-                    "no upstream rsync found (install via brew or set OC_RSYNC_UPSTREAM); \
-                     Apple-shipped rsync is too old for protocol 32",
-                );
-                return None;
-            }
-        };
 
         let (dir, src, dst1, dst2) = match make_scratch() {
             Ok(t) => t,

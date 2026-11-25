@@ -1,5 +1,5 @@
 //! Linux round-trip parity: POSIX ACLs + NFSv4 ACLs + xattrs vs upstream
-//! rsync 3.4.1 with `-aAX`.
+//! rsync 3.5.2 with `-aAX`.
 //!
 //! Builds a source tree under `/tmp`, stamps each file with a mix of
 //! - POSIX access ACLs and default ACLs (`setfacl -m u:nobody:rwx,d:u:nobody:rwx`),
@@ -32,7 +32,7 @@ use std::process::Command;
 
 use integration::acl_xattr_interop_harness::{
     GATE_ENV_VAR, MetadataRecord, aax_args, command_on_path, diff_snapshots, gate_enabled,
-    locate_oc_rsync, locate_upstream_rsync, make_scratch, run_rsync, skip, snapshot,
+    locate_oc_rsync, make_scratch, run_rsync, skip, snapshot,
 };
 
 /// Tools the Linux fixture needs in `PATH`. Missing any of them -> skip.
@@ -109,6 +109,10 @@ struct TestContext {
 
 impl TestContext {
     fn try_setup() -> Option<Self> {
+        let upstream_bin =
+            test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)?
+                .binary()
+                .to_path_buf();
         if !gate_enabled() {
             skip(&format!(
                 "{GATE_ENV_VAR} not set to 1; opt in to run ACL/xattr interop tests"
@@ -124,16 +128,6 @@ impl TestContext {
             }
         }
         let oc_bin = locate_oc_rsync();
-        let upstream_bin = match locate_upstream_rsync() {
-            Some(p) => p,
-            None => {
-                skip(
-                    "no upstream rsync found (set OC_RSYNC_UPSTREAM or install \
-                     target/interop/upstream-install/<ver>/bin/rsync)",
-                );
-                return None;
-            }
-        };
 
         let (dir, src, dst1, dst2) = match make_scratch() {
             Ok(t) => t,

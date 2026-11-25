@@ -22,8 +22,9 @@
 //!
 //! Skip conditions (test exits cleanly with a printed reason):
 //! - Not Unix (the shim uses `/bin/sh`, `dd`).
-//! - No upstream `rsync` available (env `OC_RSYNC_UPSTREAM`, then
-//!   `target/interop/upstream-install/3.4.1/bin/rsync`, then `which rsync`).
+//! - The rsync 3.5.2 oracle is not installed (resolved by
+//!   `test_support::require_upstream_rsync`; under
+//!   `OC_RSYNC_UPSTREAM_COMPAT=1` a missing oracle fails instead).
 //! - `dd` not on `PATH`.
 
 #![cfg(unix)]
@@ -57,34 +58,12 @@ fn oc_rsync_binary() -> PathBuf {
     built
 }
 
-/// Locate an upstream rsync binary, returning `None` if the test should skip.
+/// The rsync 3.5.2 oracle, resolved and banner-checked by
+/// `test_support::require_upstream_rsync`: `None` after a skip line when it is
+/// not installed, and a test failure instead under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 fn locate_upstream_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("OC_RSYNC_UPSTREAM") {
-        let path = PathBuf::from(p);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for version in ["3.4.2", "3.4.1", "3.1.3", "3.0.9"] {
-        let in_tree = manifest_dir
-            .join("target/interop/upstream-install")
-            .join(version)
-            .join("bin/rsync");
-        if in_tree.is_file() {
-            return Some(in_tree);
-        }
-    }
-    let which = Command::new("sh")
-        .arg("-c")
-        .arg("command -v rsync 2>/dev/null")
-        .output()
-        .ok()?;
-    if !which.status.success() {
-        return None;
-    }
-    let path = PathBuf::from(String::from_utf8(which.stdout).ok()?.trim());
-    if path.is_file() { Some(path) } else { None }
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+        .map(|oracle| oracle.binary().to_path_buf())
 }
 
 fn dd_available() -> bool {
@@ -191,15 +170,8 @@ fn count_dst_tmp_files(dst: &Path) -> usize {
 
 #[test]
 fn delete_during_survives_sender_stream_truncation() {
-    let upstream = match locate_upstream_rsync() {
-        Some(p) => p,
-        None => {
-            eprintln!(
-                "skipping #1895 interop: no upstream rsync found \
-                 (set OC_RSYNC_UPSTREAM or install rsync)"
-            );
-            return;
-        }
+    let Some(upstream) = locate_upstream_rsync() else {
+        return;
     };
     if !dd_available() {
         eprintln!("skipping #1895 interop: `dd` not on PATH");

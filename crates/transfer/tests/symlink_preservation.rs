@@ -76,13 +76,13 @@ fn read_symlink_target(path: &Path) -> Option<PathBuf> {
     fs::read_link(path).ok()
 }
 
-/// Checks if upstream rsync is available for comparison tests.
-fn upstream_rsync_available() -> bool {
-    Command::new("rsync")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// The rsync 3.5.2 oracle for the comparison tests, resolved and
+/// banner-checked by `test_support::require_upstream_rsync`: `None` after a
+/// skip line when it is not installed, and a test failure instead under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1`.
+fn upstream_rsync() -> Option<PathBuf> {
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+        .map(|oracle| oracle.binary().to_path_buf())
 }
 
 /// Verifies that symlinks are preserved as symlinks when using -l flag.
@@ -526,12 +526,10 @@ fn symlink_to_parent_directory_preserved() {
 /// This test verifies that our symlink preservation produces the same
 /// results as upstream rsync when using the -l flag.
 #[test]
-#[ignore = "requires upstream rsync binary in PATH"]
 fn compare_with_upstream_rsync_symlink_preservation() {
-    if !upstream_rsync_available() {
-        eprintln!("Skipping upstream rsync comparison: rsync not found");
+    let Some(upstream) = upstream_rsync() else {
         return;
-    }
+    };
 
     let fixture = SymlinkTestFixture::new();
 
@@ -564,7 +562,7 @@ fn compare_with_upstream_rsync_symlink_preservation() {
     fs::create_dir(&our_dest).expect("create our dest");
 
     // Run upstream rsync with -l flag
-    let rsync_output = Command::new("rsync")
+    let rsync_output = Command::new(&upstream)
         .args([
             "-l",     // Preserve symlinks
             "-r",     // Recursive
@@ -631,12 +629,10 @@ fn compare_with_upstream_rsync_symlink_preservation() {
 /// This is the opposite behavior of --links: the symlink is followed and
 /// the target content is copied as a regular file.
 #[test]
-#[ignore = "requires upstream rsync binary in PATH"]
 fn compare_upstream_rsync_copy_links_behavior() {
-    if !upstream_rsync_available() {
-        eprintln!("Skipping upstream rsync comparison: rsync not found");
+    let Some(upstream) = upstream_rsync() else {
         return;
-    }
+    };
 
     let fixture = SymlinkTestFixture::new();
 
@@ -648,7 +644,7 @@ fn compare_upstream_rsync_copy_links_behavior() {
     symlink("target.txt", &link_path).expect("create symlink");
 
     // Run upstream rsync with --copy-links (instead of --links)
-    let output = Command::new("rsync")
+    let output = Command::new(&upstream)
         .args([
             "--copy-links", // Dereference symlinks
             "-r",
