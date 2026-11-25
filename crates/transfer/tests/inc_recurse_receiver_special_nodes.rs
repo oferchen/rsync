@@ -38,7 +38,7 @@ const WATCHDOG: Duration = Duration::from_secs(60);
 /// Deterministic content of varied length; every 997th file is large enough
 /// to span several delta blocks.
 fn file_content(dir: usize, idx: usize) -> Vec<u8> {
-    let len = if idx % 997 == 0 {
+    let len = if idx.is_multiple_of(997) {
         96 * 1024 + idx
     } else {
         (idx * 131 + dir * 17) % 3_000

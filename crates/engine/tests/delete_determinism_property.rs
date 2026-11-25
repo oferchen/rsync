@@ -284,7 +284,7 @@ fn build_tree(seed: u64, file_count: usize, dir_count: usize) -> (TempDir, TempD
         // Always present in dst (so deletion has work to do half the time).
         fs::write(dst.path().join(&rel), &payload).expect("write dst");
 
-        if rng.next_u64() % 2 == 0 {
+        if rng.next_u64().is_multiple_of(2) {
             fs::write(src.path().join(&rel), &payload).expect("write src");
         }
     }

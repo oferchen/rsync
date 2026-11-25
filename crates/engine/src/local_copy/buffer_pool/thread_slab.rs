@@ -333,7 +333,10 @@ mod tests {
             |buf| {
                 drained.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 // Half accepted, half rejected to exercise both branches.
-                if drained.load(std::sync::atomic::Ordering::Relaxed) % 2 == 0 {
+                if drained
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .is_multiple_of(2)
+                {
                     Some(buf)
                 } else {
                     None
