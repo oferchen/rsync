@@ -37,7 +37,7 @@ md4 = { version = "0.10", default-features = false, features = ["std"] }
 digest = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
 # xxh3 crate provides runtime SIMD detection (AVX2 on x86_64, NEON on aarch64)
-xxh3 = { version = "0.1" }
+xxh3 = { version = "0.2" }
 crc32c = { version = "0.6" }
 thiserror = { workspace = true }
 openssl = { version = "0.10", optional = true }
