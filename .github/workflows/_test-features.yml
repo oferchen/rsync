@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# A called workflow does not inherit its caller's workflow-level env, so the
+# debuginfo level the callers set has to be repeated here.
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
 jobs:
   # ---------------------------------------------------------------------------
   # Cross-OS feature rows.
