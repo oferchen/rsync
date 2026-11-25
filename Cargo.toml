@@ -293,7 +293,7 @@ crossbeam-channel = "0.5"
 # instead of FSEvents, which reports content modifications only on `close(2)`
 # and misses writes to a still-open receiver temp file. Pinned exactly:
 # test-only, upgraded deliberately.
-notify = { version = "=8.2.2", features = ["macos_kqueue"] }
+notify = { version = "=9.0.0", features = ["macos_kqueue"] }
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
 # Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary.
