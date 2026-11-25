@@ -29,22 +29,24 @@ outputs:
 runs:
   using: composite
   steps:
+    # rust_toolchains.py needs tomllib (Python 3.11+); ubuntu-22.04 ships 3.10.
+    # 3.12 is in the hosted runners' tool cache, and update-environment off
+    # leaves the job's own python untouched.
+    - name: Python for the pin resolver
+      id: py
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: '3.12'
+        update-environment: 'false'
+
     - name: Resolve the ${{ inputs.channel }} pin
       id: pin
       shell: bash
       env:
         CHANNEL: ${{ inputs.channel }}
+        PIN_PYTHON: ${{ steps.py.outputs.python-path }}
       run: |
-        # On Windows `python3` can be the Store alias, which exits non-zero.
-        for py in python3 python; do
-          if "$py" -c '' 2>/dev/null; then break; fi
-          py=
-        done
-        if [[ -z "$py" ]]; then
-          echo "::error::no runnable python3 or python to resolve the toolchain pin"
-          exit 1
-        fi
-        "$py" tools/ci/rust_toolchains.py resolve "$CHANNEL"
+        "$PIN_PYTHON" tools/ci/rust_toolchains.py resolve "$CHANNEL"
 
     # One rustup install under one overall bound: no per-attempt kill and no
     # retry, so a slow download is never restarted from a partial install.

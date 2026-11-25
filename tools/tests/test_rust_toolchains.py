@@ -17,6 +17,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+import yaml
+
 from tools.ci import rust_toolchains as rt
 
 REPO = Path(__file__).resolve().parents[2]
@@ -217,6 +219,19 @@ class WorkflowPinTests(unittest.TestCase):
             if installers.search(path.read_text()) and str(path.relative_to(REPO)) != self.ACTION
         ]
         self.assertEqual(offenders, [])
+
+    def test_the_resolver_runs_on_a_pinned_python(self) -> None:
+        # tomllib needs Python 3.11+; ubuntu-22.04's python3 is 3.10, so the
+        # action must not pick an interpreter from PATH.
+        steps = yaml.safe_load((REPO / self.ACTION).read_text())["runs"]["steps"]
+        setup = [s for s in steps if str(s.get("uses", "")).startswith("actions/setup-python@")]
+        self.assertEqual(len(setup), 1)
+        self.assertRegex(setup[0]["uses"], r"@[0-9a-f]{40}$")
+        self.assertEqual(setup[0]["with"]["python-version"], "3.12")
+        resolve = next(s for s in steps if s.get("id") == "pin")
+        self.assertEqual(resolve["env"]["PIN_PYTHON"], "${{ steps.%s.outputs.python-path }}" % setup[0]["id"])
+        self.assertIn('"$PIN_PYTHON" tools/ci/rust_toolchains.py resolve', resolve["run"])
+        self.assertNotRegex((REPO / self.ACTION).read_text(), r"command -v python|\bpython3? tools/ci")
 
     def test_the_action_avoids_windows_shell_traps(self) -> None:
         # The Windows stable cell failed on `rustc -vV | tee /dev/stderr`;
