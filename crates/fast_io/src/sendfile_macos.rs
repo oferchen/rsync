@@ -3,7 +3,7 @@
 //! Exposes Darwin's BSD-style `sendfile` semantics directly: explicit
 //! `offset`, explicit `len`, partial-progress return, and EAGAIN /
 //! EINTR surfacing. This is intentionally narrower than the
-//! [`sendfile::send_file_to_fd`](crate::sendfile::send_file_to_fd)
+//! [`sendfile::send_file_to_fd`]
 //! dispatch wrapper - it does not advance the source's file position,
 //! does not chunk transfers internally beyond the `EINTR` retry loop,
 //! and surfaces `WouldBlock` to non-blocking callers with the partial

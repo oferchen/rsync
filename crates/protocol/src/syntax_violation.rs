@@ -14,7 +14,7 @@
 //! ordinary, while the exit-code mapper can downcast the inner error and return
 //! `RERR_SYNTAX` (1).
 //!
-//! This is the sibling of [`ProtocolViolation`](crate::ProtocolViolation),
+//! This is the sibling of [`ProtocolViolation`],
 //! which selects `RERR_PROTOCOL` the same way.
 //!
 //! # Upstream Reference
