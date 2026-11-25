@@ -52,9 +52,8 @@
 //!
 //! # Platform gate
 //!
-//! `#![cfg(unix)]` - matches the sibling daemon-spawning UTS tests
-//! (`uts_nextest_daemon_delete_stats.rs`,
-//! `v61d_2_daemon_push_increcurse_perf_regression.rs`). The daemon's
+//! `#![cfg(unix)]` - matches the sibling daemon-spawning UTS test
+//! (`uts_nextest_daemon_delete_stats.rs`). The daemon's
 //! `use chroot = false` toggle requires Unix process semantics; the
 //! Windows daemon mode has separate coverage.
 //!
