@@ -469,3 +469,31 @@ fn single_session_exit_prints_a_trailer_only_for_a_refusal() {
     assert!(!transferred.prints_trailer());
     assert_eq!(transferred.exit_code(), 23);
 }
+
+/// A refusal before the server arguments are parsed prints its FERROR cause
+/// line, then the trailer with who_am_i()'s pre-fork `Receiver` role.
+///
+/// upstream: exclude.c:136, log.c:1025-1051, rsync.c who_am_i().
+#[test]
+fn single_session_exit_prints_the_cause_before_a_receiver_trailer() {
+    let refused = single_session_exit(
+        Ok(Some(SessionExit::RefusedWithCause {
+            exit: ExitCode::Syntax,
+            cause: "'!' rule has trailing characters: x".to_owned(),
+        })),
+        "stdio daemon session failed",
+    )
+    .expect_err("a refusal must not report success");
+    assert!(refused.prints_trailer());
+    assert_eq!(refused.exit_code(), 1);
+    assert_eq!(
+        refused.preamble(),
+        Some("'!' rule has trailing characters: x")
+    );
+    let trailer = refused.message().to_string();
+    assert!(
+        trailer.contains("syntax or usage error (code 1)"),
+        "{trailer}"
+    );
+    assert!(trailer.contains("[Receiver="), "{trailer}");
+}

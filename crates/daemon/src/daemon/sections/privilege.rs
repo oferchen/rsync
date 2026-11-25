@@ -23,9 +23,13 @@
 fn apply_chroot(module_path: &Path, log_sink: &SharedLogSink) -> io::Result<()> {
     if let Err(err) = enter_chroot(module_path) {
         // upstream: clientserver.c:1055 rsyserr(FLOG, errno, "chroot(\"%s\") failed", ...)
-        let text = format!("chroot(\"{}\") failed: {err}", module_path.display());
-        let message = rsync_error!(1, text).with_role(Role::Daemon);
-        log_message(log_sink, &message);
+        let text = logging::rsyserr_io(
+            "rsync",
+            "Receiver",
+            format_args!("chroot(\"{}\") failed", module_path.display()),
+            &err,
+        );
+        log_message(log_sink, &rsync_info!(text).with_role(Role::Daemon));
         return Err(err);
     }
 

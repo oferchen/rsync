@@ -8,9 +8,9 @@
 //! * Exactly 1 client is refused with the upstream-compatible payload
 //!   `@ERROR: max connections (2) reached -- try again later`
 //!   (DMC-3, upstream `clientserver.c:756`).
-//! * The daemon writes exactly one structured warning to its log file in
-//!   the shape introduced by DMC-5:
-//!   `max-connections cap reached: which=<module> peer=<host> (<ip>) cap=2 current=2`.
+//! * The daemon logs upstream's `max connections (2) reached` exactly once
+//!   (clientserver.c:801-802), right after the refused client's
+//!   `rsync allowed access on module` line (clientserver.c:787-790).
 //!
 //! Gated to Unix only because Windows daemon parity is not yet certified
 //! and the cap-reached log path is exercised through Unix-tested daemon
@@ -317,39 +317,27 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
 
     let log_contents = fs::read_to_string(&log_path).unwrap_or_default();
 
-    // DMC-5: exactly one structured warning line for the rejected peer.
-    let cap_lines: Vec<&str> = log_contents
+    // upstream: clientserver.c:787-802 - the refused client is logged as
+    // allowed first, then the cap line, with nothing oc-specific in it.
+    let messages: Vec<&str> = log_contents
         .lines()
-        .filter(|line| line.contains("max-connections cap reached"))
+        .map(|line| daemon_log_message(line).unwrap_or(line))
+        .collect();
+    let expected_cap = format!("max connections ({CONNECTION_CAP}) reached");
+    let cap_positions: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| **message == expected_cap)
+        .map(|(index, _)| index)
         .collect();
     assert_eq!(
-        cap_lines.len(),
+        cap_positions.len(),
         1,
-        "expected exactly one cap-reached log line; got {}: {log_contents}",
-        cap_lines.len()
+        "expected exactly one cap line; log: {log_contents}"
     );
-    let cap_line = cap_lines[0];
-    let cap_message = daemon_log_message(cap_line).unwrap_or_else(|| {
-        panic!("cap line must carry the upstream log prefix (log.c:142): {cap_line}")
-    });
+    let allowed = format!("rsync allowed access on module {MODULE_NAME} from ");
     assert!(
-        cap_message.starts_with("oc-rsync warning:"),
-        "cap line must be warning-level (DMC-5): {cap_line}"
-    );
-    assert!(
-        cap_message.contains(&format!("which={MODULE_NAME}")),
-        "missing which={MODULE_NAME}: {cap_line}"
-    );
-    assert!(
-        cap_message.contains("(127.0.0.1)"),
-        "missing peer ip field: {cap_line}"
-    );
-    assert!(
-        cap_message.contains(&format!("cap={CONNECTION_CAP}")),
-        "missing cap={CONNECTION_CAP}: {cap_line}"
-    );
-    assert!(
-        cap_message.contains(&format!("current={CONNECTION_CAP}")),
-        "missing current={CONNECTION_CAP}: {cap_line}"
+        cap_positions[0] > 0 && messages[cap_positions[0] - 1].starts_with(&allowed),
+        "the cap line must follow the refused client's access line; log: {log_contents}"
     );
 }

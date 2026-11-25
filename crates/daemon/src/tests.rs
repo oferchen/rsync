@@ -37,6 +37,7 @@ use crate::daemon::{
     RERR_UNSUPPORTED_EXIT_CODE,
     // From runtime_options.rs
     RuntimeOptions,
+    SecretRefusal,
     // From sections/session_runtime.rs
     SessionExit,
     TestSecretsEnvOverride,
@@ -249,6 +250,8 @@ include!("tests/chunks/daemon_pre_xfer_exec_rejects_on_nonzero_exit.rs");
 include!("tests/chunks/run_daemon_requests_authentication_for_protected_module.rs");
 include!("tests/chunks/run_daemon_auth_failure_rejects_wrong_credentials.rs");
 include!("tests/chunks/run_daemon_deny_rule_refuses_before_checking_the_password.rs");
+include!("tests/chunks/module_setup_refusals_log_upstream_lines.rs");
+include!("tests/chunks/log_file_sinks_share_one_file_in_append_mode.rs");
 include!("tests/chunks/run_daemon_sends_motd_before_unknown_module_error.rs");
 include!("tests/chunks/run_daemon_rejects_unknown_hash_command.rs");
 include!("tests/chunks/run_daemon_serves_single_legacy_connection.rs");
@@ -300,6 +303,7 @@ include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_module_implicit_list_only.rs");
 include!("tests/chunks/daemon_negotiation_empty_module_lists_modules.rs");
 include!("tests/chunks/daemon_auth_digest_floor.rs");
+include!("tests/chunks/auth_strict_modes_logs_upstream_line.rs");
 include!("tests/chunks/daemon_auth_digest_negotiation.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");

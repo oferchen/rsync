@@ -242,20 +242,17 @@ fn send_daemon_ok(
 
 /// Handles max connections exceeded for a module.
 ///
-/// Sends an error message indicating the connection limit was reached and logs
-/// the event. `limit` is the configured number rendered verbatim, so a module
-/// disabled with a negative `max connections` keeps its minus sign, matching
-/// upstream's `%d` in clientserver.c:801-804.
-///
-/// `active` arrives on the refusal itself rather than being read back from the
-/// module, because the mechanism that refused is the only one that knows it:
-/// once each session runs in its own process, the module's own counter sees
-/// only that process's connections.
+/// Logs the refusal and sends the peer upstream's error. `limit` is the
+/// configured number rendered verbatim, so a module disabled with a negative
+/// `max connections` keeps its minus sign, matching upstream's `%d` in
+/// clientserver.c:801-804.
 fn handle_max_connections_exceeded(
     ctx: &mut ModuleRequestContext<'_>,
     limit: i32,
-    active: u32,
 ) -> io::Result<()> {
+    if let Some(log) = ctx.log_sink {
+        log_module_limit(log, limit);
+    }
     send_error(
         ctx.reader.get_mut(),
         ctx.limiter,
@@ -263,25 +260,20 @@ fn handle_max_connections_exceeded(
             limit: i64::from(limit),
         },
     )?;
-    if let Some(log) = ctx.log_sink {
-        log_module_limit(
-            log,
-            ctx.host_display(),
-            ctx.peer,
-            ctx.request,
-            limit,
-            active,
-        );
-    }
     Ok(())
 }
 
 /// Handles lock file errors when acquiring a module connection.
 ///
-/// Sends an error message and logs the lock failure.
-fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> io::Result<()> {
-    if let Some(log) = ctx.log_sink {
-        log_module_lock_error(log, ctx.host_display(), ctx.peer, ctx.request, error);
+/// Sends an error message and logs the lock failure. `lock_file` is the file
+/// the claim opened; an I/O failure only arises when one is configured.
+fn handle_lock_error(
+    ctx: &mut ModuleRequestContext<'_>,
+    lock_file: Option<&Path>,
+    error: &io::Error,
+) -> io::Result<()> {
+    if let (Some(log), Some(lock_file)) = (ctx.log_sink, lock_file) {
+        log_module_lock_error(log, lock_file, error);
     }
     send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ModuleLockError)?;
     Ok(())
@@ -600,7 +592,7 @@ fn handle_authentication(
                     ctx.host_display(),
                     ctx.peer,
                     ctx.request,
-                    denial.log_suffix().as_deref(),
+                    &denial.log_suffix(),
                 );
             }
             let error = AtError::AuthFailed {

@@ -64,10 +64,18 @@ pub fn log_line_prefix_now() -> String {
 /// (e.g. main.c:432/468 `rprintf(FCLIENT, "\n")`), and `rwrite()` converts
 /// `FCLIENT` to `FINFO` *after* skipping the log-file branch
 /// (upstream: log.c:390-391), so a blank line never reaches the log file.
+///
+/// Each completed line - prefix, escaped body and newline - reaches `inner` in
+/// one `write_all`. Daemon connections are separate processes appending to one
+/// `O_APPEND` file, and a line written as several calls interleaves with
+/// theirs mid-line; upstream gets one `write(2)` per line from `fprintf` and
+/// `filtered_fwrite` into the stdio buffer followed by `fflush`
+/// (log.c:142-144, on the `fdopen(fd, "a")` stream of log.c:176-178).
 #[derive(Debug)]
 pub struct LogFileWriter<W: Write> {
     inner: W,
     at_line_start: bool,
+    line: Vec<u8>,
 }
 
 impl<W: Write> LogFileWriter<W> {
@@ -77,6 +85,7 @@ impl<W: Write> LogFileWriter<W> {
         Self {
             inner,
             at_line_start: true,
+            line: Vec::new(),
         }
     }
 
@@ -85,9 +94,21 @@ impl<W: Write> LogFileWriter<W> {
         &self.inner
     }
 
-    /// Consumes the adapter, returning the wrapped writer.
-    pub fn into_inner(self) -> W {
-        self.inner
+    /// Hands the buffered line to `inner` in one call.
+    fn emit_line(&mut self) -> io::Result<()> {
+        if self.line.is_empty() {
+            return Ok(());
+        }
+        let result = self.inner.write_all(&self.line);
+        self.line.clear();
+        result
+    }
+}
+
+impl<W: Write> Drop for LogFileWriter<W> {
+    /// Emits a line left unterminated, as `fclose()` would flush it.
+    fn drop(&mut self) {
+        let _ = self.emit_line();
     }
 }
 
@@ -103,12 +124,11 @@ impl<W: Write> LogFileWriter<W> {
     /// The timestamp/pid prefix and the line terminator are written raw, as
     /// upstream does: `logit()` `fprintf`s the prefix before the call and
     /// passes the stripped trailing newline to `filtered_fwrite` as `end_char`.
-    fn write_escaped(&mut self, body: &[u8]) -> io::Result<()> {
-        if body.is_empty() {
-            return Ok(());
+    fn push_escaped(&mut self, body: &[u8]) {
+        if !body.is_empty() {
+            self.line
+                .extend_from_slice(&escape_for_output(body, EscapeStyle::log_file()));
         }
-        self.inner
-            .write_all(&escape_for_output(body, EscapeStyle::log_file()))
     }
 }
 
@@ -124,7 +144,8 @@ impl<W: Write> Write for LogFileWriter<W> {
     /// The message boundary is the `write` call, so a producer must deliver one
     /// message per call - which both `MessageSink` and the CLI's `writeln!`
     /// sites do. A partial write (a message split across calls) is carried by
-    /// `at_line_start`, so only the first fragment is prefixed.
+    /// `at_line_start`, so only the first fragment is prefixed, and held until
+    /// the line ends so the whole line is emitted at once.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let (body, terminated) = match buf.split_last() {
             Some((b'\n', head)) => (head, true),
@@ -136,18 +157,23 @@ impl<W: Write> Write for LogFileWriter<W> {
             return Ok(buf.len());
         }
         if self.at_line_start {
-            self.inner.write_all(log_line_prefix_now().as_bytes())?;
+            self.line
+                .extend_from_slice(log_line_prefix_now().as_bytes());
             self.at_line_start = false;
         }
-        self.write_escaped(body)?;
+        self.push_escaped(body);
         if terminated {
-            self.inner.write_all(b"\n")?;
+            self.line.push(b'\n');
             self.at_line_start = true;
+            self.emit_line()?;
         }
         Ok(buf.len())
     }
 
+    /// Emits an unterminated line as it stands; a later fragment continues it
+    /// without a second prefix.
     fn flush(&mut self) -> io::Result<()> {
+        self.emit_line()?;
         self.inner.flush()
     }
 }
@@ -230,7 +256,7 @@ mod tests {
         // the shape every real producer (MessageSink, `writeln!`) delivers.
         writer.write_all(b"first\n").unwrap();
         writer.write_all(b"second\n").unwrap();
-        let output = String::from_utf8(writer.into_inner()).unwrap();
+        let output = String::from_utf8(writer.get_ref().clone()).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 3);
         for line in &lines {
@@ -251,7 +277,7 @@ mod tests {
         let mut writer = LogFileWriter::new(Vec::new());
         writer.write_all(b"sent 42 bytes").unwrap();
         writer.write_all(b"  total size 7\n").unwrap();
-        let output = String::from_utf8(writer.into_inner()).unwrap();
+        let output = String::from_utf8(writer.get_ref().clone()).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 1);
         assert!(prefix_pattern_matches(lines[0]));
@@ -267,7 +293,7 @@ mod tests {
         writer.write_all(b"\n").unwrap();
         writer.write_all(b"totals\n").unwrap();
         writer.write_all(b"\n").unwrap();
-        let output = String::from_utf8(writer.into_inner()).unwrap();
+        let output = String::from_utf8(writer.get_ref().clone()).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(
             lines.len(),
@@ -303,7 +329,7 @@ mod tests {
     fn writer_escapes_control_bytes_in_the_body() {
         let mut writer = LogFileWriter::new(Vec::new());
         writer.write_all(b"recv nope\x1b[31mX\n").unwrap();
-        let body = single_line_body(&writer.into_inner());
+        let body = single_line_body(&writer.get_ref().clone());
         assert_eq!(
             body,
             b"recv nope\\#033[31mX".to_vec(),
@@ -318,7 +344,7 @@ mod tests {
     fn writer_leaves_printable_lines_byte_identical() {
         let mut writer = LogFileWriter::new(Vec::new());
         writer.write_all(b"recv plain/name.txt\tok\n").unwrap();
-        let body = single_line_body(&writer.into_inner());
+        let body = single_line_body(&writer.get_ref().clone());
         assert_eq!(body, b"recv plain/name.txt\tok".to_vec());
     }
 
@@ -335,7 +361,7 @@ mod tests {
         writer
             .write_all(b"recv a\n2026/01/01 00:00:00 [1] forged\n")
             .unwrap();
-        let body = single_line_body(&writer.into_inner());
+        let body = single_line_body(&writer.get_ref().clone());
         assert_eq!(
             body,
             b"recv a\\#0122026/01/01 00:00:00 [1] forged".to_vec(),
@@ -350,7 +376,87 @@ mod tests {
     fn writer_escapes_c1_but_passes_utf8_through() {
         let mut writer = LogFileWriter::new(Vec::new());
         writer.write_all(b"recv caf\xc3\xa9\x9b31m\n").unwrap();
-        let body = single_line_body(&writer.into_inner());
+        let body = single_line_body(&writer.get_ref().clone());
         assert_eq!(body, b"recv caf\xc3\xa9\\#23331m".to_vec());
+    }
+
+    /// Records every `write` call it receives, so a test can count them.
+    #[derive(Default)]
+    struct CallRecorder {
+        calls: Vec<Vec<u8>>,
+    }
+
+    impl Write for CallRecorder {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls.push(buf.to_vec());
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Daemon connections are separate processes appending to one `O_APPEND`
+    /// log file; a line handed to the file in pieces interleaves with theirs
+    /// mid-line. upstream: log.c:142-144 formats the prefix and message into
+    /// the stdio buffer and fflush()es, one write(2) per line. `writeln!` is
+    /// how the daemon logs (two `write` calls: text, then the newline), so it
+    /// must still reach the file as a single call.
+    #[test]
+    fn each_line_reaches_the_file_in_one_write() {
+        let mut writer = LogFileWriter::new(CallRecorder::default());
+        let access = "rsync allowed access on module m from h (a)";
+        writeln!(writer, "{access}").unwrap();
+        writer.flush().unwrap();
+        writeln!(writer, "max connections ({}) reached", 1).unwrap();
+        writer.flush().unwrap();
+
+        let calls = &writer.get_ref().calls;
+        assert_eq!(calls.len(), 2, "one write per line: {calls:?}");
+        for (call, body) in calls.iter().zip([
+            "rsync allowed access on module m from h (a)\n",
+            "max connections (1) reached\n",
+        ]) {
+            let line = String::from_utf8(call.clone()).unwrap();
+            assert!(prefix_pattern_matches(&line), "prefix missing: {line:?}");
+            assert!(line.ends_with(body), "{line:?} does not end with {body:?}");
+        }
+    }
+
+    /// A message rendered in several pieces, as `MessageSink` renders its
+    /// segments and then the newline, is still emitted once, when it ends.
+    #[test]
+    fn a_line_written_in_pieces_is_emitted_once_when_it_ends() {
+        let mut writer = LogFileWriter::new(CallRecorder::default());
+        writer.write_all(b"rsync error: ").unwrap();
+        writer.write_all(b"syntax or usage error (code 1)").unwrap();
+        assert!(
+            writer.get_ref().calls.is_empty(),
+            "nothing before the line ends"
+        );
+        writer.write_all(b"\n").unwrap();
+        assert_eq!(writer.get_ref().calls.len(), 1);
+    }
+
+    /// An unterminated line is emitted by flush and continued without a second
+    /// prefix, and one left buffered is not lost when the writer is dropped.
+    #[test]
+    fn flush_and_drop_emit_an_unterminated_line() {
+        let mut writer = LogFileWriter::new(CallRecorder::default());
+        writer.write_all(b"sent 42 bytes").unwrap();
+        writer.flush().unwrap();
+        writer.write_all(b"  total size 7\n").unwrap();
+        let joined: Vec<u8> = writer.get_ref().calls.concat();
+        let line = String::from_utf8(joined).unwrap();
+        assert_eq!(line.matches("] ").count(), 1, "one prefix: {line:?}");
+        assert!(line.ends_with("sent 42 bytes  total size 7\n"));
+
+        let mut sink = Vec::new();
+        {
+            let mut writer = LogFileWriter::new(&mut sink);
+            writer.write_all(b"partial").unwrap();
+        }
+        assert!(String::from_utf8(sink).unwrap().ends_with("partial"));
     }
 }
