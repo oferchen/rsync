@@ -88,7 +88,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: ./.github/actions/rust-toolchain
+        with:
+          channel: stable
 
       # Populate ~/.cargo/registry from the committed Cargo.lock so the offline
       # resolvability check below has the crate index + sources to work from.

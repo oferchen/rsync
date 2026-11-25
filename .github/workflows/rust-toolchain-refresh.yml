@@ -1,0 +1,67 @@
+# Weekly refresh of the pinned Rust toolchains.
+#
+# Reads the published stable, beta and nightly channel manifests and, when a
+# pin moved, opens (or updates) one pull request. A stable move bumps
+# rust-toolchain.toml and the MSRV together; otherwise only the beta and
+# nightly pins in tools/ci/rust-toolchains.toml change. The edits never touch
+# .github/workflows, so the merge train can merge the pull request.
+#
+# Pushes and pull requests made with the default GITHUB_TOKEN do not start CI,
+# so the job pushes and opens the pull request with the TOOLCHAIN_REFRESH_TOKEN
+# secret (contents and pull-requests write) and fails when it is not set.
+name: Rust toolchain refresh
+
+on:
+  schedule:
+  - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: rust-toolchain-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh pinned toolchains
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BRANCH: chore/rust-toolchain-refresh
+    steps:
+    - name: Require the refresh token
+      env:
+        REFRESH_TOKEN: ${{ secrets.TOOLCHAIN_REFRESH_TOKEN }}
+      run: |
+        if [[ -z "$REFRESH_TOKEN" ]]; then
+          echo "::error::the TOOLCHAIN_REFRESH_TOKEN secret is not set; a refresh pull request opened with GITHUB_TOKEN would never run CI"
+          exit 1
+        fi
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        token: ${{ secrets.TOOLCHAIN_REFRESH_TOKEN }}
+    - name: Refresh pins from the channel manifests
+      id: refresh
+      run: python3 tools/ci/rust_toolchains.py refresh --summary "$RUNNER_TEMP/refresh-body.md"
+    - name: Open or update the refresh pull request
+      if: steps.refresh.outputs.changed == 'true'
+      env:
+        GH_TOKEN: ${{ secrets.TOOLCHAIN_REFRESH_TOKEN }}
+      run: |
+        set -euo pipefail
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git switch -C "$BRANCH"
+        git commit -qam "chore: refresh pinned Rust toolchains"
+        git push --force origin "$BRANCH"
+        if [[ "$(gh pr view "$BRANCH" --json state --jq .state 2>/dev/null || true)" == OPEN ]]; then
+          gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/refresh-body.md"
+        else
+          gh pr create --head "$BRANCH" --base master \
+            --title "chore: refresh pinned Rust toolchains" \
+            --body-file "$RUNNER_TEMP/refresh-body.md"
+        fi

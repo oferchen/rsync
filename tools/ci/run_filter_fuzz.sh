@@ -21,6 +21,9 @@ fuzz_dir="${workspace_root}/fuzz"
 target_name="filter_differential"
 duration="${FUZZ_SECONDS:-60}"
 
+# cargo-fuzz needs a nightly; CI passes its pinned nightly here.
+fuzz_toolchain="${OC_FUZZ_TOOLCHAIN:-nightly}"
+
 if ! command -v cargo >/dev/null; then
     echo "error: cargo is required" >&2
     exit 2
@@ -28,11 +31,11 @@ fi
 
 # cargo-fuzz needs nightly. We do not auto-install: a missing toolchain is a
 # clear actionable error and avoids silent rustup downloads in CI.
-if ! cargo +nightly --version >/dev/null 2>&1; then
+if ! cargo "+${fuzz_toolchain}" --version >/dev/null 2>&1; then
     echo "error: a nightly Rust toolchain is required (rustup toolchain install nightly)" >&2
     exit 2
 fi
-if ! cargo +nightly fuzz --help >/dev/null 2>&1; then
+if ! cargo "+${fuzz_toolchain}" fuzz --help >/dev/null 2>&1; then
     echo "error: cargo-fuzz is required (cargo install cargo-fuzz)" >&2
     exit 2
 fi
@@ -68,6 +71,6 @@ host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
 
 cd "${fuzz_dir}"
 exec env OC_RSYNC_UPSTREAM_BIN="${upstream}" \
-    cargo +nightly fuzz run "${target_name}" \
+    cargo "+${fuzz_toolchain}" fuzz run "${target_name}" \
         --target "${host_triple}" \
         -- -max_total_time="${duration}"

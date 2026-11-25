@@ -1,0 +1,13 @@
+# Pinned beta and nightly toolchains for the CI beta and nightly cells.
+# The stable pin is `channel` in rust-toolchain.toml. Workflows read these
+# through .github/actions/rust-toolchain; the weekly
+# rust-toolchain-refresh workflow rewrites them with
+# `python3 tools/ci/rust_toolchains.py refresh`.
+
+[beta]
+toolchain = "beta-2026-11-23"
+version = "1.101.0-beta.3"
+
+[nightly]
+toolchain = "nightly-2026-11-24"
+version = "1.102.0-nightly"

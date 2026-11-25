@@ -1,0 +1,110 @@
+name: Rust toolchain (pinned)
+description: >-
+  Install the pinned toolchain for a channel and fail unless rustc reports the
+  pinned release. The pins live outside .github/workflows: stable is
+  rust-toolchain.toml's channel, beta and nightly are in
+  tools/ci/rust-toolchains.toml, resolved by tools/ci/rust_toolchains.py.
+inputs:
+  channel:
+    description: stable, beta or nightly
+    required: true
+  components:
+    description: Comma-separated rustup components
+    required: false
+    default: ''
+  targets:
+    description: Comma-separated rustup targets
+    required: false
+    default: ''
+  select:
+    description: >-
+      'true' makes the pin the job's toolchain for later steps; 'false' only
+      installs it, for jobs that name it per command (outputs.toolchain)
+    required: false
+    default: 'true'
+outputs:
+  toolchain:
+    description: The pinned toolchain name that was installed
+    value: ${{ steps.pin.outputs.toolchain }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve the ${{ inputs.channel }} pin
+      id: pin
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel }}
+      run: |
+        # On Windows `python3` can be the Store alias, which exits non-zero.
+        for py in python3 python; do
+          if "$py" -c '' 2>/dev/null; then break; fi
+          py=
+        done
+        if [[ -z "$py" ]]; then
+          echo "::error::no runnable python3 or python to resolve the toolchain pin"
+          exit 1
+        fi
+        "$py" tools/ci/rust_toolchains.py resolve "$CHANNEL"
+
+    # One rustup install under one overall bound: no per-attempt kill and no
+    # retry, so a slow download is never restarted from a partial install.
+    - name: Install Rust ${{ steps.pin.outputs.toolchain }}
+      shell: bash
+      env:
+        PIN_TOOLCHAIN: ${{ steps.pin.outputs.toolchain }}
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
+        INSTALL_TIMEOUT_SECS: '900'
+      run: |
+        args=(toolchain install "$PIN_TOOLCHAIN" --profile minimal --no-self-update)
+        for component in ${COMPONENTS//,/ }; do args+=(--component "$component"); done
+        for target in ${TARGETS//,/ }; do args+=(--target "$target"); done
+        expired="$RUNNER_TEMP/rust-toolchain-install-expired"
+        rm -f "$expired"
+        rustup "${args[@]}" &
+        install=$!
+        ( exec >/dev/null 2>&1; sleep "$INSTALL_TIMEOUT_SECS"; touch "$expired"; kill "$install" ) &
+        watchdog=$!
+        status=0
+        wait "$install" || status=$?
+        kill "$watchdog" 2>/dev/null || true
+        if [[ -e "$expired" ]]; then
+          echo "::error::rustup did not install $PIN_TOOLCHAIN within ${INSTALL_TIMEOUT_SECS}s"
+          exit 1
+        fi
+        exit "$status"
+
+    # Stable is rust-toolchain.toml's channel, so cargo already resolves it
+    # (with that file's components and targets). Beta and nightly override it
+    # for the rest of the job. OC_RUST_TOOLCHAIN names the pin for steps that
+    # call `rustup run` directly.
+    - name: Select and verify ${{ steps.pin.outputs.toolchain }}
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel }}
+        PIN_TOOLCHAIN: ${{ steps.pin.outputs.toolchain }}
+        PIN_VERSION: ${{ steps.pin.outputs.version }}
+        SELECT: ${{ inputs.select }}
+      run: |
+        if [[ "$CHANNEL" != stable ]]; then
+          export RUSTUP_TOOLCHAIN="$PIN_TOOLCHAIN"
+        fi
+        if [[ "$SELECT" == true ]]; then
+          if [[ "$CHANNEL" != stable ]]; then
+            echo "RUSTUP_TOOLCHAIN=$PIN_TOOLCHAIN" >> "$GITHUB_ENV"
+          fi
+          echo "OC_RUST_TOOLCHAIN=$PIN_TOOLCHAIN" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+          rustup default "$PIN_TOOLCHAIN"
+        fi
+        cargo -vV
+        # Captured, not piped through tee to the stderr device: Git Bash on
+        # Windows may lack that device, and the step runs under pipefail.
+        rustc_vv="$(rustc -vV)"
+        printf '%s\n' "$rustc_vv"
+        release="$(sed -n 's/^release: //p' <<<"$rustc_vv")"
+        if [[ "$release" != "$PIN_VERSION" ]]; then
+          echo "::error::the $CHANNEL pin is $PIN_TOOLCHAIN ($PIN_VERSION), but cargo resolved rustc $release"
+          exit 1
+        fi

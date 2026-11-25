@@ -94,14 +94,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: stable
+          channel: stable
 
       - name: Install nightly Rust
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        id: nightly
+        uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: nightly
+          channel: nightly
+          select: 'false'
           components: llvm-tools-preview
 
       - name: Rust cache
@@ -133,7 +135,7 @@ jobs:
 
       - name: Build fuzz targets
         working-directory: ${{ matrix.workspace }}
-        run: cargo +nightly fuzz build --target "${{ steps.host.outputs.triple }}"
+        run: cargo +"${{ steps.nightly.outputs.toolchain }}" fuzz build --target "${{ steps.host.outputs.triple }}"
 
       - name: Fuzz targets
         working-directory: ${{ matrix.workspace }}
@@ -150,7 +152,7 @@ jobs:
               # receives every new input. -timeout bounds a single input so
               # one hang cannot eat the shard's budget; it is reported as a
               # finding like a crash.
-              if ! cargo +nightly fuzz run "${target}" \
+              if ! cargo +"${{ steps.nightly.outputs.toolchain }}" fuzz run "${target}" \
                   --target "${{ steps.host.outputs.triple }}" \
                   -- -max_total_time="${FUZZ_DURATION}" -timeout=60; then
                   failed+=("${target}")
@@ -168,12 +170,12 @@ jobs:
         run: |
           set -uo pipefail
           host_triple="${{ steps.host.outputs.triple }}"
-          llvm_cov="$(rustc +nightly --print sysroot)/lib/rustlib/${host_triple}/bin/llvm-cov"
+          llvm_cov="$(rustc +"${{ steps.nightly.outputs.toolchain }}" --print sysroot)/lib/rustlib/${host_triple}/bin/llvm-cov"
           mkdir -p "${GITHUB_WORKSPACE}/coverage"
           failed=()
           for target in ${TARGETS}; do
               echo "::group::coverage ${target}"
-              if ! cargo +nightly fuzz coverage "${target}" --target "${host_triple}"; then
+              if ! cargo +"${{ steps.nightly.outputs.toolchain }}" fuzz coverage "${target}" --target "${host_triple}"; then
                   failed+=("${target}")
                   echo "::endgroup::"
                   continue

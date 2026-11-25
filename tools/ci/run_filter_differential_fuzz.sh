@@ -41,6 +41,9 @@ case "${uname_s}" in
     *) skip "platform ${uname_s} is not supported by cargo-fuzz" ;;
 esac
 
+# cargo-fuzz needs a nightly; CI passes its pinned nightly here.
+fuzz_toolchain="${OC_FUZZ_TOOLCHAIN:-nightly}"
+
 if ! command -v cargo >/dev/null 2>&1; then
     echo "error: cargo is required" >&2
     exit 2
@@ -48,10 +51,10 @@ fi
 
 # A nightly toolchain is required by cargo-fuzz. Treat absence as a clean skip
 # so the script is safe to invoke unconditionally in CI.
-if ! cargo +nightly --version >/dev/null 2>&1; then
+if ! cargo "+${fuzz_toolchain}" --version >/dev/null 2>&1; then
     skip "nightly Rust toolchain not installed (rustup toolchain install nightly)"
 fi
-if ! cargo +nightly fuzz --help >/dev/null 2>&1; then
+if ! cargo "+${fuzz_toolchain}" fuzz --help >/dev/null 2>&1; then
     skip "cargo-fuzz not installed (cargo install cargo-fuzz)"
 fi
 
@@ -83,7 +86,7 @@ host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
 cd "${fuzz_dir}"
 set +e
 env OC_RSYNC_UPSTREAM_BIN="${upstream}" \
-    cargo +nightly fuzz run "${target_name}" \
+    cargo "+${fuzz_toolchain}" fuzz run "${target_name}" \
         --target "${host_triple}" \
         -- -max_total_time="${duration}"
 status=$?
