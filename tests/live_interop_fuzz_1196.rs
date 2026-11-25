@@ -1,5 +1,5 @@
 //! Live interop fuzzer (#1196): randomised transfers between oc-rsync and
-//! upstream rsync 3.4.x.
+//! the upstream rsync 3.5.2 oracle.
 //!
 //! Sister harness to the static `adversarial_stream_corpus` work: where the
 //! corpus catches fixed cases, this fuzzer catches dynamic edge cases by
@@ -10,35 +10,42 @@
 //!
 //! 1. Build a randomised source tree (files, sizes, mtimes, permissions,
 //!    optional sparse holes, optional symlinks on Unix).
-//! 2. Push: oc-rsync sender, upstream receiver -- verify dst hashes match src.
-//! 3. Pull: upstream sender, oc-rsync receiver -- verify dst hashes match src.
-//! 4. Optionally mutate the source (add/delete/modify files) and re-run the
-//!    transfer to assert that the second pass reconciles correctly.
+//! 2. Push: oc-rsync client sender, upstream server receiver -- verify dst
+//!    hashes match src.
+//! 3. Pull: upstream server sender, oc-rsync client receiver -- verify dst
+//!    hashes match src.
+//! 4. Optionally mutate the source (add/delete/modify files) and re-run both
+//!    transfers to assert that the second pass reconciles correctly.
+//!
+//! The upstream end runs as the `--server` of a remote-shell transfer: the
+//! `-e` command drops the host name and runs the server command locally, and
+//! `--rsync-path` names the oracle binary.
 //!
 //! ## Reproducibility
 //!
 //! All randomness flows through a single seedable PRNG (xorshift64*). The seed
 //! defaults to a value derived from the system clock but can be pinned via the
-//! `OC_RSYNC_FUZZ_SEED` environment variable. On failure the test prints the
-//! seed so the run can be reproduced exactly.
+//! `OC_RSYNC_FUZZ_SEED` environment variable. The seed is printed at the start
+//! of every run and in every failure, so the run can be reproduced exactly.
 //!
-//! ## Budget
+//! ## Iterations
 //!
-//! The test is `#[ignore]` because it spawns hundreds of subprocesses and is
-//! intended for opt-in runs. Two tiers are provided:
+//! Each tier runs a fixed number of iterations; there is no time budget.
+//! `OC_RSYNC_FUZZ_ITERATIONS` overrides the count. The tests are `#[ignore]`
+//! because they spawn hundreds of subprocesses:
 //!
-//! - Smoke tier (default): bounded to ~60 seconds, small trees, a handful of
-//!   iterations -- suitable for nightly CI.
-//! - Extended tier: set `OC_RSYNC_FUZZ_BUDGET_SECS=3600` to run for an hour
-//!   with larger trees and more iterations.
+//! - Smoke tier: 16 iterations of small trees -- run by the nightly CI cell.
+//! - Extended tier: 48 iterations cycling through small, medium and large
+//!   trees.
 //!
 //! ## Invocation
 //!
 //! ```text
-//! cargo nextest run --workspace -E 'test(live_interop_fuzz)' --run-ignored=all
+//! cargo nextest run -p bin --test live_interop_fuzz_1196 --run-ignored=all
 //! ```
 //!
-//! The test skips cleanly when no upstream rsync binary is available.
+//! The oracle comes from `test_support::require_upstream_rsync`: without it
+//! the tests skip, and under `OC_RSYNC_UPSTREAM_COMPAT=1` they fail.
 
 #![cfg(unix)]
 
@@ -50,11 +57,12 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use checksums::strong::Sha256;
 use filetime::FileTime;
 use test_support::file_times::set_file_times;
+use test_support::{UpstreamVersion, require_upstream_rsync};
 
 // ============================================================================
 // PRNG: xorshift64*, no external crate dependency.
@@ -367,37 +375,6 @@ fn diff_snapshots(src: &Snapshot, dst: &Snapshot) -> Vec<String> {
     errors
 }
 
-// ============================================================================
-// Upstream binary discovery
-// ============================================================================
-
-fn upstream_binary() -> Option<PathBuf> {
-    // Prefer an explicit override so CI / local users can point at any build.
-    if let Ok(path) = env::var("OC_RSYNC_FUZZ_UPSTREAM_BIN") {
-        let p = PathBuf::from(path);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    // Fall back to the versions installed by tools/ci/run_interop.sh,
-    // anchored at the workspace root so the lookup is CWD-independent.
-    for version in ["3.4.2", "3.4.1"] {
-        if let Some(p) = test_support::upstream_install_bin(version) {
-            return Some(p);
-        }
-    }
-    // Last resort: a system rsync on PATH (only acceptable for local dev).
-    if let Ok(path) = env::var("PATH") {
-        for dir in env::split_paths(&path) {
-            let p = dir.join("rsync");
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-    }
-    None
-}
-
 /// Locates the binary under test.
 ///
 /// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with
@@ -418,33 +395,59 @@ fn locate_oc_rsync() -> PathBuf {
 // Transfer drivers
 // ============================================================================
 
-/// Drive a local transfer using the given sender and receiver binaries.
-///
-/// We use plain local-style rsync (`src/` `dst/`) so the harness exercises the
-/// full sender/receiver/generator pipeline of each binary without requiring an
-/// SSH daemon. The receiver binary is the one whose CWD the dst lives in,
-/// which for local mode is the same process as the sender -- but the role we
-/// care about is whichever binary is invoked.
-fn run_local_transfer(binary: &Path, src: &Path, dst: &Path) -> io::Result<()> {
+/// The two binaries of a transfer: the oc-rsync client and the upstream
+/// server it reaches through `rsh`.
+struct Peers<'a> {
+    oc: &'a Path,
+    upstream: &'a Path,
+    rsh: &'a Path,
+}
+
+/// Transfer direction relative to the oc-rsync client.
+#[derive(Clone, Copy)]
+enum Direction {
+    /// oc-rsync sends `src`; the upstream server receives into `dst`.
+    Push,
+    /// The upstream server sends `src`; oc-rsync receives into `dst`.
+    Pull,
+}
+
+/// Writes the remote-shell stand-in: it drops the host argument and runs the
+/// server command line locally.
+fn write_rsh(dir: &Path) -> io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let rsh = dir.join("rsh.sh");
+    fs::write(&rsh, "#!/bin/sh\nshift\nexec sh -c \"$*\"\n")?;
+    fs::set_permissions(&rsh, fs::Permissions::from_mode(0o755))?;
+    Ok(rsh)
+}
+
+/// Runs one oc-rsync client transfer against the upstream server.
+fn run_transfer(peers: &Peers<'_>, direction: Direction, src: &Path, dst: &Path) -> io::Result<()> {
     use std::process::Command;
-    let src_arg = format!("{}/", src.display());
-    let dst_arg = format!("{}/", dst.display());
-    let mut cmd = Command::new(binary);
+    let local = |path: &Path| format!("{}/", path.display());
+    let remote = |path: &Path| format!("peer:{}/", path.display());
+    let (src_arg, dst_arg) = match direction {
+        Direction::Push => (local(src), remote(dst)),
+        Direction::Pull => (remote(src), local(dst)),
+    };
+    let mut cmd = Command::new(peers.oc);
     // -a archive mode, --delete so reconciliation removes mutated-away files,
     // --no-owner / --no-group so the test is meaningful when run as non-root.
     cmd.arg("-a")
         .arg("--delete")
         .arg("--no-owner")
         .arg("--no-group")
+        .arg("-e")
+        .arg(peers.rsh)
+        .arg(format!("--rsync-path={}", peers.upstream.display()))
         .arg(&src_arg)
         .arg(&dst_arg);
     let output = spawn_with_timeout(cmd, Duration::from_secs(120))?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
-            "{} {}->{} failed: status={:?}\nstderr:\n{}",
-            binary.display(),
-            src.display(),
-            dst.display(),
+            "{} {src_arg} -> {dst_arg} failed: status={:?}\nstderr:\n{}",
+            peers.oc.display(),
             output.status.code(),
             String::from_utf8_lossy(&output.stderr)
         )));
@@ -466,73 +469,45 @@ fn run_iteration(
 ) -> io::Result<()> {
     let test_dir = TestDir::new()?;
     let src = test_dir.mkdir("src")?;
-    let dst_a = test_dir.mkdir("dst_a")?;
-    let dst_b = test_dir.mkdir("dst_b")?;
+    let dst_push = test_dir.mkdir("dst_push")?;
+    let dst_pull = test_dir.mkdir("dst_pull")?;
+    let rsh = write_rsh(test_dir.path())?;
+    let peers = Peers {
+        oc: oc_bin,
+        upstream: up_bin,
+        rsh: &rsh,
+    };
 
     build_random_tree(rng, &src, shape)?;
-    let src_snap = snapshot(&src)?;
 
-    // Direction 1: oc-rsync transfers src -> dst_a, then upstream verifies by
-    // doing the same transfer (no-op if oc-rsync already produced the right
-    // bytes). We then snapshot dst_a and compare against src.
-    run_local_transfer(oc_bin, &src, &dst_a)?;
-    let dst_a_snap = snapshot(&dst_a)?;
-    let diffs = diff_snapshots(&src_snap, &dst_a_snap);
-    if !diffs.is_empty() {
-        return Err(io::Error::other(format!(
-            "oc-rsync push diverged (seed={seed}, iter={iter_idx}):\n{}",
-            diffs.join("\n")
-        )));
-    }
+    // Each pass pushes src to dst_push and pulls it into dst_pull, then
+    // checks that both destinations equal the source.
+    let pass = |stage: &str| -> io::Result<()> {
+        let src_snap = snapshot(&src)?;
+        for (direction, dst, label) in [
+            (Direction::Push, &dst_push, "push to upstream"),
+            (Direction::Pull, &dst_pull, "pull from upstream"),
+        ] {
+            run_transfer(&peers, direction, &src, dst)?;
+            let diffs = diff_snapshots(&src_snap, &snapshot(dst)?);
+            if !diffs.is_empty() {
+                return Err(io::Error::other(format!(
+                    "{stage} {label} diverged (seed={seed}, iter={iter_idx}):\n{}",
+                    diffs.join("\n")
+                )));
+            }
+        }
+        Ok(())
+    };
 
-    // Direction 2: upstream transfers src -> dst_b, then we re-snapshot and
-    // diff. This catches cases where upstream produces a tree that oc-rsync
-    // could not produce (or vice versa).
-    run_local_transfer(up_bin, &src, &dst_b)?;
-    let dst_b_snap = snapshot(&dst_b)?;
-    let diffs = diff_snapshots(&src_snap, &dst_b_snap);
-    if !diffs.is_empty() {
-        return Err(io::Error::other(format!(
-            "upstream push diverged (seed={seed}, iter={iter_idx}):\n{}",
-            diffs.join("\n")
-        )));
-    }
-
-    // Cross-check: dst_a (oc-rsync) and dst_b (upstream) must agree.
-    let diffs = diff_snapshots(&dst_a_snap, &dst_b_snap);
-    if !diffs.is_empty() {
-        return Err(io::Error::other(format!(
-            "oc-rsync vs upstream output diverged (seed={seed}, iter={iter_idx}):\n{}",
-            diffs.join("\n")
-        )));
-    }
+    pass("initial")?;
 
     // Reconciliation pass: mutate src, then re-run both transfers and assert
     // the destinations follow. About one iteration in three exercises this
-    // path so the smoke budget still completes quickly.
+    // path.
     if rng.gen_bool(33) {
         mutate_tree(rng, &src)?;
-        let src_snap = snapshot(&src)?;
-
-        run_local_transfer(oc_bin, &src, &dst_a)?;
-        let dst_a_snap = snapshot(&dst_a)?;
-        let diffs = diff_snapshots(&src_snap, &dst_a_snap);
-        if !diffs.is_empty() {
-            return Err(io::Error::other(format!(
-                "oc-rsync reconciliation diverged (seed={seed}, iter={iter_idx}):\n{}",
-                diffs.join("\n")
-            )));
-        }
-
-        run_local_transfer(up_bin, &src, &dst_b)?;
-        let dst_b_snap = snapshot(&dst_b)?;
-        let diffs = diff_snapshots(&src_snap, &dst_b_snap);
-        if !diffs.is_empty() {
-            return Err(io::Error::other(format!(
-                "upstream reconciliation diverged (seed={seed}, iter={iter_idx}):\n{}",
-                diffs.join("\n")
-            )));
-        }
+        pass("reconciliation")?;
     }
 
     Ok(())
@@ -541,6 +516,7 @@ fn run_iteration(
 /// Apply a handful of random mutations to `root`: add files, delete files,
 /// modify existing files. Mutations stay within the same shape envelope.
 fn mutate_tree(rng: &mut Rng, root: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     let files = collect_regular_files(root)?;
     let mut_count = rng.gen_usize(1, 5);
     for _ in 0..mut_count {
@@ -562,7 +538,16 @@ fn mutate_tree(rng: &mut Rng, root: &Path) -> io::Result<()> {
                     rng.fill_bytes(&mut buf);
                     let mut existing = fs::read(victim).unwrap_or_default();
                     existing.extend_from_slice(&buf);
+                    // The tree builder hands out 0o400 files; lift owner write
+                    // for the append and restore the mode afterwards.
+                    let mode = fs::metadata(victim).map(|m| m.permissions().mode()).ok();
+                    if let Some(mode) = mode {
+                        fs::set_permissions(victim, fs::Permissions::from_mode(mode | 0o200))?;
+                    }
                     fs::write(victim, &existing)?;
+                    if let Some(mode) = mode {
+                        fs::set_permissions(victim, fs::Permissions::from_mode(mode))?;
+                    }
                     let secs = rng.gen_range(1_600_000_000, 1_750_000_000) as i64;
                     let mtime = FileTime::from_unix_time(secs, 0);
                     set_file_times(victim, mtime, mtime)?;
@@ -589,11 +574,13 @@ fn mutate_tree(rng: &mut Rng, root: &Path) -> io::Result<()> {
 // Entry points
 // ============================================================================
 
-fn budget_seconds() -> u64 {
-    env::var("OC_RSYNC_FUZZ_BUDGET_SECS")
+/// Iteration count: `OC_RSYNC_FUZZ_ITERATIONS` when set, else the tier's
+/// default.
+fn iterations(default: usize) -> usize {
+    env::var("OC_RSYNC_FUZZ_ITERATIONS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(60)
+        .unwrap_or(default)
 }
 
 fn seed_for_run() -> u64 {
@@ -608,75 +595,55 @@ fn seed_for_run() -> u64 {
         .unwrap_or(0xC0FF_EE12_3456_789A)
 }
 
-/// Run the fuzzer until the time budget elapses. Used by both the smoke and
-/// extended tiers; the only difference is the budget and tree shape mix.
-fn run_until_budget(budget: Duration, shapes: &[TreeShape]) {
+/// Runs `count` iterations, cycling through `shapes`. Used by both tiers; the
+/// only difference is the count and tree shape mix.
+fn run_iterations(test: &str, count: usize, shapes: &[TreeShape]) {
     let oc_bin = locate_oc_rsync();
-    let up_bin = match upstream_binary() {
-        Some(p) => p,
-        None => {
-            eprintln!(
-                "skip: no upstream rsync found; install via tools/ci/run_interop.sh or set OC_RSYNC_FUZZ_UPSTREAM_BIN"
-            );
-            return;
-        }
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
     };
+    let up_bin = upstream.binary();
 
     let seed = seed_for_run();
     eprintln!(
-        "live interop fuzz: seed={seed} budget={:?} oc_bin={} upstream_bin={}",
-        budget,
+        "live interop fuzz: seed={seed} iterations={count} oc_bin={} upstream_bin={}",
         oc_bin.display(),
         up_bin.display()
     );
 
     let mut rng = Rng::from_seed(seed);
-    let start = Instant::now();
-    let mut iter = 0usize;
-    while start.elapsed() < budget {
+    for iter in 0..count {
         let shape = shapes[iter % shapes.len()];
-        if let Err(e) = run_iteration(&mut rng, iter, seed, shape, &oc_bin, &up_bin) {
+        if let Err(e) = run_iteration(&mut rng, iter, seed, shape, &oc_bin, up_bin) {
             panic!(
                 "live interop fuzz failed (seed={seed}, iter={iter}): {e}\n\
-                 reproduce: OC_RSYNC_FUZZ_SEED={seed} OC_RSYNC_FUZZ_BUDGET_SECS=600 \
-                 cargo nextest run --workspace -E 'test(live_interop_fuzz)' --run-ignored=all"
+                 reproduce: OC_RSYNC_FUZZ_SEED={seed} OC_RSYNC_FUZZ_ITERATIONS={} \
+                 cargo nextest run -p bin --test live_interop_fuzz_1196 \
+                 --run-ignored=all -E 'test(={test})'",
+                iter + 1
             );
         }
-        iter += 1;
     }
-
-    eprintln!(
-        "live interop fuzz: completed {iter} iterations in {:?}",
-        start.elapsed()
-    );
 }
 
-/// Smoke tier (default 60-second budget, small trees only).
+/// Smoke tier: 16 iterations of small trees.
 #[test]
 #[ignore = "spawns subprocesses; run via --run-ignored=all"]
 fn live_interop_fuzz_smoke() {
-    let budget = Duration::from_secs(budget_seconds().min(120));
-    run_until_budget(budget_clamp_for_smoke(budget), &[TreeShape::small()]);
-}
-
-/// Extended tier (default 60-second budget but expects user to bump
-/// `OC_RSYNC_FUZZ_BUDGET_SECS=3600`; cycles through three tree sizes).
-#[test]
-#[ignore = "long-running; opt in via OC_RSYNC_FUZZ_BUDGET_SECS"]
-fn live_interop_fuzz_extended() {
-    let budget = Duration::from_secs(budget_seconds());
-    run_until_budget(
-        budget,
-        &[TreeShape::small(), TreeShape::medium(), TreeShape::large()],
+    run_iterations(
+        "live_interop_fuzz_smoke",
+        iterations(16),
+        &[TreeShape::small()],
     );
 }
 
-/// Clamp the smoke-tier budget so that it cannot exceed two minutes even if
-/// the env var requests more -- the extended test is the place for that.
-fn budget_clamp_for_smoke(b: Duration) -> Duration {
-    if b > Duration::from_secs(120) {
-        Duration::from_secs(120)
-    } else {
-        b
-    }
+/// Extended tier: 48 iterations cycling through three tree sizes.
+#[test]
+#[ignore = "long-running; opt in with --run-ignored=all"]
+fn live_interop_fuzz_extended() {
+    run_iterations(
+        "live_interop_fuzz_extended",
+        iterations(48),
+        &[TreeShape::small(), TreeShape::medium(), TreeShape::large()],
+    );
 }
