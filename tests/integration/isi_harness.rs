@@ -176,3 +176,133 @@ pub fn pull_both(
         run(&peers.upstream, "dst-upstream"),
     )
 }
+
+/// A multiplex header is `((MPLEX_BASE + tag) << 24) + len`, little-endian
+/// (io.c:1180); tag 0 is MSG_DATA.
+pub const MPLEX_BASE: u32 = 7;
+
+/// The stats record is five `write_varlong30(f, x, 3)` values; each takes
+/// exactly three bytes while it is below 2^23 (io.c write_varlong).
+const STATS_LEN: usize = 15;
+
+/// Index of total_size among the stats values.
+const TOTAL_SIZE: usize = 2;
+
+/// A sender stream with its multiplex framing removed.
+#[derive(Debug)]
+struct Demuxed {
+    /// The bytes written before multiplexing starts.
+    preamble: Vec<u8>,
+    /// Every MSG_DATA payload, concatenated.
+    data: Vec<u8>,
+    /// Every other message, as (tag, payload), in stream order.
+    messages: Vec<(u32, Vec<u8>)>,
+}
+
+/// Splits `wire` at the first offset from which whole frames run exactly to
+/// the end of the stream.
+fn demultiplex(wire: &[u8]) -> Demuxed {
+    (0..wire.len().min(64))
+        .find_map(|start| frames_from(wire, start))
+        .unwrap_or_else(|| {
+            panic!(
+                "no multiplexed frame chain ends the {}-byte stream",
+                wire.len()
+            )
+        })
+}
+
+fn frames_from(wire: &[u8], start: usize) -> Option<Demuxed> {
+    let mut out = Demuxed {
+        preamble: wire[..start].to_vec(),
+        data: Vec::new(),
+        messages: Vec::new(),
+    };
+    let mut pos = start;
+    while pos < wire.len() {
+        let header = u32::from_le_bytes(wire.get(pos..pos + 4)?.try_into().ok()?);
+        let tag = (header >> 24).checked_sub(MPLEX_BASE)?;
+        let len = (header & 0x00FF_FFFF) as usize;
+        let payload = wire.get(pos + 4..pos + 4 + len)?;
+        if tag == 0 {
+            out.data.extend_from_slice(payload);
+        } else {
+            out.messages.push((tag, payload.to_vec()));
+        }
+        pos += 4 + len;
+    }
+    (!out.data.is_empty()).then_some(out)
+}
+
+/// Splits the closing stats record off `data`: total_read, total_written,
+/// total_size, flist_buildtime, flist_xfertime (main.c:353-358). The last
+/// byte after it is the NDX_DONE the sender echoes in read_final_goodbye
+/// (main.c:933-935); it stays with the returned records.
+fn split_stats(data: &[u8]) -> (Vec<u8>, [u64; 5]) {
+    assert!(
+        data.len() > STATS_LEN,
+        "stream too short for a stats record"
+    );
+    let at = data.len() - STATS_LEN - 1;
+    let record = &data[at..at + STATS_LEN];
+    let mut body = data[..at].to_vec();
+    body.extend_from_slice(&data[at + STATS_LEN..]);
+    let mut stats = [0; 5];
+    for (value, bytes) in stats.iter_mut().zip(record.chunks_exact(3)) {
+        // write_varlong puts the top byte first, then the low two bytes;
+        // a first byte of 0x80 or more would mean a longer encoding.
+        assert!(
+            bytes[0] < 0x80,
+            "stats value does not use the 3-byte varlong form: {bytes:02x?}"
+        );
+        *value = (u64::from(bytes[0]) << 16) | (u64::from(bytes[2]) << 8) | u64::from(bytes[1]);
+    }
+    (body, stats)
+}
+
+fn hex_window(bytes: &[u8], at: usize) -> String {
+    let start = at.saturating_sub(16);
+    let end = (at + 16).min(bytes.len());
+    bytes[start..end]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Asserts that two sender streams carry the same records.
+///
+/// rsync 3.5.2's own stream varies from run to run in three places, so they
+/// are compared in canonical form:
+///
+/// - Multiplex frame boundaries. A MSG_DATA header closes when the output
+///   buffer is flushed, and the sender flushes when it must wait for input,
+///   so how many records share a frame depends on when the client's next
+///   NDX_DONE arrives. Only the concatenated MSG_DATA payload and the other
+///   messages are compared.
+/// - total_read and total_written in the stats record count raw bytes
+///   including frame headers (io.c:938, io.c:977).
+/// - flist_buildtime and flist_xfertime are wall-clock milliseconds
+///   (flist.c:3028-3031, flist.c:3054).
+///
+/// Everything else, including total_size, must match exactly.
+pub fn assert_same_records(oc: &[u8], up: &[u8]) {
+    let (oc, up) = (demultiplex(oc), demultiplex(up));
+    assert_eq!(oc.preamble, up.preamble, "pre-multiplex bytes differ");
+    assert_eq!(oc.messages, up.messages, "non-data messages differ");
+    let ((oc_body, oc_stats), (up_body, up_stats)) = (split_stats(&oc.data), split_stats(&up.data));
+    if let Some(at) = oc_body.iter().zip(&up_body).position(|(a, b)| a != b) {
+        panic!(
+            "sender data differs at payload byte {at} (oc {} bytes, 3.5.2 {} bytes)\noc:    {}\n3.5.2: {}",
+            oc_body.len(),
+            up_body.len(),
+            hex_window(&oc_body, at),
+            hex_window(&up_body, at),
+        );
+    }
+    assert_eq!(oc_body.len(), up_body.len(), "sender data lengths differ");
+    assert_eq!(
+        oc_stats[TOTAL_SIZE], up_stats[TOTAL_SIZE],
+        "stats total_size differs (oc {oc_stats:?}, 3.5.2 {up_stats:?})"
+    );
+}
