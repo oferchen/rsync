@@ -151,6 +151,17 @@ fn write_batch_records_metadata_only_iflags_for_kept_dirs_and_symlinks() {
     set_symlink_file_times(dest.join("alink"), dst_link_time, dst_link_time)
         .expect("mtime dest symlink");
 
+    // The transfer root "." is itemized like any kept directory
+    // (generator.c:1906-1908 -> itemize(), :568-573 ITEM_REPORT_TIME on
+    // mtime_differs), and with the default modify_window same_time() compares
+    // whole seconds (util1.c:1746-1747). Left at creation time, the two roots
+    // differ whenever the fixture straddles a second boundary, which adds a
+    // third ITEM_REPORT_TIME word for ".". Pin both roots to one time so the
+    // word run is exactly the two entries above; the children's times were
+    // set first and do not touch their parent's mtime.
+    set_file_mtime(&source, src_time).expect("mtime source root");
+    set_file_mtime(&dest, src_time).expect("mtime dest root");
+
     let writer = make_writer(&batch_path);
     // perms + times must be preserved so the mode/mtime differences are
     // detected as metadata changes (a `MetadataReused` action), which is what
