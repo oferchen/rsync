@@ -150,9 +150,9 @@ pub fn write_fixture_file(path: &Path, seed: u32, size: usize) {
 pub fn pin_mtimes(root: &Path) {
     let mtime = filetime::FileTime::from_unix_time(1_700_000_000, 0);
     for (rel, _) in snapshot(root) {
-        filetime::set_file_mtime(root.join(rel), mtime).expect("pin mtime");
+        test_support::file_times::set_file_mtime(root.join(rel), mtime).expect("pin mtime");
     }
-    filetime::set_file_mtime(root, mtime).expect("pin root mtime");
+    test_support::file_times::set_file_mtime(root, mtime).expect("pin root mtime");
 }
 
 /// Runs the same pull with the oc sender and the 3.5.2 sender into fresh
