@@ -1,4 +1,4 @@
-//! Local-copy residuals pinned against 3.5.1: what `--fake-super -A` stashes,
+//! Local-copy residuals pinned against 3.5.2: what `--fake-super -A` stashes,
 //! how `--copy-unsafe-links` treats a link when `-l` is off, and which rows a
 //! skipped non-regular entry prints.
 //!
@@ -24,9 +24,9 @@ fn oc_rsync() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// 3.5.1 and oc, or `None` when the oracle is not installed.
+/// 3.5.2 and oc, or `None` when the oracle is not installed.
 fn oracle_and_oc() -> Option<[(&'static str, PathBuf); 2]> {
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_1)?;
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2)?;
     Some([
         ("upstream", upstream.binary().to_path_buf()),
         ("oc", oc_rsync()),
@@ -184,7 +184,7 @@ fn local_fake_super_stashes_only_what_the_source_stash_carries() {
         &BTreeSet::from(["sub/inner user.rsync.%aacl".to_owned()]),
         "oracle: only the stashed source carries an ACL stash",
     );
-    assert_eq!(seen[1].1, *upstream, "oc stashes differ from 3.5.1");
+    assert_eq!(seen[1].1, *upstream, "oc stashes differ from 3.5.2");
 }
 
 /// `-M--fake-super` on a local copy reaches the receiver half only, so the
@@ -231,7 +231,7 @@ fn receiver_only_fake_super_stashes_the_real_source_acl() {
         upstream.contains("named user.rsync.%aacl"),
         "oracle: the real ACL is stashed: {upstream:?}",
     );
-    assert_eq!(seen[1].1, *upstream, "oc stashes differ from 3.5.1");
+    assert_eq!(seen[1].1, *upstream, "oc stashes differ from 3.5.2");
 }
 
 /// `-M--fake-super` leaves the sender reading the source's real stat, so a
@@ -293,7 +293,7 @@ fn receiver_only_fake_super_ignores_the_source_stat_record() {
 }
 
 /// A `--fake-super -A` push sends only the stash, so a real named-user ACL
-/// on the source does not reach a 3.5.1 receiver.
+/// on the source does not reach a 3.5.2 receiver.
 #[test]
 fn fake_super_push_sends_the_stash_not_the_real_acl() {
     let Some(impls) = oracle_and_oc() else { return };
@@ -354,7 +354,7 @@ fn fake_super_push_sends_the_stash_not_the_real_acl() {
     );
     assert_eq!(
         acls[1], acls[0],
-        "oc client sends a different ACL than 3.5.1"
+        "oc client sends a different ACL than 3.5.2"
     );
 }
 
@@ -386,12 +386,12 @@ fn unsafe_operand_link_is_copied_without_links() {
         BTreeSet::from([("ln".to_owned(), 'f')]),
         "oracle: the referent lands as a file",
     );
-    assert_eq!(seen[1], seen[0], "oc differs from 3.5.1");
+    assert_eq!(seen[1], seen[0], "oc differs from 3.5.2");
 }
 
 /// Inside a tree, `--copy-unsafe-links` without `-l` copies an escaping link
 /// as its referent and still skips the FIFO. The rows are compared as a set:
-/// 3.5.1 prints a directory's skip notices before its `cd` row.
+/// 3.5.2 prints a directory's skip notices before its `cd` row.
 #[test]
 fn unsafe_link_in_tree_is_copied_without_links() {
     let Some(impls) = oracle_and_oc() else { return };
@@ -420,7 +420,7 @@ fn unsafe_link_in_tree_is_copied_without_links() {
         "oracle: the escaping link lands as a file, the safe one is skipped: {:?}",
         seen[0].1
     );
-    assert_eq!(seen[1], seen[0], "oc differs from 3.5.1");
+    assert_eq!(seen[1], seen[0], "oc differs from 3.5.2");
 }
 
 /// A link and a FIFO skipped without `-l`/`-D` print only the notice, never
@@ -449,5 +449,5 @@ fn skipped_non_regular_entries_print_no_itemize_row() {
         "oracle prints the notice: {:?}",
         seen[0].0
     );
-    assert_eq!(seen[1], seen[0], "oc differs from 3.5.1");
+    assert_eq!(seen[1], seen[0], "oc differs from 3.5.2");
 }

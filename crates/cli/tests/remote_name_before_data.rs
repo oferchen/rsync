@@ -118,13 +118,13 @@ fn a_push_names_each_file_before_its_data() {
     assert_named_before_data(&oc_rsync_bin(), Direction::Push);
 }
 
-/// The same cell against upstream proves it can pass: 3.5.1 names first.
+/// The same cell against upstream proves it can pass: 3.5.2 names first.
 #[test]
 fn upstream_names_each_file_before_its_data() {
     if !upstream_compat_enabled() {
         return;
     }
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     assert_named_before_data(upstream.binary(), Direction::Pull);

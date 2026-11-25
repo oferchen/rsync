@@ -23,8 +23,10 @@
 //! fixture implies, so the comparison cannot pass with both senders sending
 //! literals.
 //!
-//! `match.c` is byte-identical between upstream 3.5.0 and 3.5.1, so the test
-//! runs against every installed release of the two and requires at least one.
+//! The oracle is 3.5.2, whose `match.c` differs from 3.5.1's: `hash_search()`
+//! skips a block whose strong sum already failed at this offset and requires
+//! the block length to match (`consecutive_false_offsets`, `last_false_sum2`).
+//! The fixtures' match tokens are the same under both.
 //! Gated on `OC_RSYNC_UPSTREAM_COMPAT=1` like the other upstream oracles.
 #![cfg(unix)]
 
@@ -229,37 +231,29 @@ fn assert_oc_matches_upstream(name: &str, fixture: (Vec<u8>, Vec<u8>, u64)) {
         return;
     }
     let (basis, source, expected_matched) = fixture;
-    let upstreams: Vec<_> = [UpstreamVersion::V3_5_1, UpstreamVersion::V3_5_0]
-        .into_iter()
-        .filter_map(require_upstream_rsync)
-        .collect();
-    assert!(
-        !upstreams.is_empty(),
-        "OC_RSYNC_UPSTREAM_COMPAT=1 but neither upstream 3.5.1 nor 3.5.0 is installed"
-    );
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2)
+        .expect("OC_RSYNC_UPSTREAM_COMPAT=1 but upstream 3.5.2 is not installed");
     let oc = test_support::oc_rsync_bin();
-    for upstream in upstreams {
-        let up = upstream.binary();
-        let (reference, up_stats) = pull(up, up, &basis, &source);
-        let (candidate, oc_stats) = pull(up, &oc, &basis, &source);
-        let version = upstream.version().directory();
-        assert_eq!(
-            matched_data(&up_stats),
-            expected_matched,
-            "{name}: upstream {version} Matched data"
-        );
-        assert_eq!(
-            matched_data(&oc_stats),
-            expected_matched,
-            "{name}: oc Matched data against upstream {version} client"
-        );
-        assert!(
-            candidate == reference,
-            "{name}: oc delta section differs from upstream {version} ({} vs {} bytes)",
-            candidate.len(),
-            reference.len()
-        );
-    }
+    let up = upstream.binary();
+    let (reference, up_stats) = pull(up, up, &basis, &source);
+    let (candidate, oc_stats) = pull(up, &oc, &basis, &source);
+    let version = upstream.version().directory();
+    assert_eq!(
+        matched_data(&up_stats),
+        expected_matched,
+        "{name}: upstream {version} Matched data"
+    );
+    assert_eq!(
+        matched_data(&oc_stats),
+        expected_matched,
+        "{name}: oc Matched data against upstream {version} client"
+    );
+    assert!(
+        candidate == reference,
+        "{name}: oc delta section differs from upstream {version} ({} vs {} bytes)",
+        candidate.len(),
+        reference.len()
+    );
 }
 
 #[test]

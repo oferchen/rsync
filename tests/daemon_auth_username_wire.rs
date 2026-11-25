@@ -30,7 +30,7 @@
 //! Skip conditions (test passes with a printed reason, except under
 //! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - Loopback TCP is unavailable.
-//! - The cross-implementation cell additionally needs a built upstream 3.5.1
+//! - The cross-implementation cell additionally needs a built upstream 3.5.2
 //!   binary; without it that cell reports why it did not run.
 
 #![cfg(unix)]
@@ -45,10 +45,10 @@ fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// Locates the built upstream 3.5.1 oracle, or `None` when the interop tree has
+/// Locates the built upstream 3.5.2 oracle, or `None` when the interop tree has
 /// not been fetched and built.
 fn upstream_binary() -> Option<PathBuf> {
-    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
         .map(|upstream| upstream.binary().to_path_buf())
 }
 
@@ -137,7 +137,7 @@ fn oc_sends_the_upstream_username_for_every_environment() {
     assert_table(&oc_binary(), "oc");
 }
 
-/// CROSS-IMPLEMENTATION: the real 3.5.1 client is the source of the expected
+/// CROSS-IMPLEMENTATION: the real 3.5.2 client is the source of the expected
 /// column, so the same table is asserted against it directly. If upstream ever
 /// changed this resolution, this cell would fail rather than oc silently
 /// encoding a stale rule.
@@ -146,5 +146,5 @@ fn upstream_sends_the_same_username_for_every_environment() {
     let Some(upstream) = upstream_binary() else {
         return;
     };
-    assert_table(&upstream, "upstream 3.5.1");
+    assert_table(&upstream, "upstream 3.5.2");
 }

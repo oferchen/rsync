@@ -1,12 +1,12 @@
 //! A source tree holding a directory that is readable but not searchable
 //! (mode `0400`), copied locally and pushed.
 //!
-//! rsync 3.5.1 chooses between two scans (`flist.c:2355-2361`). The default
+//! rsync 3.5.2 chooses between two scans (`flist.c:2355-2361`). The default
 //! is `secure_opendir()`: a traversal-only descriptor, then
 //! `openat(fd, ".", O_RDONLY | O_DIRECTORY)` (`flist.c:2257-2295`,
 //! `syscall.c:3172`, `:3218`). Resolving `"."` needs the directory's search
 //! bit, so the scan fails with `opendir ... failed: Permission denied`, even
-//! for an empty directory that 3.5.0 copied silently. The symlink-following
+//! for an empty directory that 3.5.2 copied silently. The symlink-following
 //! modes and the `--insecure-links` opt-out keep the legacy `opendir()`, and
 //! `--files-from` opens its leaf readable (`syscall.c:593-605`). Those scans
 //! list the directory, and each entry's own stat then fails as
@@ -21,7 +21,7 @@
 //! installed.
 //!
 //! Skip conditions: running as root, which ignores the directory modes. The
-//! oracle cell also needs upstream 3.5.1 (`test_support::require_upstream_rsync`).
+//! oracle cell also needs upstream 3.5.2 (`test_support::require_upstream_rsync`).
 
 #![cfg(unix)]
 
@@ -231,9 +231,9 @@ fn upstream_oracle_agrees_with_the_pinned_cells() {
         return;
     }
     let Some(upstream) =
-        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
     else {
         return;
     };
-    assert_cells(upstream.binary(), "upstream 3.5.1");
+    assert_cells(upstream.binary(), "upstream 3.5.2");
 }

@@ -1,4 +1,4 @@
-//! A `--fake-super` receiver stashes every received ACL, pinned against 3.5.1.
+//! A `--fake-super` receiver stashes every received ACL, pinned against 3.5.2.
 //!
 //! upstream: acls.c:1228 set_rsync_acl() - with `am_root < 0` the ACL goes
 //! into the `%aacl`/`%dacl` xattrs instead of `sys_acl_set_file()`. Every
@@ -51,13 +51,13 @@ fn acl_state(dest: &Path, rel: &str) -> String {
     format!("== {rel}\n{}{stash}", String::from_utf8_lossy(&acl.stdout))
 }
 
-/// A 3.5.1 client pushes `-rtA` to each server with `-M--fake-super`, then
+/// A 3.5.2 client pushes `-rtA` to each server with `-M--fake-super`, then
 /// pushes again after the source ACLs change. Both servers must leave the
 /// same real ACLs and stashes; the second push reaches the existing
 /// directory and the up-to-date file.
 #[test]
 fn fake_super_server_stashes_directory_and_up_to_date_file_acls() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     if !["setfacl", "getfacl", "getfattr"].into_iter().all(has_tool) {
@@ -115,6 +115,6 @@ fn fake_super_server_stashes_directory_and_up_to_date_file_acls() {
             "oracle ({round}): ACLs are stashed, not applied:\n{}",
             seen[0]
         );
-        assert_eq!(seen[1], seen[0], "oc server differs from 3.5.1 ({round})");
+        assert_eq!(seen[1], seen[0], "oc server differs from 3.5.2 ({round})");
     }
 }

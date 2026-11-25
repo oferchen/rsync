@@ -39,7 +39,7 @@
 //! Skip conditions (the test passes with a printed reason, except under
 //! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - Loopback TCP is unavailable.
-//! - The cross-implementation cell additionally needs a built upstream 3.5.1
+//! - The cross-implementation cell additionally needs a built upstream 3.5.2
 //!   binary; without it it reports why it did not run.
 
 #![cfg(unix)]
@@ -54,7 +54,7 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
         .map(|upstream| upstream.binary().to_path_buf())
 }
 
@@ -225,5 +225,5 @@ fn upstream_keeps_daemon_filter_file_whitespace_as_pattern_text() {
     let Some(upstream) = upstream_binary() else {
         return;
     };
-    assert_table(&upstream, "upstream 3.5.1");
+    assert_table(&upstream, "upstream 3.5.2");
 }

@@ -1,5 +1,5 @@
 //! Cross-implementation oracle: `--fake-super` destinations, oc-rsync against
-//! upstream rsync 3.5.1 on the same fixtures.
+//! upstream rsync 3.5.2 on the same fixtures.
 //!
 //! # Why this test exists
 //!
@@ -21,7 +21,7 @@
 //! # Gating
 //!
 //! Self-skips when `OC_RSYNC_UPSTREAM_COMPAT` is unset, when no upstream
-//! rsync 3.5.1 or oc-rsync binary is available, and when the filesystem
+//! rsync 3.5.2 or oc-rsync binary is available, and when the filesystem
 //! refuses user xattrs. Once those hold the cells must run and match.
 
 #![cfg(target_os = "linux")]
@@ -54,7 +54,7 @@ fn pair() -> Option<Pair> {
     if !upstream_compat_enabled() {
         return None;
     }
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_1)?
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2)?
         .binary()
         .to_path_buf();
     let oc = test_support::oc_rsync_bin();
@@ -592,7 +592,7 @@ fn a_device_placeholder_operand_updates_an_existing_device() {
 }
 
 /// A daemon sender that fails while building the file list closes the socket
-/// cleanly: the client has sent nothing it has not read, so a 3.5.1 client
+/// cleanly: the client has sent nothing it has not read, so a 3.5.2 client
 /// prints the cause and trailer only, with no `Connection reset by peer`.
 /// Both daemons serve the same upstream client, so the cell tells a clean
 /// close from the abrupt one a failing daemon receiver makes.

@@ -65,14 +65,14 @@ fn assert_server_stays_silent(push: bool) {
         "stderr:\n{}",
         out.stderr_str()
     );
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         let against_oc = run(upstream.binary(), &oc, tmp.path(), push);
         let reference = run(upstream.binary(), upstream.binary(), tmp.path(), push);
         assert_eq!(against_oc.status, reference.status);
         assert_eq!(
             against_oc.stderr_str(),
             reference.stderr_str(),
-            "3.5.1 client against an oc server and against a 3.5.1 server"
+            "3.5.2 client against an oc server and against a 3.5.2 server"
         );
     }
 }

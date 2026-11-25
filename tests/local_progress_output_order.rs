@@ -6,7 +6,7 @@
 //! <dest>` from `get_local_name()` (main.c:807-808), then each entry's name as
 //! the generator reaches it (generator.c:recv_generator() -> itemize() ->
 //! log_item()), with a regular file's progress block right after its name.
-//! Captured from rsync 3.5.1 with stdout and stderr merged into one pipe:
+//! Captured from rsync 3.5.2 with stdout and stderr merged into one pipe:
 //!
 //! ```text
 //! $ rsync -avPc zzz/ qqq 2>&1 | cat
@@ -217,7 +217,7 @@ struct Expected {
     trailer: bool,
 }
 
-/// upstream 3.5.1's normalized output for the fixture.
+/// upstream 3.5.2's normalized output for the fixture.
 fn expected_sequence(expected: Expected) -> Vec<String> {
     let entry = |name: &str, dir: bool| match expected.listing {
         Listing::Names => name.to_owned(),
@@ -579,14 +579,14 @@ fn daemon_push_names_each_entry_once_with_directory_lines() {
     );
 }
 
-/// Locates the upstream rsync 3.5.1 live oracle through
+/// Locates the upstream rsync 3.5.2 live oracle through
 /// `test_support::require_upstream_rsync`.
 fn locate_upstream_rsync() -> Option<PathBuf> {
-    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
         .map(|upstream| upstream.binary().to_path_buf())
 }
 
-/// When an upstream 3.5.1 binary is available, its own output for the same
+/// When an upstream 3.5.2 binary is available, its own output for the same
 /// fixture must match both the pinned sequence and oc's output.
 #[test]
 fn local_copy_output_order_matches_live_upstream_oracle() {

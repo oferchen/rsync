@@ -26,7 +26,7 @@
 //!
 //! Skip conditions (test passes with a printed reason, except under
 //! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
-//! - The cross-implementation cell needs a built upstream 3.5.1 binary.
+//! - The cross-implementation cell needs a built upstream 3.5.2 binary.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
         .map(|upstream| upstream.binary().to_path_buf())
 }
 
@@ -123,7 +123,7 @@ fn upstream_resolves_an_empty_size_value_to_zero() {
     let Some(upstream) = upstream_binary() else {
         return;
     };
-    assert_empty_matches_zero(&upstream, "upstream 3.5.1");
+    assert_empty_matches_zero(&upstream, "upstream 3.5.2");
 }
 
 /// THE DISCRIMINATOR. `--max-size=` is not "no limit" and not "the default":
@@ -166,7 +166,7 @@ fn a_non_empty_size_value_still_parses_and_applies() {
     );
 }
 
-/// `--max-alloc` keeps its 1 MiB minimum, but rsync 3.5.1 passes
+/// `--max-alloc` keeps its 1 MiB minimum, but rsync 3.5.2 passes
 /// `unlimited_0`, so 0 - and therefore an empty value - means the largest
 /// limit this build allows (SIZE_MAX/2) rather than a refusal. A non-zero
 /// value below the minimum is still rejected.

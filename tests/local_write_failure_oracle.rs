@@ -1,4 +1,4 @@
-//! A local copy whose destination write fails ends like upstream 3.5.1's.
+//! A local copy whose destination write fails ends like upstream 3.5.2's.
 //!
 //! upstream: receiver.c:658-660 - `rsyserr(FERROR_XFER, errno, "write failed
 //! on %s", full_fname(fname))` then `exit_cleanup(RERR_FILEIO)`, so the copy
@@ -6,7 +6,7 @@
 //! receiver. A file written in place keeps what was written: receiver.c:1242-1246
 //! registers no cleanup name for it, and cleanup.c only unlinks the temp file.
 //!
-//! Each cell runs the same copy with 3.5.1 and with oc and requires the same
+//! Each cell runs the same copy with 3.5.2 and with oc and requires the same
 //! exit code, the same cause line and the same destination left behind.
 
 #![cfg(unix)]
@@ -71,7 +71,7 @@ fn file_size_limited_copy(binary: &Path, args: &[&str]) -> Outcome {
 }
 
 fn assert_same(case: &str, upstream: &Outcome, oc: &Outcome) {
-    assert_eq!(upstream.code, Some(11), "{case}: 3.5.1 {upstream:?}");
+    assert_eq!(upstream.code, Some(11), "{case}: 3.5.2 {upstream:?}");
     assert_eq!(oc.code, upstream.code, "{case}: oc {oc:?}");
     assert_eq!(oc.cause, upstream.cause, "{case}");
     assert!(
@@ -84,7 +84,7 @@ fn assert_same(case: &str, upstream: &Outcome, oc: &Outcome) {
 
 #[test]
 fn a_failed_destination_write_reports_the_receivers_line_and_exits_11() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let oc: PathBuf = oc_rsync_bin();
@@ -102,13 +102,13 @@ fn a_failed_destination_write_reports_the_receivers_line_and_exits_11() {
 /// The in-place cell must be able to tell a kept partial from a removed one.
 #[test]
 fn an_in_place_write_failure_keeps_the_partial_file() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let kept = file_size_limited_copy(upstream.binary(), &["--inplace"]).kept;
     assert!(
         kept.is_some_and(|len| len > 0 && len < 300_000),
-        "3.5.1 keeps a partial in-place file: {kept:?}"
+        "3.5.2 keeps a partial in-place file: {kept:?}"
     );
 }
 
@@ -116,7 +116,7 @@ fn an_in_place_write_failure_keeps_the_partial_file() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_write_to_dev_full_reports_the_receivers_line_and_exits_11() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let run = |binary: &Path, args: &[&str]| {

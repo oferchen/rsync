@@ -9,7 +9,7 @@
 //! name-prefix compression against the previous name, and the number a
 //! hard-link follower names its leader by.
 //!
-//! Each cell pulls one tree with a 3.5.1 client, once from a 3.5.1 sender and
+//! Each cell pulls one tree with a 3.5.2 client, once from a 3.5.2 sender and
 //! once from an oc sender, taps the sender's stdout, and requires the
 //! file-list bytes to match exactly. The destination is populated first, so
 //! no file data follows the lists.
@@ -203,7 +203,7 @@ fn names(list: &[FileEntry]) -> Vec<String> {
 }
 
 fn assert_send_order_matches_upstream(args: &[&str], inc_recurse: bool, lazy: bool) {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let temp = TempDir::new().expect("tempdir");
@@ -247,7 +247,7 @@ fn assert_send_order_matches_upstream(args: &[&str], inc_recurse: bool, lazy: bo
     assert_eq!(
         oc.data[..oc_len],
         up.data[..up_len],
-        "file-list bytes from an oc sender and a 3.5.1 sender"
+        "file-list bytes from an oc sender and a 3.5.2 sender"
     );
 }
 

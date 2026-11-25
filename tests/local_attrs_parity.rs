@@ -4,7 +4,7 @@
 //! upstream: a local copy forks a sender and a receiver; flist.c:2054-2091
 //! send_file_name() reads the ACL and xattrs into the file list and the
 //! receiver applies what the list carried. Each cell compares the destination
-//! oc writes with the one 3.5.1 writes, along one path the values travel: a
+//! oc writes with the one 3.5.2 writes, along one path the values travel: a
 //! nested file, a directory's own attributes (the transfer root included), a
 //! single-file operand, a `--delay-updates` commit, a link copied as its
 //! referent (`-L`, `--copy-unsafe-links`) and the itemize `x` column.
@@ -23,10 +23,10 @@ fn oc_rsync() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// 3.5.1 first, when installed, so each cell is proven on the oracle before
+/// 3.5.2 first, when installed, so each cell is proven on the oracle before
 /// oc is held to it.
 fn implementations() -> Vec<(&'static str, PathBuf)> {
-    let mut impls: Vec<_> = require_upstream_rsync(UpstreamVersion::V3_5_1)
+    let mut impls: Vec<_> = require_upstream_rsync(UpstreamVersion::V3_5_2)
         .map(|u| ("upstream", u.binary().to_path_buf()))
         .into_iter()
         .collect();
@@ -150,7 +150,7 @@ fn has_capability(name: &str, tools: &[&str]) -> bool {
 type Cell<'a> = (&'a str, &'a [&'a str], &'a str, Option<&'a str>);
 
 /// Runs each cell with every implementation on a fresh fixture and asserts oc
-/// writes what 3.5.1 writes.
+/// writes what 3.5.2 writes.
 fn assert_cells_match(
     decorate: &dyn Fn(&Fixture) -> bool,
     cells: &[Cell<'_>],

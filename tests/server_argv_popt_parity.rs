@@ -1,4 +1,4 @@
-//! A server argv parsed the way 3.5.1's single popt pass parses it.
+//! A server argv parsed the way 3.5.2's single popt pass parses it.
 //!
 //! upstream: options.c:1515 - one popt pass over the whole argv, so a short
 //! option counts wherever it sits; options.c:1517-1524 - the first `--server`
@@ -24,10 +24,10 @@ fn oc_rsync() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// The 3.5.1 binary, which drives every cell as the client and serves as the
+/// The 3.5.2 binary, which drives every cell as the client and serves as the
 /// reference server.
 fn upstream() -> Option<PathBuf> {
-    require_upstream_rsync(UpstreamVersion::V3_5_1).map(|u| u.binary().to_path_buf())
+    require_upstream_rsync(UpstreamVersion::V3_5_2).map(|u| u.binary().to_path_buf())
 }
 
 struct Push {
@@ -115,7 +115,7 @@ fn refusal(stderr: &str) -> Vec<String> {
         .collect()
 }
 
-/// A stray `-v` ahead of `--server` is honoured, and counts twice as 3.5.1's
+/// A stray `-v` ahead of `--server` is honoured, and counts twice as 3.5.2's
 /// restarted pass counts it: at that level the server reports its delta mode.
 #[test]
 fn verbose_ahead_of_server_is_honoured_twice() {
@@ -140,7 +140,7 @@ fn verbose_ahead_of_server_is_honoured_twice() {
 }
 
 /// Unknown short and long options, on either side of `--server`, are refused
-/// with 3.5.1's text and role.
+/// with 3.5.2's text and role.
 #[test]
 fn unknown_options_are_refused_like_upstream() {
     let Some(upstream) = upstream() else { return };

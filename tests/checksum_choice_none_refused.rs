@@ -1,4 +1,4 @@
-//! `--checksum` with a `none` file checksum is refused like upstream 3.5.1.
+//! `--checksum` with a `none` file checksum is refused like upstream 3.5.2.
 //!
 //! upstream: checksum.c:548-551 `file_checksum()` - `CSUM_NONE` falls to the
 //! default case, prints `Invalid checksum-choice for --checksum: none (0)` and
@@ -79,11 +79,11 @@ fn a_none_transfer_checksum_or_no_checksum_flag_still_transfers() {
     }
 }
 
-/// The same matrix against a real 3.5.1, so the expectations above are
+/// The same matrix against a real 3.5.2, so the expectations above are
 /// upstream's behaviour and not a guess.
 #[test]
 fn upstream_3_5_1_agrees_on_every_cell() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let temp = fixture();
@@ -135,8 +135,8 @@ fn upstream_3_5_1_agrees_on_every_cell() {
 /// the remote sender refuses: every client/server pairing fails and transfers
 /// nothing.
 ///
-/// An oc client from a 3.5.1 server ends with 3.5.1's exit code and text. A
-/// 3.5.1 client from an oc server does not yet: a 3.5.1 sender never flushes
+/// An oc client from a 3.5.2 server ends with 3.5.2's exit code and text. A
+/// 3.5.2 client from an oc server does not yet: a 3.5.2 sender never flushes
 /// the MSG_ERROR_EXIT it queues (cleanup.c:250-254, io.c:1073-1075), so its
 /// client sees the connection close (12), while an oc sender delivers the 4,
 /// and the oc server's message does not reach that client's stderr. An oc
@@ -147,7 +147,7 @@ fn upstream_3_5_1_agrees_on_every_cell() {
 fn pull_leaves_the_refusal_to_the_remote_sender() {
     use std::os::unix::fs::PermissionsExt;
 
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let temp = fixture();
@@ -213,18 +213,18 @@ fn a_source_without_regular_files_is_copied() {
         String::from_utf8_lossy(&oc.stderr)
     );
     assert!(temp.path().join("dst/sub").is_dir());
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         let up = run(upstream.binary(), temp.path(), "none", true, "up");
         assert_eq!(
             up.status.code(),
             oc.status.code(),
-            "exit code against 3.5.1"
+            "exit code against 3.5.2"
         );
     }
 }
 
-/// A daemon's sender reaches the same default case: a 3.5.1 client pulling
-/// from an oc daemon ends as it does pulling from a 3.5.1 daemon.
+/// A daemon's sender reaches the same default case: a 3.5.2 client pulling
+/// from an oc daemon ends as it does pulling from a 3.5.2 daemon.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
@@ -232,7 +232,7 @@ fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
     use test_support::inetd_server::{InetdCommand, InetdServer};
     use test_support::oc_daemon::OcDaemon;
 
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let temp = fixture();
@@ -256,21 +256,21 @@ fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
     };
 
     let up_daemon = InetdServer::start(
-        TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind the 3.5.1 listener"),
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind the 3.5.2 listener"),
         InetdCommand::new(
             upstream.binary(),
             fs::File::create(temp.path().join("up.stderr")).expect("create stderr log"),
         )
         .arg(format!("--config={}", config.display())),
     )
-    .expect("start the 3.5.1 daemon");
+    .expect("start the 3.5.2 daemon");
     let up_port = up_daemon.port();
     let baseline = pull(up_port, "up");
     drop(up_daemon);
     assert_ne!(
         baseline.status.code(),
         Some(0),
-        "3.5.1 must refuse: {}",
+        "3.5.2 must refuse: {}",
         String::from_utf8_lossy(&baseline.stderr)
     );
 
@@ -279,7 +279,7 @@ fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
     assert_eq!(
         output.status.code(),
         baseline.status.code(),
-        "3.5.1 client from an oc daemon: {}",
+        "3.5.2 client from an oc daemon: {}",
         String::from_utf8_lossy(&output.stderr),
     );
     assert!(
@@ -289,13 +289,13 @@ fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
 }
 
 /// A push's client is the sender, so it refuses before the remote side
-/// receives anything, as a 3.5.1 client does.
+/// receives anything, as a 3.5.2 client does.
 #[cfg(unix)]
 #[test]
 fn push_refuses_in_the_local_sender() {
     use std::os::unix::fs::PermissionsExt;
 
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let temp = fixture();
@@ -318,7 +318,7 @@ fn push_refuses_in_the_local_sender() {
     assert_eq!(
         output.status.code(),
         baseline.status.code(),
-        "3.5.1: {} / oc: {}",
+        "3.5.2: {} / oc: {}",
         String::from_utf8_lossy(&baseline.stderr),
         String::from_utf8_lossy(&output.stderr),
     );

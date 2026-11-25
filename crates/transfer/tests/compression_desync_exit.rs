@@ -21,8 +21,8 @@
 //!
 //! The receiver's report is the codec's own line, then log_exit()'s trailer:
 //! `rprintf(FERROR, ...)` before `exit_cleanup(RERR_STREAMIO)` (token.c:667,
-//! token.c:902). The pull cells pin both lines and, when a 3.5.1 binary is
-//! installed, compare them with 3.5.1 at both ends.
+//! token.c:902). The pull cells pin both lines and, when a 3.5.2 binary is
+//! installed, compare them with 3.5.2 at both ends.
 //!
 //! On a push the dying server sends the client nothing but the end of its
 //! stream: its receiver exits without flushing (cleanup.c:242-257) and its
@@ -32,10 +32,10 @@
 //! 10) - and rsync itself goes either way with timing. The push cells fix the
 //! order with `order-rsh` and pin each.
 //!
-//! The oracle is 3.5.1, not 3.5.2: the cells need a peer that speaks zstd. The
-//! interop job builds both with zstd (tools/ci/run_interop.sh), but a 3.5.2
-//! built without libzstd refuses the cells' option set with `unknown compress
-//! name: zstd`, and these cells were measured against such a build.
+//! The cells need a peer that speaks zstd. The interop job builds 3.5.2 with
+//! zstd (tools/ci/run_interop.sh); a 3.5.2 built without libzstd refuses the
+//! cells' option set with `unknown compress name: zstd` and cannot serve as
+//! this oracle.
 #![cfg(unix)]
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -212,7 +212,7 @@ fn report(out: &CliOutput, role: &str) -> (String, String) {
 /// Pulls with the client decompressing `client_choice` while the server,
 /// told `server_option`, compresses with another codec. The client receiver
 /// must exit 12 at once with `expected` as its cause line, the same report
-/// 3.5.1 gives for the same desync.
+/// 3.5.2 gives for the same desync.
 fn assert_pull_desync_report(client_choice: &str, server_option: &str, expected: &str) {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
@@ -240,13 +240,13 @@ fn assert_pull_desync_report(client_choice: &str, server_option: &str, expected:
             "error in rsync protocol data stream (code 12)".to_owned()
         )
     );
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         let reference = run(upstream.binary(), tmp.path(), client_choice, &rsh, true);
         reference.assert_exit(12);
         assert_eq!(
             self::report(&reference, "receiver"),
             report,
-            "oc pull against 3.5.1 pull"
+            "oc pull against 3.5.2 pull"
         );
     }
 }
@@ -302,13 +302,13 @@ fn push_whose_write_fails_first_reports_the_write_error() {
     let (cause, message) = report(&ours, "sender");
     assert_eq!(cause, "rsync: [sender] write error: Broken pipe (32)");
     assert_eq!(message, "error in socket IO (code 10)");
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         let reference = run_from(upstream.binary(), tmp.path(), &src, "zlib", &rsh, false);
         reference.assert_exit(10);
         assert_eq!(
             report(&reference, "sender"),
             (cause, message),
-            "oc push against 3.5.1 push"
+            "oc push against 3.5.2 push"
         );
     }
 }
@@ -340,7 +340,7 @@ fn push_that_meets_the_end_of_the_stream_first_reports_it() {
         "not an end-of-stream cause: {cause}"
     );
     assert_eq!(message, "error in rsync protocol data stream (code 12)");
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         let reference = run_from(upstream.binary(), tmp.path(), &src, "zlib", &rsh, false);
         reference.assert_exit(12);
         // The byte count is compared too: both servers run with --timeout
@@ -349,7 +349,7 @@ fn push_that_meets_the_end_of_the_stream_first_reports_it() {
         assert_eq!(
             report(&reference, "sender"),
             (cause, message),
-            "oc push against 3.5.1 push"
+            "oc push against 3.5.2 push"
         );
     }
 }

@@ -5,7 +5,7 @@
 //! newer protocol than the one negotiated is `rprintf(FERROR, "filter rules are
 //! too modern for remote rsync.\n")` then `exit_cleanup(RERR_PROTOCOL)`. `-FF`
 //! adds a `dir-merge` rule, which has no protocol-28 spelling. Measured with
-//! 3.5.1 at both ends over a remote shell and against a 3.5.1 daemon: the same
+//! 3.5.2 at both ends over a remote shell and against a 3.5.2 daemon: the same
 //! two lines on a push (`[sender=...]`) and a pull (`[Receiver=...]`), and
 //! nothing from the server, whose messages are framed to the departed client
 //! at protocol 28 (compat.c:653-654).
@@ -60,8 +60,8 @@ fn normalised(out: &CliOutput) -> Vec<String> {
 }
 
 /// The client's own lines. An oc server still reports its EOF on its stderr
-/// where 3.5.1 frames it at protocol 28 (compat.c:653-654), so its
-/// `[server]` line is left out here; the 3.5.1-server cell holds the whole
+/// where 3.5.2 frames it at protocol 28 (compat.c:653-654), so its
+/// `[server]` line is left out here; the 3.5.2-server cell holds the whole
 /// stream.
 fn client_lines(out: &CliOutput) -> Vec<String> {
     normalised(out)
@@ -85,7 +85,7 @@ fn assert_refusal(push: bool, role: &str) {
         "stderr:\n{}",
         out.stderr_str()
     );
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         let against_upstream = run(&oc, upstream.binary(), tmp.path(), push);
         against_upstream.assert_exit(2);
         let reference = run(upstream.binary(), upstream.binary(), tmp.path(), push);
@@ -93,7 +93,7 @@ fn assert_refusal(push: bool, role: &str) {
         assert_eq!(
             normalised(&against_upstream),
             normalised(&reference),
-            "oc client against 3.5.1, both at a 3.5.1 server"
+            "oc client against 3.5.2, both at a 3.5.2 server"
         );
     }
 }

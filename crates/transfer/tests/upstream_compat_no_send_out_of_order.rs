@@ -1,5 +1,5 @@
 //! Cross-implementation regression: oc-rsync RECEIVER pulling from a REAL
-//! upstream rsync 3.5.0 SENDER when the sender declines a file it cannot open.
+//! upstream rsync 3.5.2 SENDER when the sender declines a file it cannot open.
 //!
 //! # Why this test exists
 //!
@@ -39,10 +39,10 @@
 //! # Gating
 //!
 //! Self-skips when `OC_RSYNC_UPSTREAM_COMPAT` is unset (keeps the standard PR
-//! nextest cell costless), when no upstream rsync 3.5.0 binary is available, and
+//! nextest cell costless), when no upstream rsync 3.5.2 binary is available, and
 //! when the running user can read a mode-000 file (root / `CAP_DAC_OVERRIDE`),
 //! which is the real precondition and is probed behaviourally. Once the gate is
-//! set and a 3.5.0 binary is present the test must RUN: a hang, a wrong exit
+//! set and a 3.5.2 binary is present the test must RUN: a hang, a wrong exit
 //! code, a desync abort, or a missing readable file is a real regression.
 //!
 //! # Upstream references
@@ -207,8 +207,8 @@ fn oc_receiver_survives_upstream_out_of_order_no_send() {
         return;
     }
 
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_0).expect(
-        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.0 is not \
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2).expect(
+        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.2 is not \
          installed; build it with `bash tools/ci/run_interop.sh` or point \
          OC_RSYNC_UPSTREAM_BIN_3_5_0 at it",
     );
@@ -240,7 +240,7 @@ fn oc_receiver_survives_upstream_out_of_order_no_send() {
     .expect("write daemon config");
 
     let (_daemon, port) = spawn_upstream_daemon(upstream.binary(), &config)
-        .expect("start upstream rsync 3.5.0 --daemon");
+        .expect("start upstream rsync 3.5.2 --daemon");
 
     // Control arm: a real upstream receiver against the same daemon. This is the
     // oracle the oc receiver must match - it lands both readable files and exits
@@ -292,7 +292,7 @@ fn oc_receiver_survives_upstream_out_of_order_no_send() {
     let Some((status, output)) = outcome else {
         panic!(
             "oc-rsync receiver did not exit within {RUN_TIMEOUT:?} pulling from an upstream \
-             3.5.0 sender that declined a file"
+             3.5.2 sender that declined a file"
         );
     };
 
@@ -343,8 +343,8 @@ fn oc_receiver_transfers_every_file_when_all_readable() {
         return;
     }
 
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_0).expect(
-        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.0 is not \
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2).expect(
+        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.2 is not \
          installed; build it with `bash tools/ci/run_interop.sh` or point \
          OC_RSYNC_UPSTREAM_BIN_3_5_0 at it",
     );
@@ -365,7 +365,7 @@ fn oc_receiver_transfers_every_file_when_all_readable() {
     .expect("write daemon config");
 
     let (_daemon, port) = spawn_upstream_daemon(upstream.binary(), &config)
-        .expect("start upstream rsync 3.5.0 --daemon");
+        .expect("start upstream rsync 3.5.2 --daemon");
 
     let dest = root.join("dest");
     fs::create_dir_all(&dest).expect("create dest");

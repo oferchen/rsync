@@ -12,8 +12,8 @@
 //!
 //! The `signal-rsh` trampoline signals the server once a fixed number of
 //! bytes has crossed the wire, then keeps relaying: the point of delivery is
-//! a byte offset, not a sleep. Oracle (rsync 3.5.1 server, same cells, with
-//! the 3.5.1 and the oc client): exit 20, no `.z.*` temp left, a shortened
+//! a byte offset, not a sleep. Oracle (rsync 3.5.2 server, same cells, with
+//! the 3.5.2 and the oc client): exit 20, no `.z.*` temp left, a shortened
 //! `z` only with `--partial`.
 
 #![cfg(unix)]
@@ -133,7 +133,7 @@ fn temps(dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Asserts the 3.5.1 outcome for one cell.
+/// Asserts the 3.5.2 outcome for one cell.
 fn assert_signalled(client: &Path, cell: &Cell) {
     let dir = test_support::create_tempdir();
     let source = source_tree(dir.path());
@@ -189,18 +189,18 @@ fn assert_signalled(client: &Path, cell: &Cell) {
     );
 }
 
-/// The clients the cells run under: oc, and 3.5.1 when it is installed.
+/// The clients the cells run under: oc, and 3.5.2 when it is installed.
 ///
-/// A 3.5.1 binary that resolves but fails the banner check would silently
+/// A 3.5.2 binary that resolves but fails the banner check would silently
 /// drop its cells, so it fails the test instead of skipping it.
 fn clients() -> Vec<PathBuf> {
     let mut clients = vec![test_support::oc_rsync_bin()];
-    let located = locate_upstream_rsync(UpstreamVersion::V3_5_1);
-    match require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    let located = locate_upstream_rsync(UpstreamVersion::V3_5_2);
+    match require_upstream_rsync(UpstreamVersion::V3_5_2) {
         Some(upstream) => clients.push(upstream.binary().to_path_buf()),
         None => assert!(
             located.is_none(),
-            "3.5.1 at {located:?} was found but rejected; its cells would not run"
+            "3.5.2 at {located:?} was found but rejected; its cells would not run"
         ),
     }
     clients
@@ -256,7 +256,7 @@ fn sigint_to_a_pull_server_leaves_the_client_partial() {
 /// starts; a signal during the version exchange takes rsync.c:871's
 /// immediate exit_cleanup(RERR_SIGNAL). 8 client bytes are the version
 /// plus the first post-version word, so the server is signalled before any
-/// file data. Oracle: 3.5.1 and oc servers both exit 20, nothing created.
+/// file data. Oracle: 3.5.2 and oc servers both exit 20, nothing created.
 #[test]
 fn sigint_during_the_handshake_exits_20_without_a_file() {
     for client in clients() {
@@ -278,11 +278,11 @@ fn sigint_during_the_handshake_exits_20_without_a_file() {
     }
 }
 
-/// Pins that the cells above ran under 3.5.1 too when it is installed, so a
+/// Pins that the cells above ran under 3.5.2 too when it is installed, so a
 /// lookup regression cannot turn the upstream half into a silent pass.
 #[test]
 fn the_cells_run_under_both_clients_when_3_5_1_is_installed() {
-    let expected = 1 + usize::from(locate_upstream_rsync(UpstreamVersion::V3_5_1).is_some());
+    let expected = 1 + usize::from(locate_upstream_rsync(UpstreamVersion::V3_5_2).is_some());
     assert_eq!(
         each_client(&Cell::new(true, Keep::Nothing)),
         expected,

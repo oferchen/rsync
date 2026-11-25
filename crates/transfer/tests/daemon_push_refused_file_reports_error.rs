@@ -27,7 +27,7 @@
 //! Both file-list modes are covered: incremental recursion (the protocol-32
 //! default) and `--no-inc-recursive`.
 //!
-//! When an upstream rsync 3.4.4 is available the same push is driven by it, so
+//! When an upstream rsync 3.5.2 is available the same push is driven by it, so
 //! the assertions are anchored to a real peer rather than to oc-on-oc, which
 //! would hide a symmetric divergence.
 //!
@@ -154,10 +154,10 @@ fn run_client(bin: &Path, args: &[&str]) -> io::Result<(i32, String)> {
     ))
 }
 
-/// Locates the upstream rsync 3.4.4 oracle (protocol 32) through
+/// Locates the upstream rsync 3.5.2 oracle (protocol 32) through
 /// `test_support::require_upstream_rsync`, which checks its `--version` banner.
 fn upstream_rsync() -> Option<PathBuf> {
-    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
         .map(|upstream| upstream.binary().to_path_buf())
 }
 

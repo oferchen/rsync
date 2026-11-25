@@ -9,7 +9,7 @@
 //!
 //! At protocol 30+ the client always has one, because `maybe_add_e_option()`
 //! appends the `-e.` capability letters. Below 30 nothing is appended, so a
-//! flagless push sends `rsync --server . DEST`. 3.5.1's server parses that argv
+//! flagless push sends `rsync --server . DEST`. 3.5.2's server parses that argv
 //! with the same popt table as any other, consumes `.` as its chdir slot and
 //! DEST as the destination (main.c:1207-1214 `do_server_recv()`), and
 //! transfers. The oc server used to refuse it with "missing rsync server flag
@@ -116,7 +116,7 @@ fn oc_client_cell(protocol: u8) {
 }
 
 fn upstream_client_cell(protocol: u8) {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let argv = flagless_push(upstream.binary(), protocol);
