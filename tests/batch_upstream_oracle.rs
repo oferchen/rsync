@@ -1445,8 +1445,8 @@ fn local_batch_carries_named_acl_entries_like_upstream() {
         eprintln!("skip: {reason}");
         return;
     }
-    if !test_support::skip::require_command_on_path("setfacl")
-        || !test_support::skip::require_command_on_path("getfacl")
+    if test_support::require_tool("setfacl").is_none()
+        || test_support::require_tool("getfacl").is_none()
     {
         return;
     }
@@ -1459,7 +1459,7 @@ fn local_batch_carries_named_acl_entries_like_upstream() {
             .is_ok_and(|s| s.success())
     };
     if !named(&["-m", "u:65534:r-x"], "src/a.txt") {
-        eprintln!("skip: the temp filesystem does not take a named ACL entry");
+        test_support::capability_missing("the temp filesystem does not take a named ACL entry");
         return;
     }
     let decorate = |fx: &Fixture| {
@@ -1566,8 +1566,8 @@ fn local_batch_carries_xattrs_like_upstream() {
         eprintln!("skip: {reason}");
         return;
     }
-    if !test_support::skip::require_command_on_path("setfattr")
-        || !test_support::skip::require_command_on_path("getfattr")
+    if test_support::require_tool("setfattr").is_none()
+        || test_support::require_tool("getfattr").is_none()
     {
         return;
     }
@@ -1595,7 +1595,7 @@ fn local_batch_carries_xattrs_like_upstream() {
             })
     };
     if !decorate(&Fixture::new(), true) {
-        eprintln!("skip: the temp filesystem does not take user xattrs");
+        test_support::capability_missing("the temp filesystem does not take user xattrs");
         return;
     }
     let modes = [&["-rX"][..], &["-rX", "--no-inc-recursive"]];

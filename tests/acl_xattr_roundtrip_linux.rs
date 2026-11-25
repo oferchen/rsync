@@ -31,8 +31,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use integration::acl_xattr_interop_harness::{
-    GATE_ENV_VAR, MetadataRecord, aax_args, command_on_path, diff_snapshots, gate_enabled,
-    locate_oc_rsync, make_scratch, run_rsync, skip, snapshot,
+    GATE_ENV_VAR, MetadataRecord, aax_args, diff_snapshots, gate_enabled, locate_oc_rsync,
+    make_scratch, run_rsync, skip, snapshot,
 };
 
 /// Tools the Linux fixture needs in `PATH`. Missing any of them -> skip.
@@ -119,13 +119,11 @@ impl TestContext {
             ));
             return None;
         }
-        for tool in REQUIRED_TOOLS {
-            if !command_on_path(tool) {
-                skip(&format!(
-                    "required tool not on PATH: {tool} (install acl + attr packages)"
-                ));
-                return None;
-            }
+        if REQUIRED_TOOLS
+            .iter()
+            .any(|tool| test_support::require_tool(tool).is_none())
+        {
+            return None;
         }
         let oc_bin = locate_oc_rsync();
 
@@ -138,7 +136,7 @@ impl TestContext {
         };
 
         if let Err(reason) = build_fixture(&src) {
-            skip(&format!(
+            test_support::capability_missing(&format!(
                 "fixture build failed (likely no ACL/xattr support on tmpfs): {reason}"
             ));
             return None;

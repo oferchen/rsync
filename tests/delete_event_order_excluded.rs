@@ -11,8 +11,8 @@
 //! Each (timing-mode, --delete-excluded) combination layers the timing-mode
 //! ordering invariant on top of the per-directory parity check.
 //!
-//! GATE: `OC_RSYNC_DELETE_INTEROP=1`. Will fail on master until DDP-E1-E5
-//! lands.
+//! GATE: `OC_RSYNC_DELETE_INTEROP=1`, which the interop job's oracle step
+//! sets. The cell also needs `strace` on PATH.
 
 #![cfg(unix)]
 

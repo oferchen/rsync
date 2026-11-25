@@ -66,15 +66,6 @@ fn locate_upstream_rsync() -> Option<PathBuf> {
         .map(|oracle| oracle.binary().to_path_buf())
 }
 
-fn dd_available() -> bool {
-    Command::new("sh")
-        .arg("-c")
-        .arg("command -v dd >/dev/null 2>&1")
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 /// Write the `--rsh` shim. Receives the SSH-style argv
 /// `[<host>, "rsync", "--server", "--sender", ...]` from oc-rsync, drops the
 /// host, replaces the literal `rsync` token with the real upstream binary, and
@@ -173,8 +164,7 @@ fn delete_during_survives_sender_stream_truncation() {
     let Some(upstream) = locate_upstream_rsync() else {
         return;
     };
-    if !dd_available() {
-        eprintln!("skipping #1895 interop: `dd` not on PATH");
+    if test_support::require_tool("dd").is_none() {
         return;
     }
     let oc_rsync = oc_rsync_binary();

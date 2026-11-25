@@ -58,8 +58,8 @@ pub use transcript::{TranscriptError, TranscriptRecorder, WireTranscript};
 #[cfg(unix)]
 pub use umask::umask_masked;
 pub use upstream_compat::{
-    UpstreamRsync, UpstreamVersion, locate_upstream_rsync, require_upstream_rsync,
-    upstream_compat_enabled, upstream_install_bin, workspace_root,
+    UpstreamRsync, UpstreamVersion, capability_missing, locate_upstream_rsync, require_tool,
+    require_upstream_rsync, upstream_compat_enabled, upstream_install_bin, workspace_root,
 };
 
 use std::path::PathBuf;

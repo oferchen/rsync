@@ -14,11 +14,12 @@ use std::process::Command;
 
 use test_support::{UpstreamVersion, require_upstream_rsync};
 
-fn has_tool(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("--version")
-        .output()
-        .is_ok_and(|out| out.status.success())
+/// Resolves every tool through `test_support::require_tool`, which fails the
+/// cell under `OC_RSYNC_UPSTREAM_COMPAT=1` and skips it otherwise.
+fn has_tools(tools: &[&str]) -> bool {
+    tools
+        .iter()
+        .all(|tool| test_support::require_tool(tool).is_some())
 }
 
 fn setfacl(args: &[&str], path: &Path) -> bool {
@@ -60,8 +61,7 @@ fn fake_super_server_stashes_directory_and_up_to_date_file_acls() {
     let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
-    if !["setfacl", "getfacl", "getfattr"].into_iter().all(has_tool) {
-        eprintln!("skipping: acl/attr tools not installed");
+    if !has_tools(&["setfacl", "getfacl", "getfattr"]) {
         return;
     }
     let temp = tempfile::tempdir().unwrap();
@@ -73,7 +73,7 @@ fn fake_super_server_stashes_directory_and_up_to_date_file_acls() {
         || !setfacl(&["-d", "-m", "u:nobody:rx"], &src.join("d"))
         || !setfacl(&["-m", "u:nobody:r"], &src.join("d/f"))
     {
-        eprintln!("skipping: the filesystem refuses POSIX ACLs");
+        test_support::capability_missing("the filesystem refuses POSIX ACLs");
         return;
     }
     // A remote shell that runs the server locally, like support/lsh.sh.

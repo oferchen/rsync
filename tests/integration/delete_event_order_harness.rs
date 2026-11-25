@@ -163,7 +163,7 @@ pub fn run_pair_capture(
             "{GATE_ENV_VAR} not set to 1; opt in to run delete-mode interop tests"
         )));
     }
-    if !command_on_path("strace") {
+    if test_support::require_tool("strace").is_none() {
         return Ok(PairOutcome::Skipped(
             "strace not found on PATH; required for syscall capture".to_string(),
         ));
@@ -562,16 +562,6 @@ pub fn first_index<F: FnMut(&Event) -> bool>(events: &[Event], pred: F) -> Optio
 /// Index of the last event matching `pred`, or `None` if no such event.
 pub fn last_index<F: FnMut(&Event) -> bool>(events: &[Event], pred: F) -> Option<usize> {
     events.iter().rposition(pred)
-}
-
-/// Check `command -v <cmd>` on PATH.
-pub fn command_on_path(cmd: &str) -> bool {
-    Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {cmd} >/dev/null 2>&1"))
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 /// Locates the binary under test.

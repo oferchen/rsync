@@ -217,6 +217,44 @@ pub fn require_upstream_rsync(version: UpstreamVersion) -> Option<UpstreamRsync>
     Some(UpstreamRsync { binary, version })
 }
 
+/// Locates external tool `name` that an oracle cell needs, such as `strace`,
+/// `setfacl` or `setfattr`.
+///
+/// Under `OC_RSYNC_UPSTREAM_COMPAT=1` a missing tool panics with its name, so
+/// the oracle step cannot count the cell as passed. Without it the resolver's
+/// skip line is printed and `None` returned. Root-only and platform-gated
+/// cells keep their own skips; this covers what the host must provide.
+#[must_use]
+pub fn require_tool(name: &str) -> Option<PathBuf> {
+    resolve_tool(name, upstream_compat_enabled())
+}
+
+/// Reports a host capability an oracle cell needs but the host lacks, such
+/// as a filesystem that refuses ACLs or user xattrs. Same rule as
+/// [`require_tool`]: a panic naming `reason` under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1`, the resolver's skip line otherwise. The
+/// caller returns after it.
+pub fn capability_missing(reason: &str) {
+    let _: Option<()> = prerequisite_missing(reason, upstream_compat_enabled());
+}
+
+fn resolve_tool(name: &str, required: bool) -> Option<PathBuf> {
+    crate::skip::locate_command_on_path(name).or_else(|| {
+        prerequisite_missing(&format!("required tool `{name}` is not on PATH"), required)
+    })
+}
+
+/// A missing tool or capability: a skip line and `None` when `required` is
+/// false, a panic naming `reason` when it is true.
+fn prerequisite_missing<T>(reason: &str, required: bool) -> Option<T> {
+    assert!(
+        !required,
+        "oracle cell prerequisite missing (OC_RSYNC_UPSTREAM_COMPAT=1): {reason}"
+    );
+    eprintln!("Skipping upstream-compat test: {reason}");
+    None
+}
+
 /// Reports an unusable oracle: a skip line and `None` when `required` is
 /// false, a panic naming `reason` when it is true.
 fn oracle_unavailable<T>(reason: &str, required: bool) -> Option<T> {
@@ -266,6 +304,38 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).starts_with(&root),
             "workspace root must be an ancestor of the consuming manifest dir"
         );
+    }
+
+    #[test]
+    fn a_present_tool_resolves_to_its_path() {
+        // Why: the helper must not refuse a tool that is there; `sh` is on
+        // every Unix PATH the oracle step runs under.
+        if cfg!(unix) {
+            let sh = resolve_tool("sh", true).expect("sh resolves");
+            assert!(sh.is_file(), "{} must be a file", sh.display());
+        }
+    }
+
+    #[test]
+    fn a_missing_tool_skips_when_not_required() {
+        // Why: local runs without strace or the acl/attr tools keep passing.
+        assert!(resolve_tool("oc-rsync-no-such-tool-xyzzy", false).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "required tool `oc-rsync-no-such-tool-xyzzy` is not on PATH")]
+    fn a_missing_tool_fails_when_required() {
+        // Why: under OC_RSYNC_UPSTREAM_COMPAT=1 a missing tool must fail the
+        // cell and name the tool, not let it count as a pass.
+        let _ = resolve_tool("oc-rsync-no-such-tool-xyzzy", true);
+    }
+
+    #[test]
+    #[should_panic(expected = "the filesystem refuses POSIX ACLs")]
+    fn a_missing_capability_fails_when_required() {
+        // Why: a fixture that cannot set ACLs or xattrs is a missing
+        // capability and must fail the same way as a missing tool.
+        let _: Option<()> = prerequisite_missing("the filesystem refuses POSIX ACLs", true);
     }
 
     #[test]

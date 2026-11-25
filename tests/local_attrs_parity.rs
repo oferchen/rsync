@@ -140,7 +140,7 @@ fn has_capability(name: &str, tools: &[&str]) -> bool {
     }
     tools
         .iter()
-        .all(|tool| test_support::skip::require_command_on_path(tool))
+        .all(|tool| test_support::require_tool(tool).is_some())
 }
 
 /// One copy: its name, arguments, the destination directory to read, and a
@@ -161,7 +161,9 @@ fn assert_cells_match(
         for (name, bin) in implementations() {
             let fx = Fixture::new();
             if !decorate(&fx) {
-                eprintln!("skip: the temp filesystem does not take the attributes");
+                test_support::capability_missing(
+                    "the temp filesystem does not take the attributes",
+                );
                 return;
             }
             let out = fx.run(&bin, args);
@@ -250,7 +252,7 @@ fn local_itemize_reports_xattr_drift_like_upstream() {
     for (name, bin) in implementations() {
         let fx = Fixture::new();
         if !fx.tool("setfattr", &["-n", "user.x", "-v", "1"], "src/a.txt") {
-            eprintln!("skip: the temp filesystem does not take user xattrs");
+            test_support::capability_missing("the temp filesystem does not take user xattrs");
             return;
         }
         let out = fx.run(&bin, &["-rX", "src/", "dst/"]);
@@ -289,7 +291,7 @@ fn local_xattr_prune_like_upstream() {
     for (name, bin) in implementations() {
         let fx = Fixture::new();
         if !fx.tool("setfattr", &["-n", "user.keep", "-v", "1"], "src/sub") {
-            eprintln!("skip: the temp filesystem does not take user xattrs");
+            test_support::capability_missing("the temp filesystem does not take user xattrs");
             return;
         }
         let out = fx.run(&bin, &["-rX", "src/", "dst/"]);

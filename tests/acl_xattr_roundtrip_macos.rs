@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use integration::acl_xattr_interop_harness::{
-    GATE_ENV_VAR, MetadataRecord, aax_args, command_on_path, diff_snapshots, gate_enabled,
-    locate_oc_rsync, make_scratch, run_rsync, skip, snapshot,
+    GATE_ENV_VAR, MetadataRecord, aax_args, diff_snapshots, gate_enabled, locate_oc_rsync,
+    make_scratch, run_rsync, skip, snapshot,
 };
 
 /// macOS Finder requires exactly 32 bytes for `com.apple.FinderInfo`. We
@@ -123,10 +123,7 @@ impl TestContext {
             ));
             return None;
         }
-        if !command_on_path("xattr") {
-            skip("xattr not on PATH (ship with macOS base; check PATH sanitisation)");
-            return None;
-        }
+        test_support::require_tool("xattr")?;
         let oc_bin = locate_oc_rsync();
 
         let (dir, src, dst1, dst2) = match make_scratch() {
@@ -138,7 +135,7 @@ impl TestContext {
         };
 
         if let Err(reason) = build_fixture(&src) {
-            skip(&format!(
+            test_support::capability_missing(&format!(
                 "fixture build failed (filesystem may not preserve Apple xattrs): {reason}"
             ));
             return None;

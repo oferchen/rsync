@@ -132,7 +132,7 @@ fn mode_tree(root: &Path) -> bool {
     let src = root.join("src");
     fs::create_dir_all(&src).expect("create src");
     if xattr::set(&src, "user.probe", b"1").is_err() {
-        eprintln!("skipping: the filesystem rejects user xattrs");
+        test_support::capability_missing("the filesystem rejects user xattrs");
         return false;
     }
     let _ = xattr::remove(&src, "user.probe");
@@ -513,7 +513,7 @@ fn a_device_placeholder_operand_updates_an_existing_device() {
             fs::write(&path, b"").expect("write placeholder");
             let record = format!("60644 {rdev} {uid}:{gid}");
             if xattr::set(&path, FAKE_SUPER_XATTR, record.as_bytes()).is_err() {
-                eprintln!("skipping: the filesystem refuses user xattrs");
+                test_support::capability_missing("the filesystem refuses user xattrs");
                 return;
             }
         }
@@ -671,7 +671,7 @@ fn a_failing_daemon_receiver_reports_like_upstream() {
             let dest = root.join("dst/f");
             fs::write(&dest, b"old\n").expect("write destination");
             if xattr::set(&dest, FAKE_SUPER_XATTR, b"garbage").is_err() {
-                eprintln!("skipping: the filesystem refuses user xattrs");
+                test_support::capability_missing("the filesystem refuses user xattrs");
                 return;
             }
             backdate(&root.join("dst"));
