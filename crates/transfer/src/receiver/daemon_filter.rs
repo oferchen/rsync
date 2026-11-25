@@ -59,10 +59,17 @@ impl DaemonFilterGate {
     ///
     /// `merge_configs` is what the caller decided is live for this pass - empty
     /// when the delete pass is not running, per this module's header.
+    ///
+    /// `module_root` is the daemon module's directory. A rule written with a
+    /// slash is an absolute-path rule (`XFLG_ABS_IF_SLASH`), and
+    /// rule_matches() tests it against `curr_dir + module_dirlen + 1` joined
+    /// to the name, so it is anchored at the module root, not at `/`
+    /// (exclude.c:1022-1027).
     pub(in crate::receiver) fn new(
         globals: Option<&FilterSet>,
         merge_configs: &[DirMergeConfig],
         dest_dir: &Path,
+        module_root: Option<&Path>,
     ) -> Option<Self> {
         if globals.is_none() && merge_configs.is_empty() {
             return None;
@@ -74,6 +81,9 @@ impl DaemonFilterGate {
         // upstream: exclude.c:297-304 add_rule() - a leading-`/` rule read from a per-dir
         // merge file is re-anchored to that file's directory relative to the
         // module root, which is what the transfer root records here.
+        if let Some(root) = module_root {
+            prototype.set_module_root(root);
+        }
         prototype.set_transfer_root(dest_dir.to_path_buf());
         Some(Self {
             prototype,
@@ -190,7 +200,7 @@ mod tests {
     #[test]
     fn a_dir_merge_refuses_the_name_only_the_merge_file_names() {
         let dest = dest_with_merge_file();
-        let mut gate = DaemonFilterGate::new(None, &merge_configs(), dest.path())
+        let mut gate = DaemonFilterGate::new(None, &merge_configs(), dest.path(), None)
             .expect("a merge directive alone builds a gate");
 
         assert!(
@@ -212,7 +222,7 @@ mod tests {
     #[test]
     fn a_merge_file_does_not_reach_outside_its_directory() {
         let dest = dest_with_merge_file();
-        let mut gate = DaemonFilterGate::new(None, &merge_configs(), dest.path())
+        let mut gate = DaemonFilterGate::new(None, &merge_configs(), dest.path(), None)
             .expect("a merge directive alone builds a gate");
 
         assert!(
@@ -230,7 +240,7 @@ mod tests {
     #[test]
     fn the_verdict_follows_the_directory_back_and_forth() {
         let dest = dest_with_merge_file();
-        let mut gate = DaemonFilterGate::new(None, &merge_configs(), dest.path())
+        let mut gate = DaemonFilterGate::new(None, &merge_configs(), dest.path(), None)
             .expect("a merge directive alone builds a gate");
 
         assert!(!gate.allows("sub/bait.txt", false));
@@ -251,7 +261,7 @@ mod tests {
         let dest = dest_with_merge_file();
         let globals =
             FilterSet::from_rules(vec![FilterRule::exclude("plain.txt")]).expect("compiles");
-        let mut gate = DaemonFilterGate::new(Some(&globals), &[], dest.path())
+        let mut gate = DaemonFilterGate::new(Some(&globals), &[], dest.path(), None)
             .expect("plain rules alone build a gate");
 
         assert!(
@@ -264,11 +274,55 @@ mod tests {
         );
     }
 
+    /// An anchored module rule is matched against the module-relative path,
+    /// whichever module directory the push lands in.
+    ///
+    /// MEASURED against a rsync 3.5.2 daemon with `exclude = /a1` and
+    /// `exclude = /d/a1`: a push of `a1` and `d/a1` into the module root, and
+    /// of `a1` into `mod/d/`, ends `ERROR: daemon refused to receive file`
+    /// for each excluded name, exit 23. upstream: clientserver.c:937-956
+    /// parses the rules with `XFLG_ABS_IF_SLASH`, and rule_matches() prefixes
+    /// an absolute rule's name with `curr_dir + module_dirlen + 1`
+    /// (exclude.c:1022-1027).
+    #[test]
+    fn an_anchored_rule_matches_relative_to_the_module_root() {
+        let module = tempfile::tempdir().expect("tempdir");
+        let sub = module.path().join("d");
+        fs::create_dir_all(&sub).expect("create d");
+        let globals = FilterSet::from_rules(vec![
+            FilterRule::exclude("/a1").with_abs_path(true),
+            FilterRule::exclude("/d/a1").with_abs_path(true),
+        ])
+        .expect("compiles");
+
+        let mut root =
+            DaemonFilterGate::new(Some(&globals), &[], module.path(), Some(module.path()))
+                .expect("plain rules build a gate");
+        assert!(!root.allows("a1", false), "/a1 names the module's a1");
+        assert!(!root.allows("d/a1", false), "/d/a1 names the module's d/a1");
+        assert!(root.allows("keep", false), "an unnamed sibling is kept");
+        assert!(
+            root.allows("d/keep", false),
+            "an unnamed nested sibling is kept"
+        );
+
+        let mut nested = DaemonFilterGate::new(Some(&globals), &[], &sub, Some(module.path()))
+            .expect("plain rules build a gate");
+        assert!(
+            !nested.allows("a1", false),
+            "a1 under mod/d/ is the module's d/a1"
+        );
+        assert!(
+            nested.allows("d/a1", false),
+            "mod/d/d/a1 is not named by either rule"
+        );
+    }
+
     /// A module that declares nothing has no gate, so the passes skip the probe
     /// entirely.
     #[test]
     fn an_empty_module_builds_no_gate() {
         let dest = dest_with_merge_file();
-        assert!(DaemonFilterGate::new(None, &[], dest.path()).is_none());
+        assert!(DaemonFilterGate::new(None, &[], dest.path(), None).is_none());
     }
 }

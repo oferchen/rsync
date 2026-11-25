@@ -473,7 +473,27 @@ impl GeneratorContext {
         // upstream: flist.c:2676 - link_stat() once, then pass &st to
         // send_file_name(). Reuse the metadata to avoid a redundant stat
         // inside walk_path_with_metadata.
-        match self.resolve_symlink_metadata(path, base, is_dotdir) {
+        // upstream: flist.c:2948-2950 - after the stat, an operand the daemon
+        // module hides fails with `errno = ENOENT` (exclude.c:1112-1114), so it
+        // takes the missing-operand path below: `link_stat ... failed`, or the
+        // --ignore/--delete-missing-args handling. A DOTDIR operand is exempt
+        // (`name_type != DOTDIR_NAME`).
+        let resolved = self
+            .resolve_symlink_metadata(path, base, is_dotdir)
+            .and_then(|metadata| {
+                if !is_dotdir
+                    && self.filter_chain.daemon_hides_operand(
+                        path,
+                        metadata.is_dir(),
+                        self.config.flags.relative,
+                    )
+                {
+                    Err(io::Error::from_raw_os_error(libc::ENOENT))
+                } else {
+                    Ok(metadata)
+                }
+            });
+        match resolved {
             Ok(metadata) => {
                 // upstream: flist.c:2974-2977 - a directory argument is dropped
                 // before any implied parent is emitted when `xfer_dirs` is off.

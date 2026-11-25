@@ -1494,7 +1494,12 @@ impl ReceiverContext {
         } else {
             &[]
         };
-        DaemonFilterGate::new(self.daemon_filter_set.as_ref(), merge_configs, dest_dir)
+        DaemonFilterGate::new(
+            self.daemon_filter_set.as_ref(),
+            merge_configs,
+            dest_dir,
+            self.config.connection.served_module_root(),
+        )
     }
 
     /// Reclaims heap data from the oldest unreclaimed INC_RECURSE segment.
