@@ -145,7 +145,7 @@ pub fn interleave_pattern(output: &str, names: &HashSet<String>) -> String {
 /// True when a pattern is a non-empty `NP` repeated (each name immediately
 /// followed by its progress line, with at least one transferred file).
 pub fn is_good(pat: &str) -> bool {
-    if pat.is_empty() || pat.len() % 2 != 0 || !pat.contains('P') {
+    if pat.is_empty() || !pat.len().is_multiple_of(2) || !pat.contains('P') {
         return false;
     }
     pat.bytes().enumerate().all(|(i, b)| {

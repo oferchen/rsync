@@ -313,7 +313,7 @@ impl RsyncAcl {
             return None;
         }
         let names_len = buf.len() - 16;
-        if names_len % 8 != 0 {
+        if !names_len.is_multiple_of(8) {
             return None;
         }
         let count = names_len / 8;
