@@ -225,6 +225,8 @@ jobs:
       run: python3 tools/ci/dead_code_census.py gate
     - name: Two-owner FFI dependency gate
       run: python3 tools/ci/unsafe_owner_deps.py gate
+    - name: Debug-profile debuginfo gate
+      run: python3 tools/ci/ci_debuginfo.py gate
   surface-diff:
     name: surface diff (upstream 3.5.2)
     needs: changes
