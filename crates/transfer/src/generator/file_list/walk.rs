@@ -488,7 +488,10 @@ impl GeneratorContext {
                         self.config.flags.relative,
                     )
                 {
-                    Err(io::Error::from_raw_os_error(libc::ENOENT))
+                    // ENOENT is 2 on every Unix this builds for, and raw 2
+                    // is ERROR_FILE_NOT_FOUND on Windows; both map to
+                    // `NotFound`, so the missing-operand arm below takes it.
+                    Err(io::Error::from_raw_os_error(2))
                 } else {
                     Ok(metadata)
                 }

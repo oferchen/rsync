@@ -74,6 +74,11 @@ const TRANSPORTS: [Transport; 2] = [Transport::Tcp, Transport::RemoteShell];
 #[derive(Clone, Copy, Debug)]
 enum Op {
     Push,
+    /// Push into `mod/blink/`, an in-module symlink to `d/`.
+    PushThroughAlias,
+    /// Push into `mod/out/`, an in-module symlink to a directory outside
+    /// the module.
+    PushThroughEscape,
     PullAll,
     PullOperand(&'static str),
 }
@@ -142,6 +147,15 @@ fn transfer(
     seed(&module, "OLD");
     match op {
         Op::Push => seed(&src, "NEWER"),
+        Op::PushThroughAlias => {
+            seed(&src, "NEWER");
+            std::os::unix::fs::symlink("d/", module.join("blink")).unwrap();
+        }
+        Op::PushThroughEscape => {
+            seed(&src, "NEWER");
+            seed(&root.join("outside"), "OLD");
+            std::os::unix::fs::symlink(root.join("outside"), module.join("out")).unwrap();
+        }
         Op::PullAll | Op::PullOperand(_) => fs::create_dir_all(&dst).unwrap(),
     }
     let config = root.join("rsyncd.conf");
@@ -159,6 +173,8 @@ fn transfer(
 
     let path = match op {
         Op::Push | Op::PullAll => String::new(),
+        Op::PushThroughAlias => "blink/".to_owned(),
+        Op::PushThroughEscape => "out/".to_owned(),
         Op::PullOperand(name) => name.to_owned(),
     };
     let mut command = Command::new(client);
@@ -192,7 +208,9 @@ fn transfer(
         }
     };
     match op {
-        Op::Push => command.arg(format!("{}/", src.display())).arg(remote),
+        Op::Push | Op::PushThroughAlias | Op::PushThroughEscape => {
+            command.arg(format!("{}/", src.display())).arg(remote)
+        }
         Op::PullAll | Op::PullOperand(_) => command.arg(remote).arg(format!("{}/", dst.display())),
     };
     let (status, stderr) = match run_deadlined(&mut command, BUDGET).unwrap() {
@@ -209,10 +227,10 @@ fn transfer(
     Outcome {
         status,
         stderr: normalise(&stderr, &root),
-        tree: tree(if matches!(op, Op::Push) {
-            &module
-        } else {
-            &dst
+        tree: tree(&match op {
+            Op::PushThroughEscape => root.join("outside"),
+            Op::Push | Op::PushThroughAlias => module,
+            Op::PullAll | Op::PullOperand(_) => dst,
         }),
     }
 }
@@ -315,4 +333,61 @@ fn pull_of_the_module_omits_hidden_names_silently() {
             );
         }
     });
+}
+
+/// A push into an in-module symlink is judged by the alias path, not the
+/// target. upstream: util1.c change_dir() appends the spelled destination to
+/// `curr_dir`, so pushing to `mod/blink/` (`blink -> d/`) names `blink/a1`,
+/// which `/d/a1` does not match, and rsync 3.5.2 writes `d/a1` through the
+/// link. The unanchored control `a1` still refuses it by basename.
+#[test]
+fn push_through_an_in_module_symlink_is_judged_by_the_alias_name() {
+    each_cell(Op::PushThroughAlias, |rule, outcome| {
+        let context = format!("alias push with `{}`: {outcome:#?}", rule.directive);
+        let unanchored = !rule.directive.contains('/');
+        assert_eq!(
+            outcome.status,
+            Some(if unanchored { 23 } else { 0 }),
+            "{context}"
+        );
+        let landed = if unanchored { "OLD" } else { "NEWER" };
+        assert!(
+            outcome.tree.contains(&format!("d/a1={landed}")),
+            "{context}"
+        );
+        assert!(outcome.tree.contains(&"a1=OLD".to_owned()), "{context}");
+        assert!(outcome.tree.contains(&"keep=OLD".to_owned()), "{context}");
+    });
+}
+
+/// An in-module symlink that leaves the module is never written through,
+/// whatever the module's rules say. This pins the confinement the daemon had
+/// before the alias change: the push fails and the outside tree keeps its
+/// content. rsync 3.5.2 also refuses (change_dir#1 ... Too many levels of
+/// symbolic links, exit 3); oc's exit code and text for this refusal differ
+/// and are tracked separately, so only the outcome is compared here.
+#[test]
+fn push_through_a_symlink_leaving_the_module_is_refused() {
+    let client = require_upstream_rsync(UpstreamVersion::V3_5_2)
+        .map(|u| u.binary().to_path_buf())
+        .unwrap_or_else(oc_rsync);
+    for rule in &RULES {
+        for transport in TRANSPORTS {
+            let outcome = transfer(
+                &client,
+                &oc_rsync(),
+                rule.directive,
+                transport,
+                Op::PushThroughEscape,
+            );
+            let context = format!(
+                "escape push with `{}` over {transport:?}: {outcome:#?}",
+                rule.directive
+            );
+            assert_ne!(outcome.status, Some(0), "{context}");
+            for name in NAMES {
+                assert!(outcome.tree.contains(&format!("{name}=OLD")), "{context}");
+            }
+        }
+    }
 }

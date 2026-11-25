@@ -81,10 +81,10 @@ impl DaemonFilterGate {
         // upstream: exclude.c:297-304 add_rule() - a leading-`/` rule read from a per-dir
         // merge file is re-anchored to that file's directory relative to the
         // module root, which is what the transfer root records here.
-        if let Some(root) = module_root {
-            prototype.set_module_root(root);
-        }
         prototype.set_transfer_root(dest_dir.to_path_buf());
+        if let Some(root) = module_root {
+            anchor_at_module_root(&mut prototype, dest_dir, root);
+        }
         Some(Self {
             prototype,
             dest_dir: dest_dir.to_path_buf(),
@@ -160,6 +160,28 @@ impl DaemonFilterGate {
             .expect("the directory was just loaded")
             .1
     }
+}
+
+/// Anchors the chain's absolute-path rules at the module root, judging the
+/// destination by the path as spelled.
+///
+/// upstream: util1.c change_dir() builds `curr_dir` by appending the
+/// destination string to the module directory, which is itself only cleaned
+/// (clientserver.c:920-922); no symlink is resolved. rule_matches() then skips
+/// `module_dirlen + 1` bytes of that string (exclude.c:1022-1027). So a push
+/// into an in-module symlink is judged by the alias name, not its target. The
+/// receiver's destination is the module `path` joined with the client's
+/// path, so the spelled destination is always below the spelled root.
+fn anchor_at_module_root(chain: &mut FilterChain, dest_dir: &Path, module_root: &Path) {
+    let spelled = |path: &Path| {
+        filters::collapse_dot_dot_dirs(
+            &std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()),
+        )
+    };
+    chain.set_abs_root(filters::abs_rule_root(
+        &spelled(dest_dir),
+        Some(&spelled(module_root)),
+    ));
 }
 
 #[cfg(test)]
@@ -315,6 +337,42 @@ mod tests {
         assert!(
             nested.allows("d/a1", false),
             "mod/d/d/a1 is not named by either rule"
+        );
+    }
+
+    /// A push into an in-module symlink is judged by the alias path, as
+    /// upstream's spelled `curr_dir` is (util1.c change_dir).
+    ///
+    /// MEASURED against rsync 3.5.2 with `exclude = /secret/` and
+    /// `blink -> secret/`: pushing `f0` to `mod/blink/` writes `secret/f0`
+    /// and exits 0. A gate anchored at the resolved destination would see
+    /// `secret/f0` and refuse it.
+    #[cfg(unix)]
+    #[test]
+    fn a_push_through_an_in_module_symlink_is_judged_by_the_alias_name() {
+        let module = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(module.path().join("secret")).expect("create secret");
+        std::os::unix::fs::symlink("secret/", module.path().join("blink")).expect("symlink");
+        let globals =
+            FilterSet::from_rules(vec![FilterRule::exclude("/secret/***").with_abs_path(true)])
+                .expect("compiles");
+
+        let alias = module.path().join("blink");
+        let mut through_alias =
+            DaemonFilterGate::new(Some(&globals), &[], &alias, Some(module.path()))
+                .expect("plain rules build a gate");
+        assert!(
+            through_alias.allows("f0", false),
+            "blink/f0 is not named by /secret/"
+        );
+
+        let direct = module.path().join("secret");
+        let mut into_secret =
+            DaemonFilterGate::new(Some(&globals), &[], &direct, Some(module.path()))
+                .expect("plain rules build a gate");
+        assert!(
+            !into_secret.allows("f0", false),
+            "secret/f0 is named by /secret/ when the destination is spelled secret"
         );
     }
 
