@@ -33,7 +33,7 @@ permissions:
 env:
   # libidn2-dev: rsync 3.5.1's configure aborts without idn2.h, and the
   # interop sweep builds 3.5.1 alongside the older peers.
-  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev libidn2-dev
+  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev libidn2-dev attr strace
 
 jobs:
   interop:
@@ -129,6 +129,8 @@ jobs:
       - name: Run upstream oracle cells
         env:
           OC_RSYNC_UPSTREAM_COMPAT: "1"
+          OC_RSYNC_DELETE_INTEROP: "1"
+          OC_RSYNC_METADATA_INTEROP: "1"
         run: |
           set -euo pipefail
           mapfile -t oracle_args < <(python3 tools/ci/upstream_oracle_tests.py args)

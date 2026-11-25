@@ -12,8 +12,8 @@
 //! source and destination keep one or more files that survive the sync so
 //! that creates run alongside deletes.
 //!
-//! GATE: opts in via `OC_RSYNC_DELETE_INTEROP=1`. Will fail on master until
-//! DDP-E1-E5 wires the parallel-deterministic delete emitter.
+//! GATE: `OC_RSYNC_DELETE_INTEROP=1`, which the interop job's oracle step
+//! sets. The cell also needs `strace` on PATH.
 
 #![cfg(unix)]
 

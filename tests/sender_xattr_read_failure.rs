@@ -41,7 +41,7 @@ fn oc_sender_drops_a_file_whose_xattrs_cannot_be_read() {
         eprintln!("skip: {reason}");
         return;
     }
-    if !test_support::skip::require_command_on_path("setfattr") {
+    if test_support::require_tool("setfattr").is_none() {
         return;
     }
     if fs::metadata("/proc/self").is_ok_and(|meta| std::os::unix::fs::MetadataExt::uid(&meta) == 0)
@@ -61,7 +61,7 @@ fn oc_sender_drops_a_file_whose_xattrs_cannot_be_read() {
         .status()
         .is_ok_and(|s| s.success());
     if !tagged {
-        eprintln!("skip: the temp filesystem does not take user xattrs");
+        test_support::capability_missing("the temp filesystem does not take user xattrs");
         return;
     }
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();

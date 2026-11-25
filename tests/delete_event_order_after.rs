@@ -8,8 +8,8 @@
 //!
 //! Per-directory delete sets are also compared via `diff_delete_groups`.
 //!
-//! GATE: `OC_RSYNC_DELETE_INTEROP=1`. Will fail on master until DDP-E1-E5
-//! lands.
+//! GATE: `OC_RSYNC_DELETE_INTEROP=1`, which the interop job's oracle step
+//! sets. The cell also needs `strace` on PATH.
 
 #![cfg(unix)]
 

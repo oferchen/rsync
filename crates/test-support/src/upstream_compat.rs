@@ -11,8 +11,9 @@
 //! in `docs/design/uts-nextest-edge-b-test-harness.md`; this module covers
 //! only the cross-binary surface.
 
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 /// Upstream rsync version pinned by an upstream-compat test.
 ///
@@ -217,6 +218,116 @@ pub fn require_upstream_rsync(version: UpstreamVersion) -> Option<UpstreamRsync>
     Some(UpstreamRsync { binary, version })
 }
 
+/// Locates external tool `name` that an oracle cell needs, such as `strace`,
+/// `setfacl` or `setfattr`.
+///
+/// Under `OC_RSYNC_UPSTREAM_COMPAT=1` a missing tool panics with its name, so
+/// the oracle step cannot count the cell as passed. Without it the resolver's
+/// skip line is printed and `None` returned. Root-only and platform-gated
+/// cells keep their own skips; this covers what the host must provide.
+#[must_use]
+pub fn require_tool(name: &str) -> Option<PathBuf> {
+    resolve_tool(name, upstream_compat_enabled())
+}
+
+/// Reports a host capability an oracle cell needs but the host lacks, such
+/// as a filesystem that refuses ACLs or user xattrs. Same rule as
+/// [`require_tool`]: a panic naming `reason` under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1`, the resolver's skip line otherwise. The
+/// caller returns after it.
+pub fn capability_missing(reason: &str) {
+    let _: Option<()> = prerequisite_missing(reason, upstream_compat_enabled());
+}
+
+/// Unwraps a fixture step an oracle cell cannot run without, such as its
+/// tempdir or the oc-rsync daemon it drives. An `Err` is reported through
+/// [`capability_missing`] as `"{what}: {error}"` and yields `None`, so under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1` a broken fixture fails the cell instead of
+/// passing it as a skip.
+#[must_use]
+pub fn require_setup<T, E: Display>(what: &str, result: Result<T, E>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            capability_missing(&format!("{what}: {error}"));
+            None
+        }
+    }
+}
+
+/// Set in the copy of a test binary that [`assert_prerequisite_gate`] runs.
+const GATE_CHILD: &str = "OC_RSYNC_PREREQUISITE_GATE_CHILD";
+
+/// Whether this test binary was started by [`assert_prerequisite_gate`]. The
+/// child cell it re-runs returns at once otherwise.
+#[must_use]
+pub fn in_prerequisite_gate_child() -> bool {
+    std::env::var_os(GATE_CHILD).is_some()
+}
+
+/// Proves the prerequisite gate exercised by `cell`: re-runs the current test
+/// binary with only `cell` selected, once under `OC_RSYNC_UPSTREAM_COMPAT=1`,
+/// where the cell must fail with a panic naming `cause`, and once without,
+/// where it must pass after printing the resolver's skip line naming `cause`,
+/// the line the interop oracle step's check-log rejects.
+///
+/// # Panics
+///
+/// When either run behaves otherwise.
+pub fn assert_prerequisite_gate(cell: &str, cause: &str) {
+    let failed = run_gate_child(cell, true);
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        !failed.status.success(),
+        "{cell} must fail under COMPAT: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "oracle cell prerequisite missing (OC_RSYNC_UPSTREAM_COMPAT=1): {cause}"
+        )),
+        "{cell}'s failure must name `{cause}`: {stderr}"
+    );
+    let skipped = run_gate_child(cell, false);
+    let stderr = String::from_utf8_lossy(&skipped.stderr);
+    assert!(
+        skipped.status.success(),
+        "{cell} must pass as a skip without COMPAT: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("Skipping upstream-compat test: {cause}")),
+        "{cell} must print the resolver's skip line naming `{cause}`: {stderr}"
+    );
+}
+
+fn run_gate_child(cell: &str, compat: bool) -> Output {
+    let mut command = Command::new(std::env::current_exe().expect("test binary path"));
+    command
+        .args([cell, "--exact", "--nocapture"])
+        .env(GATE_CHILD, "1")
+        .env_remove("OC_RSYNC_UPSTREAM_COMPAT");
+    if compat {
+        command.env("OC_RSYNC_UPSTREAM_COMPAT", "1");
+    }
+    command.output().expect("re-run the test binary")
+}
+
+fn resolve_tool(name: &str, required: bool) -> Option<PathBuf> {
+    crate::skip::locate_command_on_path(name).or_else(|| {
+        prerequisite_missing(&format!("required tool `{name}` is not on PATH"), required)
+    })
+}
+
+/// A missing tool or capability: a skip line and `None` when `required` is
+/// false, a panic naming `reason` when it is true.
+fn prerequisite_missing<T>(reason: &str, required: bool) -> Option<T> {
+    assert!(
+        !required,
+        "oracle cell prerequisite missing (OC_RSYNC_UPSTREAM_COMPAT=1): {reason}"
+    );
+    eprintln!("Skipping upstream-compat test: {reason}");
+    None
+}
+
 /// Reports an unusable oracle: a skip line and `None` when `required` is
 /// false, a panic naming `reason` when it is true.
 fn oracle_unavailable<T>(reason: &str, required: bool) -> Option<T> {
@@ -266,6 +377,38 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).starts_with(&root),
             "workspace root must be an ancestor of the consuming manifest dir"
         );
+    }
+
+    #[test]
+    fn a_present_tool_resolves_to_its_path() {
+        // Why: the helper must not refuse a tool that is there; `sh` is on
+        // every Unix PATH the oracle step runs under.
+        if cfg!(unix) {
+            let sh = resolve_tool("sh", true).expect("sh resolves");
+            assert!(sh.is_file(), "{} must be a file", sh.display());
+        }
+    }
+
+    #[test]
+    fn a_missing_tool_skips_when_not_required() {
+        // Why: local runs without strace or the acl/attr tools keep passing.
+        assert!(resolve_tool("oc-rsync-no-such-tool-xyzzy", false).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "required tool `oc-rsync-no-such-tool-xyzzy` is not on PATH")]
+    fn a_missing_tool_fails_when_required() {
+        // Why: under OC_RSYNC_UPSTREAM_COMPAT=1 a missing tool must fail the
+        // cell and name the tool, not let it count as a pass.
+        let _ = resolve_tool("oc-rsync-no-such-tool-xyzzy", true);
+    }
+
+    #[test]
+    #[should_panic(expected = "the filesystem refuses POSIX ACLs")]
+    fn a_missing_capability_fails_when_required() {
+        // Why: a fixture that cannot set ACLs or xattrs is a missing
+        // capability and must fail the same way as a missing tool.
+        let _: Option<()> = prerequisite_missing("the filesystem refuses POSIX ACLs", true);
     }
 
     #[test]

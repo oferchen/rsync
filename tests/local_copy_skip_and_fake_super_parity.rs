@@ -34,11 +34,12 @@ fn oracle_and_oc() -> Option<[(&'static str, PathBuf); 2]> {
 }
 
 /// Whether `tool` runs on this host; a cell that needs it skips otherwise.
-fn has_tool(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("--version")
-        .output()
-        .is_ok_and(|out| out.status.success())
+/// Resolves every tool through `test_support::require_tool`, which fails the
+/// cell under `OC_RSYNC_UPSTREAM_COMPAT=1` and skips it otherwise.
+fn has_tools(tools: &[&str]) -> bool {
+    tools
+        .iter()
+        .all(|tool| test_support::require_tool(tool).is_some())
 }
 
 /// `src/{plain,sub/inner,ln -> ../out/t,sub/deep -> ../../out/t,safe -> plain,
@@ -151,8 +152,7 @@ const NAMED_USER_AACL: &str = "0x80000000800000000400000080000000feff00000400008
 #[test]
 fn local_fake_super_stashes_only_what_the_source_stash_carries() {
     let Some(impls) = oracle_and_oc() else { return };
-    if !has_tool("getfattr") || !has_tool("setfattr") {
-        eprintln!("skipping: getfattr/setfattr not installed");
+    if !has_tools(&["getfattr", "setfattr"]) {
         return;
     }
     let fx = Fixture::new();
@@ -163,7 +163,7 @@ fn local_fake_super_stashes_only_what_the_source_stash_carries() {
         .status()
         .unwrap();
     if !set.success() {
-        eprintln!("skipping: the filesystem refuses user xattrs");
+        test_support::capability_missing("the filesystem refuses user xattrs");
         return;
     }
 
@@ -197,8 +197,7 @@ fn local_fake_super_stashes_only_what_the_source_stash_carries() {
 #[test]
 fn receiver_only_fake_super_stashes_the_real_source_acl() {
     let Some(impls) = oracle_and_oc() else { return };
-    if !has_tool("getfattr") || !has_tool("setfacl") {
-        eprintln!("skipping: getfattr/setfacl not installed");
+    if !has_tools(&["getfattr", "setfacl"]) {
         return;
     }
     let fx = Fixture::new();
@@ -211,7 +210,7 @@ fn receiver_only_fake_super_stashes_the_real_source_acl() {
         .status()
         .unwrap();
     if !set.success() {
-        eprintln!("skipping: the filesystem refuses ACLs");
+        test_support::capability_missing("the filesystem refuses ACLs");
         return;
     }
 
@@ -244,8 +243,7 @@ fn receiver_only_fake_super_stashes_the_real_source_acl() {
 /// `--fake-super` on both halves it lands as 0600.
 #[test]
 fn receiver_only_fake_super_ignores_the_source_stat_record() {
-    if !has_tool("getfattr") || !has_tool("setfattr") {
-        eprintln!("skipping: getfattr/setfattr not installed");
+    if !has_tools(&["getfattr", "setfattr"]) {
         return;
     }
     let fx = Fixture::new();
@@ -257,7 +255,7 @@ fn receiver_only_fake_super_ignores_the_source_stat_record() {
         .status()
         .unwrap();
     if !set.success() {
-        eprintln!("skipping: the filesystem refuses user xattrs");
+        test_support::capability_missing("the filesystem refuses user xattrs");
         return;
     }
     let stat_of = |dest: &Path| {
@@ -297,8 +295,7 @@ fn receiver_only_fake_super_ignores_the_source_stat_record() {
 #[test]
 fn fake_super_push_sends_the_stash_not_the_real_acl() {
     let Some(impls) = oracle_and_oc() else { return };
-    if !has_tool("setfacl") || !has_tool("getfacl") {
-        eprintln!("skipping: setfacl/getfacl not installed");
+    if !has_tools(&["setfacl", "getfacl"]) {
         return;
     }
     let fx = Fixture::new();
@@ -309,7 +306,7 @@ fn fake_super_push_sends_the_stash_not_the_real_acl() {
         .status()
         .unwrap();
     if !set.success() {
-        eprintln!("skipping: the filesystem refuses POSIX ACLs");
+        test_support::capability_missing("the filesystem refuses POSIX ACLs");
         return;
     }
     // A remote shell that runs the server locally, like support/lsh.sh.

@@ -85,12 +85,37 @@ fn rsh_command(client: &Path, server: &Path, rsh: &Path) -> Command {
     command
 }
 
-fn dev_full_present() -> bool {
-    if Path::new("/dev/full").exists() {
+/// A device the cells write into must exist; its absence fails the cell under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1` and skips it otherwise.
+fn device_present(device: &Path) -> bool {
+    if device.exists() {
         return true;
     }
-    eprintln!("skip: /dev/full is missing");
+    test_support::capability_missing(&format!("{} is missing", device.display()));
     false
+}
+
+fn dev_full_present() -> bool {
+    device_present(Path::new("/dev/full"))
+}
+
+const MISSING_DEVICE: &str = "/dev/oc-rsync-no-such-device";
+
+/// The cell the prover re-runs: inert in a normal run.
+#[test]
+fn child_cell_without_its_device() {
+    if !test_support::in_prerequisite_gate_child() {
+        return;
+    }
+    assert!(!device_present(Path::new(MISSING_DEVICE)));
+}
+
+#[test]
+fn a_missing_device_fails_under_compat_and_skips_without() {
+    test_support::assert_prerequisite_gate(
+        "child_cell_without_its_device",
+        &format!("{MISSING_DEVICE} is missing"),
+    );
 }
 
 /// The run reports the write site and nothing generic, and exits 11.

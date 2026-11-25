@@ -62,16 +62,6 @@ pub fn gate_enabled() -> bool {
     env::var(GATE_ENV_VAR).ok().as_deref() == Some("1")
 }
 
-/// Check `command -v <cmd>` on PATH.
-pub fn command_on_path(cmd: &str) -> bool {
-    Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {cmd} >/dev/null 2>&1"))
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 /// Locates the binary under test.
 ///
 /// `CARGO_BIN_EXE_oc-rsync` is a COMPILE-time variable, so it must be read with

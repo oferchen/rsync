@@ -20,9 +20,10 @@
 //!
 //! # Gating
 //!
-//! Self-skips when `OC_RSYNC_UPSTREAM_COMPAT` is unset, when no upstream
-//! rsync 3.5.2 or oc-rsync binary is available, and when the filesystem
-//! refuses user xattrs. Once those hold the cells must run and match.
+//! Returns at once when `OC_RSYNC_UPSTREAM_COMPAT` is unset. Under it, a
+//! missing rsync 3.5.2 or oc-rsync binary, or a filesystem that refuses user
+//! xattrs, fails the cell naming the cause. Once those hold the cells must run
+//! and match.
 
 #![cfg(target_os = "linux")]
 
@@ -57,12 +58,37 @@ fn pair() -> Option<Pair> {
     let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2)?
         .binary()
         .to_path_buf();
-    let oc = test_support::oc_rsync_bin();
-    if !oc.is_file() {
-        eprintln!("skipping: oc-rsync binary not built at {}", oc.display());
-        return None;
-    }
+    let oc = built(test_support::oc_rsync_bin())?;
     Some(Pair { upstream, oc })
+}
+
+/// The oc-rsync binary under test must be built; its absence fails the cell
+/// under `OC_RSYNC_UPSTREAM_COMPAT=1` and skips it otherwise.
+fn built(oc: PathBuf) -> Option<PathBuf> {
+    if oc.is_file() {
+        return Some(oc);
+    }
+    test_support::capability_missing(&format!("oc-rsync binary not built at {}", oc.display()));
+    None
+}
+
+const MISSING_BINARY: &str = "/oc-rsync-no-such-dir/oc-rsync";
+
+/// The cell the prover re-runs: inert in a normal run.
+#[test]
+fn child_cell_without_an_oc_binary() {
+    if !test_support::in_prerequisite_gate_child() {
+        return;
+    }
+    assert!(built(PathBuf::from(MISSING_BINARY)).is_none());
+}
+
+#[test]
+fn a_missing_oc_binary_fails_under_compat_and_skips_without() {
+    test_support::assert_prerequisite_gate(
+        "child_cell_without_an_oc_binary",
+        &format!("oc-rsync binary not built at {MISSING_BINARY}"),
+    );
 }
 
 /// Masks the trailer's program name, location and version, and drops the
@@ -132,7 +158,7 @@ fn mode_tree(root: &Path) -> bool {
     let src = root.join("src");
     fs::create_dir_all(&src).expect("create src");
     if xattr::set(&src, "user.probe", b"1").is_err() {
-        eprintln!("skipping: the filesystem rejects user xattrs");
+        test_support::capability_missing("the filesystem rejects user xattrs");
         return false;
     }
     let _ = xattr::remove(&src, "user.probe");
@@ -513,7 +539,7 @@ fn a_device_placeholder_operand_updates_an_existing_device() {
             fs::write(&path, b"").expect("write placeholder");
             let record = format!("60644 {rdev} {uid}:{gid}");
             if xattr::set(&path, FAKE_SUPER_XATTR, record.as_bytes()).is_err() {
-                eprintln!("skipping: the filesystem refuses user xattrs");
+                test_support::capability_missing("the filesystem refuses user xattrs");
                 return;
             }
         }
@@ -671,7 +697,7 @@ fn a_failing_daemon_receiver_reports_like_upstream() {
             let dest = root.join("dst/f");
             fs::write(&dest, b"old\n").expect("write destination");
             if xattr::set(&dest, FAKE_SUPER_XATTR, b"garbage").is_err() {
-                eprintln!("skipping: the filesystem refuses user xattrs");
+                test_support::capability_missing("the filesystem refuses user xattrs");
                 return;
             }
             backdate(&root.join("dst"));

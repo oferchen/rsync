@@ -406,7 +406,7 @@ impl Harness {
             }
         };
         if let Err(reason) = install_fixture_acls(&scratch.src) {
-            skip(&format!(
+            test_support::capability_missing(&format!(
                 "could not install fixture ACLs (filesystem likely lacks acl mount option): \
                  {reason}"
             ));
@@ -599,7 +599,7 @@ impl NonRootHarness {
             }
         };
         if let Err(reason) = install(&scratch.src) {
-            skip(&format!(
+            test_support::capability_missing(&format!(
                 "could not install unmappable-id fixture ACLs \
                  (filesystem likely lacks acl mount option or the test user \
                  cannot setfacl on a tempfile): {reason}"
@@ -722,7 +722,7 @@ impl ReverseHarness {
             }
         };
         if let Err(reason) = install_fixture_mixed_acls(&scratch.src) {
-            skip(&format!(
+            test_support::capability_missing(&format!(
                 "could not install mixed-id fixture ACLs (filesystem likely lacks \
                  acl mount option or the test user cannot setfacl on a tempfile): \
                  {reason}"

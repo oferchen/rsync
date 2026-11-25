@@ -52,19 +52,16 @@
 //!
 //! # Platform gate
 //!
-//! `#![cfg(unix)]` - matches the sibling daemon-spawning UTS tests
-//! (`uts_nextest_daemon_delete_stats.rs`,
-//! `v61d_2_daemon_push_increcurse_perf_regression.rs`). The daemon's
+//! `#![cfg(unix)]` - matches the sibling daemon-spawning UTS test
+//! (`uts_nextest_daemon_delete_stats.rs`). The daemon's
 //! `use chroot = false` toggle requires Unix process semantics; the
 //! Windows daemon mode has separate coverage.
 //!
 //! # Skip semantics
 //!
-//! The test self-skips (prints `skipping:` and returns) when:
-//!
-//! - A loopback TCP port cannot be allocated.
-//! - The daemon fails to start accepting connections within the daemon boot
-//!   timeout.
+//! The tempdir and the daemon are prerequisites: when either cannot be set
+//! up the cell fails under `OC_RSYNC_UPSTREAM_COMPAT=1`, naming the cause,
+//! and otherwise prints the resolver's skip line and returns.
 //!
 //! Hard failures (non-zero exit, missing destination files, empty batch
 //! file, failed replay) are real regressions. A missing workspace
@@ -233,13 +230,13 @@ struct DaemonScratch {
 }
 
 impl DaemonScratch {
-    fn new() -> Option<Self> {
-        let tmp = tempdir().ok()?;
+    fn new() -> io::Result<Self> {
+        let tmp = tempdir()?;
         let root = tmp.path().to_path_buf();
         let config = root.join("rsyncd.conf");
         let log = root.join("rsyncd.log");
         let pid = root.join("rsyncd.pid");
-        Some(Self {
+        Ok(Self {
             _tmp: tmp,
             root,
             config,
@@ -247,6 +244,47 @@ impl DaemonScratch {
             pid,
         })
     }
+}
+
+fn prepared(scratch: io::Result<DaemonScratch>) -> Option<DaemonScratch> {
+    test_support::require_setup("tempdir setup failed", scratch)
+}
+
+fn started(daemon: io::Result<(OcDaemon, u16)>) -> Option<(OcDaemon, u16)> {
+    test_support::require_setup("could not start oc-rsync --daemon", daemon)
+}
+
+/// The cells the prover re-runs: inert in a normal run.
+#[test]
+fn child_cell_whose_tempdir_fails() {
+    if !test_support::in_prerequisite_gate_child() {
+        return;
+    }
+    assert!(prepared(Err(io::Error::other("injected"))).is_none());
+}
+
+#[test]
+fn child_cell_whose_daemon_fails_to_start() {
+    if !test_support::in_prerequisite_gate_child() {
+        return;
+    }
+    assert!(started(Err(io::Error::other("injected"))).is_none());
+}
+
+#[test]
+fn a_tempdir_failure_fails_under_compat_and_skips_without() {
+    test_support::assert_prerequisite_gate(
+        "child_cell_whose_tempdir_fails",
+        "tempdir setup failed: injected",
+    );
+}
+
+#[test]
+fn a_daemon_start_failure_fails_under_compat_and_skips_without() {
+    test_support::assert_prerequisite_gate(
+        "child_cell_whose_daemon_fails_to_start",
+        "could not start oc-rsync --daemon: injected",
+    );
 }
 
 /// `oc-rsync --write-batch=FILE rsync://daemon/mod/ DEST` must:
@@ -265,8 +303,7 @@ impl DaemonScratch {
 #[test]
 fn daemon_pull_write_batch_records_and_replays() {
     let oc_bin = test_support::oc_rsync_bin();
-    let Some(scratch) = DaemonScratch::new() else {
-        eprintln!("skipping: tempdir or test port allocation failed");
+    let Some(scratch) = prepared(DaemonScratch::new()) else {
         return;
     };
 
@@ -288,12 +325,8 @@ fn daemon_pull_write_batch_records_and_replays() {
     )
     .expect("write daemon config");
 
-    let (_daemon, port) = match spawn_oc_daemon(&scratch.config) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("skipping: could not start oc-rsync --daemon: {e}");
-            return;
-        }
+    let Some((_daemon, port)) = started(spawn_oc_daemon(&scratch.config)) else {
+        return;
     };
 
     let src_url = std::ffi::OsString::from(format!("rsync://127.0.0.1:{port}/pullmod/"));

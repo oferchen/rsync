@@ -48,13 +48,17 @@
 //!
 //! # Skip conditions
 //!
-//! The test exits early with a diagnostic `eprintln!` (no failure) when:
-//! - The platform is not Unix (gated at the crate level via `#![cfg(unix)]`).
-//! - Upstream `rsync` is not on PATH (or `UPSTREAM_RSYNC` is unset/missing).
-//! - SSH to localhost cannot complete in batch mode within a 3 s
-//!   connect-timeout (no sshd, no key-based auth, no `authorized_keys`).
-//! - The oc-rsync binary cannot be located under `target/{debug,release,dist}/`.
-//! - Generating a per-bucket payload fails (e.g. tmpfs short on space).
+//! The upstream peer is the rsync 3.5.2 oracle from
+//! `test_support::require_upstream_rsync`. Each push runs the same binary on
+//! the remote end (`--rsync-path`), so neither ratio side talks to whatever
+//! `rsync` the login PATH resolves.
+//!
+//! The test exits early with a diagnostic `eprintln!` (no failure) when the
+//! oracle is not installed or SSH to localhost cannot complete in batch mode
+//! within a 3 s connect-timeout (no sshd, no key-based auth, no
+//! `authorized_keys`). Under `OC_RSYNC_UPSTREAM_COMPAT=1`, as the CI job
+//! sets, both conditions fail the test instead. A push that fails or times
+//! out always fails the test.
 //!
 //! # Cost and scheduling
 //!
@@ -72,6 +76,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
+use test_support::{UpstreamVersion, require_upstream_rsync, upstream_compat_enabled};
 
 /// Hard ceiling on `oc_median / upstream_median` per size bucket.
 ///
@@ -114,19 +119,6 @@ fn oc_rsync_binary() -> PathBuf {
         built.display()
     );
     built
-}
-
-/// Resolve the upstream rsync binary. Honours `UPSTREAM_RSYNC` when set,
-/// otherwise falls back to whatever `rsync` resolves to on PATH.
-fn upstream_rsync_binary() -> Option<PathBuf> {
-    if let Some(env_path) = std::env::var_os("UPSTREAM_RSYNC") {
-        let path = PathBuf::from(env_path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let probe = Command::new("rsync").arg("--version").output().ok()?;
-    probe.status.success().then(|| PathBuf::from("rsync"))
 }
 
 /// Resolve the SSH target (default `$USER@localhost`).
@@ -208,6 +200,7 @@ fn time_one_push(binary: &Path, src: &Path, target: &str, dst: &Path) -> Option<
     let dst_spec = format!("{}:{}/", target, dst.display());
     let mut child = Command::new(binary)
         .arg("-a")
+        .arg(format!("--rsync-path={}", binary.display()))
         .arg("--rsh")
         .arg(format!("ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout={SSH_PROBE_TIMEOUT_SECS}"))
         .arg(src)
@@ -274,18 +267,17 @@ fn median_push(binary: &Path, src: &Path, target: &str, dst: &Path) -> Option<Du
 #[ignore = "expensive (100MB SSH loopback); runs in nightly --run-ignored=only cell"]
 fn ssh_push_throughput_regression_ssr1() {
     let oc_rsync = oc_rsync_binary();
-    let Some(upstream) = upstream_rsync_binary() else {
-        eprintln!("SSR-1 skip: upstream rsync not on PATH (set UPSTREAM_RSYNC to override)");
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
-    let Some(target) = ssh_target() else {
-        eprintln!("SSR-1 skip: cannot derive SSH target (set SSH_TARGET=user@host)");
+    let upstream = upstream.binary().to_path_buf();
+    let ssh_ready = ssh_target().filter(|target| ssh_localhost_available(target));
+    let Some(target) = ssh_ready else {
+        let reason = "SSR-1: no batch-mode SSH to localhost (set SSH_TARGET=user@host)";
+        assert!(!upstream_compat_enabled(), "{reason}");
+        eprintln!("SSR-1 skip: {reason}");
         return;
     };
-    if !ssh_localhost_available(&target) {
-        eprintln!("SSR-1 skip: ssh -o BatchMode=yes {target} true failed (no sshd / no keys)");
-        return;
-    }
 
     let work = TempDir::new().expect("create work tempdir");
     eprintln!(
@@ -301,23 +293,17 @@ fn ssh_push_throughput_regression_ssr1() {
     for (label, bytes) in BUCKETS {
         eprintln!("SSR-1 bucket {label} ({bytes} bytes)");
         let src = work.path().join(format!("src-{label}")).join("payload.bin");
-        if let Err(err) = write_payload(&src, *bytes) {
-            eprintln!("SSR-1 skip bucket {label}: write payload failed: {err}");
-            continue;
-        }
+        write_payload(&src, *bytes)
+            .unwrap_or_else(|err| panic!("SSR-1 bucket {label}: write payload failed: {err}"));
         let dst_oc = work.path().join(format!("dst-oc-{label}"));
         let dst_up = work.path().join(format!("dst-up-{label}"));
 
         eprintln!("  oc-rsync runs:");
-        let Some(oc_median) = median_push(&oc_rsync, &src, &target, &dst_oc) else {
-            eprintln!("SSR-1 skip bucket {label}: oc-rsync push failed");
-            continue;
-        };
+        let oc_median = median_push(&oc_rsync, &src, &target, &dst_oc)
+            .unwrap_or_else(|| panic!("SSR-1 bucket {label}: oc-rsync push failed"));
         eprintln!("  upstream runs:");
-        let Some(up_median) = median_push(&upstream, &src, &target, &dst_up) else {
-            eprintln!("SSR-1 skip bucket {label}: upstream rsync push failed");
-            continue;
-        };
+        let up_median = median_push(&upstream, &src, &target, &dst_up)
+            .unwrap_or_else(|| panic!("SSR-1 bucket {label}: upstream rsync push failed"));
 
         let oc_secs = oc_median.as_secs_f64();
         let up_secs = up_median.as_secs_f64();

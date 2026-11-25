@@ -62,8 +62,8 @@ fn setfacl(args: &[&str], path: &Path) -> bool {
 /// Builds `src/` with a sub-list directory carrying a default ACL and a
 /// file inside it with an ACL of its own; `None` when ACLs are unavailable.
 fn acl_tree(root: &Path) -> Option<PathBuf> {
-    if !test_support::skip::require_command_on_path("setfacl")
-        || !test_support::skip::require_command_on_path("getfacl")
+    if test_support::require_tool("setfacl").is_none()
+        || test_support::require_tool("getfacl").is_none()
     {
         return None;
     }
@@ -73,7 +73,7 @@ fn acl_tree(root: &Path) -> Option<PathBuf> {
     fs::write(src.join("sub/b.log"), b"beta\n").unwrap();
     fs::write(src.join("sub/deep/c.txt"), b"gamma\n").unwrap();
     if !setfacl(&["-m", "u:65534:r-x"], &src.join("a.txt")) {
-        eprintln!("skip: the temp filesystem does not take a named ACL entry");
+        test_support::capability_missing("the temp filesystem does not take a named ACL entry");
         return None;
     }
     for (args, path) in [

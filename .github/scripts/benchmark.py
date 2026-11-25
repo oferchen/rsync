@@ -249,6 +249,19 @@ TESTS = [
         "args": "-av --timeout=30 {src}/ rsync://localhost:{port}/dest/",
         "reset": False,
     },
+    # Daemon push of a tree spread over many directories. INC_RECURSE sends
+    # one file-list segment per directory, so this cell drives the sender
+    # through many sub-lists where the main fixture's three directories make
+    # only a few. A many-sub-list push to an upstream daemon is the shape of
+    # the v0.6.1 regression (95-201x slower than upstream).
+    {
+        "id": "daemon_push_segmented_initial",
+        "name": "Initial sync (1,024 files in 16 dirs)",
+        "mode": "daemon_push",
+        "fixture": "segmented",
+        "args": "-av --timeout=30 {src}/ rsync://localhost:{port}/dest/",
+        "reset": True,
+    },
 ]
 
 # OpenSSL vs pure-Rust checksum comparison (only run if OC_RSYNC_OPENSSL is set)
@@ -778,6 +791,19 @@ def main():
         total_size = tree_size(src)
         total_files = sum(len(fn) for _, _, fn in os.walk(src))
 
+        # 1,024 x 1 KiB files, 64 per directory, in 16 directories.
+        segmented_src = f"{tmpdir}/src_segmented"
+        for d in range(16):
+            dir_path = f"{segmented_src}/d{d:02d}"
+            os.makedirs(dir_path, exist_ok=True)
+            for i in range(64):
+                with open(f"{dir_path}/f{i:02d}.bin", "wb") as f:
+                    f.write(os.urandom(1024))
+        fixtures = {
+            "main": (src, total_size),
+            "segmented": (segmented_src, tree_size(segmented_src)),
+        }
+
         results["test_data"] = {
             "size_mb": round(total_size / 1024 / 1024, 1),
             "files": total_files,
@@ -874,6 +900,7 @@ def main():
             mode = test["mode"]
             args_tpl = test["args"]
             do_reset = test["reset"]
+            test_src, corpus_bytes = fixtures[test.get("fixture", "main")]
             is_daemon = mode.startswith("daemon_")
             is_ssh = mode.startswith("ssh_")
             per_baseline = is_daemon or is_ssh
@@ -883,16 +910,16 @@ def main():
             def oc_dst_for(baseline, per_baseline=per_baseline):
                 return dst_oc_per[baseline.label] if per_baseline else dst_oc
 
-            def up_args(baseline, args_tpl=args_tpl):
+            def up_args(baseline, args_tpl=args_tpl, test_src=test_src):
                 return args_tpl.format(
-                    src=src,
+                    src=test_src,
                     dst=dst_up[baseline.label],
                     port=ports[baseline.label],
                 )
 
-            def oc_args(baseline, args_tpl=args_tpl):
+            def oc_args(baseline, args_tpl=args_tpl, test_src=test_src):
                 return args_tpl.format(
-                    src=src,
+                    src=test_src,
                     dst=oc_dst_for(baseline),
                     port=ports[baseline.label],
                 )
@@ -940,7 +967,7 @@ def main():
                 up_before=before_up,
                 oc_before=before_oc,
                 oc_per_baseline=per_baseline,
-                corpus_bytes=total_size,
+                corpus_bytes=corpus_bytes,
             )
 
         # OpenSSL vs pure-Rust comparison

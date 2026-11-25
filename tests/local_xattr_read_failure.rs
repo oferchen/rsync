@@ -118,7 +118,7 @@ fn skip_reason() -> Option<String> {
     {
         return Some(reason.to_string());
     }
-    if !test_support::skip::require_command_on_path("setfattr") {
+    if test_support::require_tool("setfattr").is_none() {
         return Some("setfattr is not on PATH".into());
     }
     if fs::metadata("/proc/self").is_ok_and(|meta| std::os::unix::fs::MetadataExt::uid(&meta) == 0)
@@ -154,7 +154,7 @@ fn local_copy_drops_a_file_whose_xattrs_cannot_be_read() {
     }
     for (name, bin) in implementations() {
         let Some(fx) = Fixture::new() else {
-            eprintln!("skip: the temp filesystem does not take user xattrs");
+            test_support::capability_missing("the temp filesystem does not take user xattrs");
             return;
         };
         let out = fx.run(&bin, &["-rX"]);
@@ -182,7 +182,7 @@ fn local_dry_run_reports_an_unreadable_xattr_and_lists_the_rest() {
     }
     for (name, bin) in implementations() {
         let Some(fx) = Fixture::new() else {
-            eprintln!("skip: the temp filesystem does not take user xattrs");
+            test_support::capability_missing("the temp filesystem does not take user xattrs");
             return;
         };
         let out = fx.run(&bin, &["-rXni"]);
@@ -204,7 +204,7 @@ fn local_delete_is_skipped_after_an_unreadable_xattr() {
     for batch in [false, true] {
         for (name, bin) in implementations() {
             let Some(fx) = Fixture::new() else {
-                eprintln!("skip: the temp filesystem does not take user xattrs");
+                test_support::capability_missing("the temp filesystem does not take user xattrs");
                 return;
             };
             fx.seed_destination();
@@ -239,7 +239,7 @@ fn local_operand_whose_xattrs_cannot_be_read_is_dropped() {
     }
     for (name, bin) in implementations() {
         let Some(fx) = Fixture::new() else {
-            eprintln!("skip: the temp filesystem does not take user xattrs");
+            test_support::capability_missing("the temp filesystem does not take user xattrs");
             return;
         };
         fs::set_permissions(fx.locked(), fs::Permissions::from_mode(0o000)).unwrap();
