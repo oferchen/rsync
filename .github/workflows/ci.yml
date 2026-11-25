@@ -92,7 +92,12 @@ jobs:
       with:
         shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
     - name: Regenerate Cargo.lock
-      run: cargo update --workspace --offline
+      # A cold cache (new toolchain, new lockfile hash) leaves the registry
+      # empty and the offline update cannot resolve anything; fetch the
+      # locked crates first, as cargo-lockfile-sync.yml does.
+      run: |
+        cargo fetch
+        cargo update --workspace --offline
       continue-on-error: true
     - name: Format check
       run: cargo fmt --all -- --check
@@ -289,7 +294,12 @@ jobs:
         tool: cargo-nextest
     - name: Regenerate Cargo.lock
       if: needs.changes.outputs.docs_only != 'true'
-      run: cargo update --workspace --offline
+      # A cold cache (new toolchain, new lockfile hash) leaves the registry
+      # empty and the offline update cannot resolve anything; fetch the
+      # locked crates first, as cargo-lockfile-sync.yml does.
+      run: |
+        cargo fetch
+        cargo update --workspace --offline
       continue-on-error: true
     - name: Build pinned OpenSSH (ssh_config oracle)
       if: needs.changes.outputs.docs_only != 'true'
@@ -339,7 +349,12 @@ jobs:
       with:
         install_nextest: 'true'
     - name: Regenerate Cargo.lock
-      run: cargo update --workspace --offline
+      # A cold cache (new toolchain, new lockfile hash) leaves the registry
+      # empty and the offline update cannot resolve anything; fetch the
+      # locked crates first, as cargo-lockfile-sync.yml does.
+      run: |
+        cargo fetch
+        cargo update --workspace --offline
       continue-on-error: true
     - name: Set up SSH loopback
       run: |
