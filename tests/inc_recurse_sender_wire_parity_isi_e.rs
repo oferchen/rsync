@@ -7,10 +7,8 @@
 //! byte-identical; the first differing offset is reported with a hex window
 //! around it.
 //!
-//! The cells are `#[ignore]`d: oc's sender stream is not yet byte-identical
-//! to 3.5.2's (task 276 tracks closing the gap and dropping the ignores).
-//! Each run still requires both pulls to succeed and land the source tree,
-//! so `--ignored` proves the harness reaches a real peer.
+//! Both pulls must also succeed and land the source tree, so a pass shows the
+//! remote shell reached a real 3.5.2 peer and captured a complete stream.
 
 #![cfg(all(unix, not(target_os = "macos")))]
 
@@ -80,13 +78,11 @@ fn assert_wire_parity(leaves: &[&str]) {
 }
 
 #[test]
-#[ignore = "task 276: the oc sender stream is not yet byte-identical to rsync 3.5.2's"]
 fn single_segment_sender_wire_byte_parity_3_5_2() {
     assert_wire_parity(&[""]);
 }
 
 #[test]
-#[ignore = "task 276: the oc sender stream is not yet byte-identical to rsync 3.5.2's"]
 fn multi_segment_sender_wire_byte_parity_3_5_2() {
     assert_wire_parity(&["a/b/c", "a/b/d", "a/e/f"]);
 }
