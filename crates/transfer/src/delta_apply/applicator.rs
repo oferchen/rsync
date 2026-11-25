@@ -163,6 +163,30 @@ pub struct DeltaApplyResult {
     pub final_pos: Option<u64>,
 }
 
+/// A file whose reconstructed whole-file checksum disagrees with the
+/// sender's, carried as the source of the `io::Error` that
+/// [`DeltaApplicator::finish`] returns.
+///
+/// The tokens and the file sum have been consumed, so the stream is
+/// positioned at the next record and the caller can discard the update and
+/// go on, as upstream's `recv_files()` does (`receiver.c:1342-1376`). The
+/// counts still feed `--stats`: upstream tallies literal and matched data as
+/// `receive_data()` reads them, before the verdict.
+#[derive(Debug)]
+pub struct VerificationFailure {
+    message: String,
+    /// The counts accumulated while the delta was applied.
+    pub result: DeltaApplyResult,
+}
+
+impl std::fmt::Display for VerificationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for VerificationFailure {}
+
 /// Applies delta data to reconstruct a file.
 ///
 /// Mirrors upstream's `receive_data()` function structure.
@@ -875,11 +899,14 @@ impl<'a> DeltaApplicator<'a> {
         if computed[..computed_len] != expected[..expected_len] {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "checksum verification failed: expected {:02x?}, got {:02x?}",
-                    &expected[..expected_len],
-                    &computed[..computed_len]
-                ),
+                VerificationFailure {
+                    message: format!(
+                        "checksum verification failed: expected {:02x?}, got {:02x?}",
+                        &expected[..expected_len],
+                        &computed[..computed_len]
+                    ),
+                    result: self.stats,
+                },
             ));
         }
 

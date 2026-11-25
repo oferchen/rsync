@@ -14,16 +14,11 @@
 //! destinations. The oracle is upstream's own replay of the same bytes -
 //! never a hardcoded expectation.
 //!
-//! Oracle location follows the root-test convention: `OC_RSYNC_UPSTREAM_RSYNC`
-//! override, then `target/interop/upstream-install/<v>/bin/rsync`, then the
-//! `target/interop/upstream-src/rsync-<v>/rsync` build tree, banner-verified.
-//! When no oracle resolves the tests early-return with a printed reason; when
-//! one resolves, each cell asserts the oracle's own recording ran (exit 0),
-//! so a green run cannot be a silent self-skip.
-//!
-//! Known divergences found by this suite are pinned as `#[ignore = "..."]`
-//! tests so the parity that DOES hold stays enforced while the failures stay
-//! visible; each ignore reason names the divergence.
+//! The oracle is rsync 3.5.2, resolved and banner-verified by
+//! `test_support::require_upstream_rsync`. Without `OC_RSYNC_UPSTREAM_COMPAT=1`
+//! a missing oracle prints a skip line; with it, as the CI oracle step sets,
+//! the cell fails. Each cell also asserts the oracle's own recording ran
+//! (exit 0), so a green run cannot be a silent self-skip.
 
 #![cfg(unix)]
 
@@ -37,6 +32,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use filetime::FileTime;
+use test_support::UpstreamVersion;
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -58,40 +54,6 @@ fn oc_rsync_binary() -> PathBuf {
         built.display()
     );
     built
-}
-
-/// Resolves a genuine upstream rsync to serve as the oracle.
-///
-/// Returns the path plus the `--version` banner line, which the caller has
-/// therefore positively observed running - a path alone proves nothing
-/// (macOS `/usr/bin/rsync` is openrsync and shares none of the batch
-/// format).
-fn locate_upstream_rsync() -> Option<(PathBuf, String)> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
-        candidates.push(PathBuf::from(explicit));
-    }
-    for version in ["3.5.0", "3.4.4"] {
-        if let Some(installed) = test_support::upstream_install_bin(version) {
-            candidates.push(installed);
-        }
-        if let Some(root) = test_support::workspace_root() {
-            candidates.push(
-                root.join("target")
-                    .join("interop")
-                    .join("upstream-src")
-                    .join(format!("rsync-{version}"))
-                    .join("rsync"),
-            );
-        }
-    }
-    candidates.into_iter().find_map(|candidate| {
-        let out = Command::new(&candidate).arg("--version").output().ok()?;
-        let banner = String::from_utf8(out.stdout).ok()?;
-        let first = banner.lines().next()?;
-        (first.starts_with("rsync") && first.contains(" version 3."))
-            .then(|| (candidate, first.to_string()))
-    })
 }
 
 fn spawn_with_timeout(mut cmd: Command, timeout: Duration) -> Option<Output> {
@@ -260,18 +222,9 @@ impl ParityHarness {
     /// Builds the fixture and resolves both binaries. `None` means the
     /// oracle is unavailable; the reason has been printed.
     fn new(build_src: &dyn Fn(&Path), build_seed: &dyn Fn(&Path)) -> Option<Self> {
-        let Some((upstream, banner)) = locate_upstream_rsync() else {
-            eprintln!(
-                "Skipping batch replay parity test: no upstream rsync oracle found \
-                 (set OC_RSYNC_UPSTREAM_RSYNC or install one under \
-                 target/interop/upstream-install/)"
-            );
-            return None;
-        };
-        eprintln!(
-            "batch replay parity oracle: {} ({banner})",
-            upstream.display()
-        );
+        let upstream = test_support::require_upstream_rsync(UpstreamVersion::V3_5_2)?
+            .binary()
+            .to_path_buf();
 
         let temp = tempfile::TempDir::new().expect("create parity temp dir");
         let src = temp.path().join("src");
@@ -300,32 +253,7 @@ impl ParityHarness {
         for (producer_label, producer) in
             [("upstream-batch", &self.upstream), ("oc-batch", &self.oc)]
         {
-            let batch = self.temp.path().join(format!("{producer_label}.batch"));
-            let record_dest = self.temp.path().join(format!("{producer_label}-record"));
-            copy_tree(&self.seed, &record_dest);
-            let mut args = vec!["-a"];
-            args.extend_from_slice(record_flags);
-            let batch_flag = format!("--write-batch={}", batch.display());
-            args.push(&batch_flag);
-            let out = run_rsync(
-                producer,
-                &args,
-                &[
-                    format!("{}/", self.src.display()),
-                    format!("{}/", record_dest.display()),
-                ],
-            );
-            assert!(
-                out.status.success(),
-                "{producer_label}: recording must exit 0, got {:?}\nstderr: {}",
-                out.status.code(),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            assert!(
-                fs::metadata(&batch).map(|m| m.len()).unwrap_or(0) > 0,
-                "{producer_label}: a non-empty batch file must be produced"
-            );
-
+            let batch = self.record(producer_label, producer, record_flags);
             let oc_replay =
                 self.replay(&self.oc, "oc-replay", producer_label, &batch, replay_flags);
             let up_replay = self.replay(
@@ -338,6 +266,38 @@ impl ParityHarness {
             cells.push((producer_label.to_string(), oc_replay, up_replay));
         }
         ParityMatrix { cells }
+    }
+
+    /// Records the fixture with `producer` into a copy of the seed and
+    /// returns the batch file. The exit is asserted: a failed recording would
+    /// turn every later comparison vacuous.
+    fn record(&self, producer_label: &str, producer: &Path, record_flags: &[&str]) -> PathBuf {
+        let batch = self.temp.path().join(format!("{producer_label}.batch"));
+        let record_dest = self.temp.path().join(format!("{producer_label}-record"));
+        copy_tree(&self.seed, &record_dest);
+        let mut args = vec!["-a"];
+        args.extend_from_slice(record_flags);
+        let batch_flag = format!("--write-batch={}", batch.display());
+        args.push(&batch_flag);
+        let out = run_rsync(
+            producer,
+            &args,
+            &[
+                format!("{}/", self.src.display()),
+                format!("{}/", record_dest.display()),
+            ],
+        );
+        assert!(
+            out.status.success(),
+            "{producer_label}: recording must exit 0, got {:?}\nstderr: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            fs::metadata(&batch).map(|m| m.len()).unwrap_or(0) > 0,
+            "{producer_label}: a non-empty batch file must be produced"
+        );
+        batch
     }
 
     fn replay(
@@ -365,29 +325,55 @@ impl ParityHarness {
     /// Replays `batch` with both implementations onto trees that already
     /// hold the fully updated state (the up-to-date cell).
     fn replay_up_to_date(&self, replay_flags: &[&str]) -> (Replay, Replay) {
-        let batch = self.temp.path().join("upstream-batch.batch");
         let updated = self.temp.path().join("upstream-batch-record");
         assert!(
-            batch.is_file() && updated.is_dir(),
+            updated.is_dir(),
             "run() must record the upstream batch before an up-to-date replay"
+        );
+        self.replay_upstream_batch("uptodate", &updated, &|_| {}, replay_flags)
+    }
+
+    /// Replays the upstream-recorded batch with both implementations onto
+    /// copies of the seed that `prepare` then changes: a destination that
+    /// moved on after the recording.
+    fn replay_into_changed_seed(
+        &self,
+        prepare: &dyn Fn(&Path),
+        replay_flags: &[&str],
+    ) -> (Replay, Replay) {
+        self.replay_upstream_batch("changed", &self.seed, prepare, replay_flags)
+    }
+
+    fn replay_upstream_batch(
+        &self,
+        cell: &str,
+        base: &Path,
+        prepare: &dyn Fn(&Path),
+        replay_flags: &[&str],
+    ) -> (Replay, Replay) {
+        let batch = self.temp.path().join("upstream-batch.batch");
+        assert!(
+            batch.is_file(),
+            "run() must record the upstream batch first"
         );
         let mut replays = Vec::new();
         for (replayer, bin) in [("oc-replay", &self.oc), ("upstream-replay", &self.upstream)] {
-            let dest = self.temp.path().join(format!("uptodate-{replayer}"));
-            copy_tree(&updated, &dest);
+            let dest = self.temp.path().join(format!("{cell}-{replayer}"));
+            copy_tree(base, &dest);
+            prepare(&dest);
             let mut args = vec!["-a"];
             args.extend_from_slice(replay_flags);
             let batch_flag = format!("--read-batch={}", batch.display());
             args.push(&batch_flag);
             let output = run_rsync(bin, &args, &[format!("{}/", dest.display())]);
             replays.push(Replay {
-                label: format!("uptodate/{replayer}"),
+                label: format!("{cell}/{replayer}"),
                 output,
                 tree: snapshot_tree(&dest),
             });
         }
-        let upstream = replays.pop().expect("upstream up-to-date replay");
-        let oc = replays.pop().expect("oc up-to-date replay");
+        let upstream = replays.pop().expect("upstream replay");
+        let oc = replays.pop().expect("oc replay");
         (oc, upstream)
     }
 }
@@ -623,8 +609,6 @@ fn replay_itemize_file_rows_match_upstream() {
 /// The FULL `-i` output must match, directory rows included. Upstream
 /// itemizes `./` and created subdirectories on replay.
 #[test]
-#[ignore = "known divergence: oc --read-batch -i omits the directory rows upstream \
-            prints (.d..t...... ./ and cd+++++++++ sub/); file rows already match"]
 fn replay_itemize_directory_rows_match_upstream() {
     let Some(harness) = ParityHarness::new(&build_basic_src, &build_basic_seed) else {
         return;
@@ -682,11 +666,10 @@ fn replay_stats_transfer_totals_match_upstream() {
 
 /// The remaining `--stats` lines must match too: the flist entry counts,
 /// the created-files count and the wire byte accounting.
+///
+/// The byte counters and file-list times come from the recorded trailer
+/// (main.c:366-376), so both replays of one batch print the same values.
 #[test]
-#[ignore = "known divergence: oc --read-batch --stats undercounts Number of files \
-            (reg one short of upstream), omits the File list generation/transfer \
-            time lines, reports different Total bytes sent/received accounting, and \
-            an oc-recorded batch makes upstream count 0 created files"]
 fn replay_stats_file_counts_and_bytes_match_upstream() {
     let Some(harness) = ParityHarness::new(&build_basic_src, &build_basic_seed) else {
         return;
@@ -721,9 +704,6 @@ fn replay_stats_file_counts_and_bytes_match_upstream() {
 /// This is the one comparison that can catch a recording defect the final
 /// trees hide (both replays of a degraded batch degrade identically).
 #[test]
-#[ignore = "known divergence: oc --write-batch records bare transfer iflags, so \
-            upstream replaying an oc-recorded batch itemizes >f......... instead \
-            of >f+++++++++/>f.st...... and counts 0 created files"]
 fn recorded_batch_itemizes_identically_under_upstream() {
     let Some(harness) = ParityHarness::new(&build_basic_src, &build_basic_seed) else {
         return;
@@ -803,6 +783,199 @@ fn replay_up_to_date_skipping_notices_match_upstream() {
         upstream_notices,
         "up-to-date replay skip notices diverge"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Redo phase: failed verification, resends and missing updates
+// ---------------------------------------------------------------------------
+
+/// The one-block (700-byte) basis of the redo fixture's `f2`.
+fn redo_basis() -> Vec<u8> {
+    (0..700u32)
+        .map(|k| 0x30 + ((k * 37 + 11) % 64) as u8)
+        .collect()
+}
+
+/// `f2`'s source: the basis with four bytes moved so the rolling checksum is
+/// unchanged and, under `--checksum-seed=1`, so are the first two bytes of
+/// the seeded MD5 block sum - all of the strong sum a 700-byte file carries in
+/// the first pass (generator.c:784-791). The recording sender matches the
+/// stale block, the rebuilt file fails verification, and the file is redone
+/// with full-length sums, so the batch holds a resend row for `f2`.
+fn redo_source() -> Vec<u8> {
+    let mut data = redo_basis();
+    data[178] += 1;
+    data[179] -= 1;
+    data[409] -= 1;
+    data[410] += 1;
+    data
+}
+
+const REDO_RECORD_FLAGS: &[&str] = &[
+    "--no-whole-file",
+    "--checksum-choice=md5",
+    "--checksum-seed=1",
+];
+
+fn build_redo_src(src: &Path) {
+    let mut f1 = vec![b'x'; 4200];
+    f1.extend_from_slice(b"tail\n");
+    fs::write(src.join("f1"), f1).expect("write f1");
+    fs::write(src.join("f2"), redo_source()).expect("write f2");
+    fs::write(src.join("g"), b"g same\n").expect("write g");
+}
+
+fn build_redo_seed(seed: &Path) {
+    fs::write(seed.join("f1"), vec![b'x'; 4200]).expect("write seed f1");
+    fs::write(seed.join("f2"), redo_basis()).expect("write seed f2");
+    fs::write(seed.join("g"), b"g same\n").expect("write seed g");
+}
+
+/// The redo fixture with its batch recorded by upstream. `g` is up to date
+/// when the batch is recorded, so the batch carries no row for it.
+///
+/// Only upstream records here: an oc recording of this redo is a separate
+/// defect (task 1102) - rsync 3.5.2 hangs replaying it.
+fn redo_harness(record_flags: &[&str]) -> Option<ParityHarness> {
+    let harness = ParityHarness::new(&build_redo_src, &build_redo_seed)?;
+    filetime::set_file_mtime(
+        harness.seed.join("g"),
+        FileTime::from_unix_time(SRC_MTIME, 0),
+    )
+    .expect("stamp seed g");
+    harness.record("upstream-batch", &harness.upstream, record_flags);
+    Some(harness)
+}
+
+/// Rewrites `name` under `dest` with `data`, backdated like the seed.
+fn rewrite_backdated(dest: &Path, name: &str, data: &[u8]) {
+    let path = dest.join(name);
+    fs::write(&path, data).expect("rewrite destination file");
+    filetime::set_file_mtime(&path, FileTime::from_unix_time(SEED_MTIME, 0))
+        .expect("backdate destination file");
+}
+
+/// Every `(Skipping|No) batched update ...` line, stdout then stderr.
+fn batched_update_lines(replay: &Replay) -> Vec<String> {
+    let mut text = String::from_utf8_lossy(&replay.output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&replay.output.stderr));
+    text.lines()
+        .filter(|line| line.contains("batched update"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Asserts that oc's replay ends like upstream's: exit code, destination
+/// tree and the lines `select` picks; and that upstream printed `expected`,
+/// so the cell cannot pass on two silent runs.
+fn assert_replays_agree(
+    oc: &Replay,
+    upstream: &Replay,
+    select: &dyn Fn(&Replay) -> Vec<String>,
+    expected: &str,
+) {
+    let upstream_lines = select(upstream);
+    assert!(
+        upstream_lines.iter().any(|line| line == expected),
+        "{}: upstream must print {expected:?}; got {upstream_lines:?}\nstderr: {}",
+        upstream.label,
+        String::from_utf8_lossy(&upstream.output.stderr)
+    );
+    assert_eq!(select(oc), upstream_lines, "{}: lines diverge", oc.label);
+    assert_eq!(
+        oc.output.status.code(),
+        upstream.output.status.code(),
+        "{}: exit codes diverge (oc stderr: {})",
+        oc.label,
+        String::from_utf8_lossy(&oc.output.stderr)
+    );
+    assert_eq!(
+        oc.tree, upstream.tree,
+        "{}: destination trees diverge",
+        oc.label
+    );
+}
+
+/// A recorded update that fails verification on replay is discarded and the
+/// recorded resend applies, as receiver.c:1342-1376 and we_want_redo()
+/// (receiver.c:753-770) do: exit 0 with `f2` holding the source. Under `-i`
+/// the failure prints upstream's "(may try again)" warning.
+#[test]
+fn replay_applies_the_recorded_resend_after_a_failed_verification() {
+    let Some(harness) = redo_harness(REDO_RECORD_FLAGS) else {
+        return;
+    };
+    let (oc, upstream) = harness.replay_into_changed_seed(&|_| {}, &["-i"]);
+    let warnings = |replay: &Replay| -> Vec<String> {
+        String::from_utf8_lossy(&replay.output.stderr)
+            .lines()
+            .filter(|line| line.contains("failed verification"))
+            .map(str::to_string)
+            .collect()
+    };
+    assert_replays_agree(
+        &oc,
+        &upstream,
+        &warnings,
+        "WARNING: f2 failed verification -- update discarded (may try again).",
+    );
+    assert_eq!(oc.output.status.code(), Some(0), "{}", oc.label);
+}
+
+/// A resend row for a file the replaying generator did not want is skipped
+/// with upstream's "resend of" notice (receiver.c:980-991).
+#[test]
+fn replay_skips_an_unwanted_resend_like_upstream() {
+    let Some(harness) = redo_harness(REDO_RECORD_FLAGS) else {
+        return;
+    };
+    let (oc, upstream) = harness.replay_up_to_date(&[]);
+    assert_replays_agree(
+        &oc,
+        &upstream,
+        &batched_update_lines,
+        "(Skipping batched update for resend of \"f2\")",
+    );
+}
+
+/// A file the replaying generator asks for that the batch never updated is
+/// reported by no_batched_update() (receiver.c:738-751), exit 23. Recorded
+/// without INC_RECURSE: there rsync 3.5.2 hangs after the report.
+#[test]
+fn replay_reports_a_requested_file_the_batch_lacks_like_upstream() {
+    let mut record = REDO_RECORD_FLAGS.to_vec();
+    record.push("--no-inc-recursive");
+    let Some(harness) = redo_harness(&record) else {
+        return;
+    };
+    let (oc, upstream) =
+        harness.replay_into_changed_seed(&|dest| rewrite_backdated(dest, "g", b"g changed\n"), &[]);
+    assert_replays_agree(
+        &oc,
+        &upstream,
+        &batched_update_lines,
+        "(No batched update for \"g\")",
+    );
+    assert_eq!(oc.output.status.code(), Some(23), "{}", oc.label);
+}
+
+/// A file that fails verification on replay, when the batch carries no
+/// resend for it, is reported as the next resend row passes it (we_want_redo,
+/// receiver.c:753-770), exit 23.
+#[test]
+fn replay_reports_a_failed_file_the_batch_never_resends_like_upstream() {
+    let Some(harness) = redo_harness(REDO_RECORD_FLAGS) else {
+        return;
+    };
+    let (oc, upstream) =
+        harness.replay_into_changed_seed(&|dest| rewrite_backdated(dest, "f1", &[b'y'; 4200]), &[]);
+    assert_replays_agree(
+        &oc,
+        &upstream,
+        &batched_update_lines,
+        "(No batched update for resend of \"f1\")",
+    );
+    assert_eq!(oc.output.status.code(), Some(23), "{}", oc.label);
 }
 
 // ---------------------------------------------------------------------------
