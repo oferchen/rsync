@@ -23,7 +23,7 @@ pub fn execute(workspace: &Path) -> TaskResult<()> {
     validate_branding(&branding)?;
     validate_packaging_assets(workspace, &branding)?;
     validate_package_versions(workspace, &branding)?;
-    validate_workspace_package_rust_version(&manifest_value)?;
+    validate_workspace_package_rust_version(workspace, &manifest_value)?;
     validate_documentation(workspace, &branding)?;
 
     println!(
