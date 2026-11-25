@@ -31,6 +31,8 @@ permissions:
   contents: read
 
 env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
   # libidn2-dev: rsync 3.5.1's configure aborts without idn2.h, and the
   # interop sweep builds 3.5.1 alongside the older peers.
   APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev libidn2-dev attr strace

@@ -79,6 +79,8 @@ permissions:
   contents: read
 
 env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
   # libidn2-dev: rsync 3.5.1's configure ABORTS without idn2.h unless
   # --disable-idn is passed (configure.ac:16, :637-672 - `no_lib` is fatal, so
   # a missing library is never silently compiled out). Installing it keeps
