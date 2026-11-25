@@ -238,15 +238,31 @@ mod tests {
         // profile directory that the test harness is linked into. If those
         // ever diverge, every consumer would resolve a binary from a
         // different profile - exactly the stale-build hazard this replaces.
-        let exe = std::env::current_exe().expect("current_exe");
-        // `.../<profile>/deps/<test-bin>` -> `.../<profile>`.
-        let from_exe = exe
-            .parent()
-            .and_then(Path::parent)
-            .expect("test executable lives under <profile>/deps");
-        assert_eq!(
-            std::fs::canonicalize(from_exe).expect("canonicalize exe profile dir"),
-            std::fs::canonicalize(target_profile_dir()).expect("canonicalize baked profile dir"),
+        //
+        // Cargo links test executables at `<profile>/deps/<test-bin>`, and
+        // under its newer build-dir layout at
+        // `<profile>/build/<pkg>/<hash>/out/<test-bin>`; workspace binaries
+        // stay directly in `<profile>` on both. So the test executable must
+        // sit inside the baked directory, in one of those two subtrees - a
+        // different profile fails the prefix, and a baked `<profile>/build`
+        // would leave the package name as the first component.
+        let exe = std::fs::canonicalize(std::env::current_exe().expect("current_exe"))
+            .expect("canonicalize test executable");
+        let profile =
+            std::fs::canonicalize(target_profile_dir()).expect("canonicalize baked profile dir");
+        let within = exe.strip_prefix(&profile).unwrap_or_else(|_| {
+            panic!(
+                "test executable {} is outside the baked profile dir {}",
+                exe.display(),
+                profile.display()
+            )
+        });
+        let subtree = within.components().next().map(|c| c.as_os_str());
+        assert!(
+            subtree == Some("deps".as_ref()) || subtree == Some("build".as_ref()),
+            "test executable {} is not under <profile>/deps or <profile>/build of {}",
+            exe.display(),
+            profile.display()
         );
     }
 
