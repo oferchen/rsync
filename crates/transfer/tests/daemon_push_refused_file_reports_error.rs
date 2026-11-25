@@ -172,25 +172,24 @@ struct Scratch {
 
 /// Builds a module root, a source tree holding one allowed and one excluded
 /// file, and the daemon config binding them.
-fn scratch() -> Option<Scratch> {
-    let tmp = tempdir().ok()?;
+fn build_scratch() -> io::Result<Scratch> {
+    let tmp = tempdir()?;
     let root = tmp.path().to_path_buf();
     let module = root.join("module");
     let source = root.join("source");
     let dest = root.join("dest");
-    fs::create_dir_all(&module).ok()?;
-    fs::create_dir_all(&source).ok()?;
-    fs::write(source.join("allowed.txt"), b"allowed\n").ok()?;
-    fs::write(source.join("top.secret"), b"secret\n").ok()?;
+    fs::create_dir_all(&module)?;
+    fs::create_dir_all(&source)?;
+    fs::write(source.join("allowed.txt"), b"allowed\n")?;
+    fs::write(source.join("top.secret"), b"secret\n")?;
     let config = root.join("rsyncd.conf");
     write_daemon_config(
         &config,
         &root.join("rsyncd.pid"),
         &root.join("rsyncd.log"),
         &module,
-    )
-    .ok()?;
-    Some(Scratch {
+    )?;
+    Ok(Scratch {
         _tmp: tmp,
         config,
         module,
@@ -199,16 +198,63 @@ fn scratch() -> Option<Scratch> {
     })
 }
 
+/// The scenario's tempdir tree; a failure to build it fails the cell under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1` and skips it otherwise.
+fn scratch() -> Option<Scratch> {
+    prepared(build_scratch())
+}
+
+fn prepared(scratch: io::Result<Scratch>) -> Option<Scratch> {
+    test_support::require_setup("tempdir setup failed", scratch)
+}
+
+/// The daemon a scenario drives; a failure to start it fails the cell under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1` and skips it otherwise.
+fn started(daemon: io::Result<Daemon>) -> Option<Daemon> {
+    test_support::require_setup("could not start the oc-rsync daemon", daemon)
+}
+
+/// The cells the prover re-runs: inert in a normal run.
+#[test]
+fn child_cell_whose_tempdir_fails() {
+    if !test_support::in_prerequisite_gate_child() {
+        return;
+    }
+    assert!(prepared(Err(io::Error::other("injected"))).is_none());
+}
+
+#[test]
+fn child_cell_whose_daemon_fails_to_start() {
+    if !test_support::in_prerequisite_gate_child() {
+        return;
+    }
+    assert!(started(Err(io::Error::other("injected"))).is_none());
+}
+
+#[test]
+fn a_tempdir_failure_fails_under_compat_and_skips_without() {
+    test_support::assert_prerequisite_gate(
+        "child_cell_whose_tempdir_fails",
+        "tempdir setup failed: injected",
+    );
+}
+
+#[test]
+fn a_daemon_start_failure_fails_under_compat_and_skips_without() {
+    test_support::assert_prerequisite_gate(
+        "child_cell_whose_daemon_fails_to_start",
+        "could not start the oc-rsync daemon: injected",
+    );
+}
+
 /// Drives one push and asserts the full upstream contract.
 ///
 /// `extra` carries the file-list mode under test.
 fn assert_push_is_refused(client: &Path, extra: &[&str]) {
     let Some(scratch) = scratch() else {
-        eprintln!("skipping: tempdir setup failed");
         return;
     };
-    let Ok(daemon) = spawn_daemon(&scratch.config) else {
-        eprintln!("skipping: could not start the oc-rsync daemon");
+    let Some(daemon) = started(spawn_daemon(&scratch.config)) else {
         return;
     };
 
@@ -281,14 +327,12 @@ fn upstream_client_push_of_excluded_file_is_refused() {
 fn pull_from_the_same_module_still_exits_zero() {
     let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = scratch() else {
-        eprintln!("skipping: tempdir setup failed");
         return;
     };
     fs::write(scratch.module.join("allowed.txt"), b"allowed\n").expect("seed module");
     fs::write(scratch.module.join("top.secret"), b"secret\n").expect("seed module");
     fs::create_dir_all(&scratch.dest).expect("dest");
-    let Ok(daemon) = spawn_daemon(&scratch.config) else {
-        eprintln!("skipping: could not start the oc-rsync daemon");
+    let Some(daemon) = started(spawn_daemon(&scratch.config)) else {
         return;
     };
 
@@ -328,7 +372,6 @@ fn pull_from_the_same_module_still_exits_zero() {
 fn push_of_excluded_symlink_and_fifo_is_refused() {
     let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = scratch() else {
-        eprintln!("skipping: tempdir setup failed");
         return;
     };
     fs::remove_file(scratch.source.join("top.secret")).expect("drop the regular bait");
@@ -344,8 +387,7 @@ fn push_of_excluded_symlink_and_fifo_is_refused() {
         scratch.source.join("hard.secret"),
     )
     .expect("plant hard-link follower");
-    let Ok(daemon) = spawn_daemon(&scratch.config) else {
-        eprintln!("skipping: could not start the oc-rsync daemon");
+    let Some(daemon) = started(spawn_daemon(&scratch.config)) else {
         return;
     };
 

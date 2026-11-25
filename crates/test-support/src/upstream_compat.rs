@@ -11,8 +11,9 @@
 //! in `docs/design/uts-nextest-edge-b-test-harness.md`; this module covers
 //! only the cross-binary surface.
 
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 /// Upstream rsync version pinned by an upstream-compat test.
 ///
@@ -236,6 +237,78 @@ pub fn require_tool(name: &str) -> Option<PathBuf> {
 /// caller returns after it.
 pub fn capability_missing(reason: &str) {
     let _: Option<()> = prerequisite_missing(reason, upstream_compat_enabled());
+}
+
+/// Unwraps a fixture step an oracle cell cannot run without, such as its
+/// tempdir or the oc-rsync daemon it drives. An `Err` is reported through
+/// [`capability_missing`] as `"{what}: {error}"` and yields `None`, so under
+/// `OC_RSYNC_UPSTREAM_COMPAT=1` a broken fixture fails the cell instead of
+/// passing it as a skip.
+#[must_use]
+pub fn require_setup<T, E: Display>(what: &str, result: Result<T, E>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            capability_missing(&format!("{what}: {error}"));
+            None
+        }
+    }
+}
+
+/// Set in the copy of a test binary that [`assert_prerequisite_gate`] runs.
+const GATE_CHILD: &str = "OC_RSYNC_PREREQUISITE_GATE_CHILD";
+
+/// Whether this test binary was started by [`assert_prerequisite_gate`]. The
+/// child cell it re-runs returns at once otherwise.
+#[must_use]
+pub fn in_prerequisite_gate_child() -> bool {
+    std::env::var_os(GATE_CHILD).is_some()
+}
+
+/// Proves the prerequisite gate exercised by `cell`: re-runs the current test
+/// binary with only `cell` selected, once under `OC_RSYNC_UPSTREAM_COMPAT=1`,
+/// where the cell must fail with a panic naming `cause`, and once without,
+/// where it must pass after printing the resolver's skip line naming `cause`,
+/// the line the interop oracle step's check-log rejects.
+///
+/// # Panics
+///
+/// When either run behaves otherwise.
+pub fn assert_prerequisite_gate(cell: &str, cause: &str) {
+    let failed = run_gate_child(cell, true);
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        !failed.status.success(),
+        "{cell} must fail under COMPAT: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "oracle cell prerequisite missing (OC_RSYNC_UPSTREAM_COMPAT=1): {cause}"
+        )),
+        "{cell}'s failure must name `{cause}`: {stderr}"
+    );
+    let skipped = run_gate_child(cell, false);
+    let stderr = String::from_utf8_lossy(&skipped.stderr);
+    assert!(
+        skipped.status.success(),
+        "{cell} must pass as a skip without COMPAT: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("Skipping upstream-compat test: {cause}")),
+        "{cell} must print the resolver's skip line naming `{cause}`: {stderr}"
+    );
+}
+
+fn run_gate_child(cell: &str, compat: bool) -> Output {
+    let mut command = Command::new(std::env::current_exe().expect("test binary path"));
+    command
+        .args([cell, "--exact", "--nocapture"])
+        .env(GATE_CHILD, "1")
+        .env_remove("OC_RSYNC_UPSTREAM_COMPAT");
+    if compat {
+        command.env("OC_RSYNC_UPSTREAM_COMPAT", "1");
+    }
+    command.output().expect("re-run the test binary")
 }
 
 fn resolve_tool(name: &str, required: bool) -> Option<PathBuf> {
