@@ -12,3 +12,6 @@ pub mod acl_roundtrip;
 
 #[cfg(unix)]
 pub mod xattr_roundtrip;
+
+#[cfg(unix)]
+pub mod isi_harness;
