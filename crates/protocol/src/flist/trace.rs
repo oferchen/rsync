@@ -202,7 +202,7 @@ pub fn output_flist(
     let high = entries
         .iter()
         .rposition(FileEntry::is_active)
-        .map_or_else(|| entries.len().max(1) - 1, |h| h);
+        .unwrap_or_else(|| entries.len().max(1) - 1);
     debug_log!(
         Flist,
         3,
@@ -335,7 +335,7 @@ fn format_number(n: usize) -> String {
     let len = chars.len();
 
     for (i, ch) in chars.iter().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(*ch);

@@ -838,7 +838,7 @@ fn build_redo_seed(seed: &Path) {
 /// defect (task 1102) - rsync 3.5.2 hangs replaying it.
 fn redo_harness(record_flags: &[&str]) -> Option<ParityHarness> {
     let harness = ParityHarness::new(&build_redo_src, &build_redo_seed)?;
-    filetime::set_file_mtime(
+    test_support::file_times::set_file_mtime(
         harness.seed.join("g"),
         FileTime::from_unix_time(SRC_MTIME, 0),
     )
@@ -851,7 +851,7 @@ fn redo_harness(record_flags: &[&str]) -> Option<ParityHarness> {
 fn rewrite_backdated(dest: &Path, name: &str, data: &[u8]) {
     let path = dest.join(name);
     fs::write(&path, data).expect("rewrite destination file");
-    filetime::set_file_mtime(&path, FileTime::from_unix_time(SEED_MTIME, 0))
+    test_support::file_times::set_file_mtime(&path, FileTime::from_unix_time(SEED_MTIME, 0))
         .expect("backdate destination file");
 }
 

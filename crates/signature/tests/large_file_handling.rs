@@ -125,7 +125,7 @@ mod signature_layout {
 
         let layout = calculate_signature_layout(params).expect("Layout should succeed");
 
-        let expected_blocks = size / 65536 + if size % 65536 > 0 { 1 } else { 0 };
+        let expected_blocks = size / 65536 + if !size.is_multiple_of(65536) { 1 } else { 0 };
         assert_eq!(layout.block_count(), expected_blocks);
         assert_eq!(layout.block_length().get(), 65536);
     }

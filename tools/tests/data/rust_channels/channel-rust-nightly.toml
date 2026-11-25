@@ -1,0 +1,19 @@
+# Trimmed excerpt of https://static.rust-lang.org/dist/channel-rust-nightly.toml as published on 2026-11-24: the
+# header, [pkg.cargo] and [pkg.rust] with one target. Recorded for tools/tests/test_rust_toolchains.py.
+manifest-version = "2"
+date = "2026-11-24"
+
+[pkg.cargo]
+version = "0.103.0-nightly (ae8f06eb4 2026-11-21)"
+git_commit_hash = "20fe935d50367c0ff8872c2ebfa050c5c99d9201"
+
+[pkg.rust]
+version = "1.102.0-nightly (20fe935d5 2026-11-23)"
+git_commit_hash = "20fe935d50367c0ff8872c2ebfa050c5c99d9201"
+
+[pkg.rust.target.x86_64-unknown-linux-gnu]
+available = true
+url = "https://static.rust-lang.org/dist/2026-11-24/rust-nightly-x86_64-unknown-linux-gnu.tar.gz"
+hash = "5caf97f2a65375a1087944505b491761442eb41bd0467bcad7dc7e7bec182a6b"
+xz_url = "https://static.rust-lang.org/dist/2026-11-24/rust-nightly-x86_64-unknown-linux-gnu.tar.xz"
+xz_hash = "687c26fbbc5503ffa0703529c25b71babb6f445cc87247a1c9033c5e96d8eea5"

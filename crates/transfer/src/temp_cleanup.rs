@@ -59,12 +59,7 @@ fn is_temp_file_name(name: &str) -> bool {
     }
 
     // For ".file.txt.AbCdEf" the basename is "file.txt"; for ".bashrc.XyZ123" it is "bashrc".
-    let basename = &name[1..last_dot];
-    if basename.is_empty() {
-        return false;
-    }
-
-    true
+    !name[1..last_dot].is_empty()
 }
 
 /// Removes stale temporary files from `dest_dir` that were left behind by

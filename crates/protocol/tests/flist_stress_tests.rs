@@ -157,7 +157,7 @@ fn stress_10k_sorting_performance() {
             let mut hasher = DefaultHasher::new();
             i.hash(&mut hasher);
             let hash = hasher.finish() as usize;
-            if hash % 2 == 0 && i > 0 {
+            if hash.is_multiple_of(2) && i > 0 {
                 Some((i, hash % i))
             } else {
                 None

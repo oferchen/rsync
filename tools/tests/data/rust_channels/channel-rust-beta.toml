@@ -1,0 +1,19 @@
+# Trimmed excerpt of https://static.rust-lang.org/dist/channel-rust-beta.toml as published on 2026-11-23: the
+# header, [pkg.cargo] and [pkg.rust] with one target. Recorded for tools/tests/test_rust_toolchains.py.
+manifest-version = "2"
+date = "2026-11-23"
+
+[pkg.cargo]
+version = "0.102.0-beta.3 (111443f3d 2026-11-05)"
+git_commit_hash = "f47eed4a8d1ba46b70de4be86b8367c5fa8726c1"
+
+[pkg.rust]
+version = "1.101.0-beta.3 (f47eed4a8 2026-11-22)"
+git_commit_hash = "f47eed4a8d1ba46b70de4be86b8367c5fa8726c1"
+
+[pkg.rust.target.x86_64-unknown-linux-gnu]
+available = true
+url = "https://static.rust-lang.org/dist/2026-11-23/rust-beta-x86_64-unknown-linux-gnu.tar.gz"
+hash = "09c729135710c2b30b14a43d1ed6c3b42aaf9f99b11c4df174fecd6b5b096649"
+xz_url = "https://static.rust-lang.org/dist/2026-11-23/rust-beta-x86_64-unknown-linux-gnu.tar.xz"
+xz_hash = "1739edee4bc126c01cebe030979aaa5ed4b14adc22f806d32aa6b9280cc37748"

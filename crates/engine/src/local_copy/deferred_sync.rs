@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::os::unix::io::AsRawFd;
 
 /// Strategy for when to perform filesystem sync operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SyncStrategy {
     /// Sync immediately after each file write.
     ///
@@ -47,18 +47,13 @@ pub enum SyncStrategy {
     /// Defer all syncs until explicitly flushed.
     ///
     /// Fastest but least durable during transfer.
+    #[default]
     Deferred,
 
     /// No syncing (rely on OS write-back).
     ///
     /// Fastest but data may be lost on crash.
     None,
-}
-
-impl Default for SyncStrategy {
-    fn default() -> Self {
-        Self::Deferred
-    }
 }
 
 /// Manager for deferred filesystem sync operations.

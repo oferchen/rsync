@@ -45,9 +45,9 @@ runs:
       uses: ./.github/actions/free-disk-space
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      uses: ./.github/actions/rust-toolchain
       with:
-        toolchain: ${{ inputs.toolchain }}
+        channel: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
 

@@ -152,7 +152,7 @@ class FuzzTargetMatrixTests(unittest.TestCase):
         text = WORKFLOW.read_text()
         self.assertIn("python3 tools/ci/fuzz_target_matrix.py", text)
         self.assertIn("fromJSON(needs.plan.outputs.matrix)", text)
-        self.assertIn("cargo +nightly fuzz run", text)
+        self.assertIn('cargo +"${{ steps.nightly.outputs.toolchain }}" fuzz run', text)
         self.assertIn("-max_total_time=", text)
         self.assertNotIn("-runs=0", text)
         self.assertNotIn("continue-on-error", text)

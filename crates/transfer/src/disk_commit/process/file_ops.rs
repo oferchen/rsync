@@ -519,13 +519,9 @@ pub(in crate::disk_commit) fn process_file(
                 // timestamps, ACLs, or xattrs.
                 // When delay_updates staged the file, apply metadata to
                 // the staging path (it will be renamed to final later).
-                let metadata_error = if outcome.delayed_path.is_some() {
+                let metadata_error = if let Some(staged) = outcome.delayed_path.as_ref() {
                     // upstream: receiver.c:1326 - finish_transfer(partialptr, ...)
                     // applies metadata to the staged partial file.
-                    let staged = outcome
-                        .delayed_path
-                        .as_ref()
-                        .expect("delayed_path is Some on the staged-partial path");
                     apply_file_metadata(staged, &begin, config)
                 } else if temp_output && !outcome.was_copy {
                     pre_meta_error
@@ -759,11 +755,7 @@ pub(in crate::disk_commit) fn process_whole_file(
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
     }
 
-    let metadata_error = if outcome.delayed_path.is_some() {
-        let staged = outcome
-            .delayed_path
-            .as_ref()
-            .expect("delayed_path checked is_some above");
+    let metadata_error = if let Some(staged) = outcome.delayed_path.as_ref() {
         apply_file_metadata(staged, &begin, config)
     } else if needs_rename && !outcome.was_copy {
         pre_meta_error

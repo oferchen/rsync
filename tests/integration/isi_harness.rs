@@ -150,9 +150,9 @@ pub fn write_fixture_file(path: &Path, seed: u32, size: usize) {
 pub fn pin_mtimes(root: &Path) {
     let mtime = filetime::FileTime::from_unix_time(1_700_000_000, 0);
     for (rel, _) in snapshot(root) {
-        filetime::set_file_mtime(root.join(rel), mtime).expect("pin mtime");
+        test_support::file_times::set_file_mtime(root.join(rel), mtime).expect("pin mtime");
     }
-    filetime::set_file_mtime(root, mtime).expect("pin root mtime");
+    test_support::file_times::set_file_mtime(root, mtime).expect("pin root mtime");
 }
 
 /// Runs the same pull with the oc sender and the 3.5.2 sender into fresh
@@ -248,7 +248,7 @@ fn split_stats(data: &[u8]) -> (Vec<u8>, [u64; 5]) {
     let mut body = data[..at].to_vec();
     body.extend_from_slice(&data[at + STATS_LEN..]);
     let mut stats = [0; 5];
-    for (value, bytes) in stats.iter_mut().zip(record.chunks_exact(3)) {
+    for (value, bytes) in stats.iter_mut().zip(record.as_chunks::<3>().0) {
         // write_varlong puts the top byte first, then the low two bytes;
         // a first byte of 0x80 or more would mean a longer encoding.
         assert!(

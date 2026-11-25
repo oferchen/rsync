@@ -151,7 +151,9 @@ fn mask_stats(data: &mut [u8]) {
     );
     let start = end - FIELDS * STATS_FIELD_WIDTH;
     for (index, field) in data[start..end]
-        .chunks_exact_mut(STATS_FIELD_WIDTH)
+        .as_chunks_mut::<STATS_FIELD_WIDTH>()
+        .0
+        .iter_mut()
         .enumerate()
     {
         assert!(field[0] < 0x80, "stats field is not a 3-byte varlong30");

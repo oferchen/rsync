@@ -104,10 +104,9 @@ pub const fn aligned_overshoot(offset: u64) -> usize {
 #[inline]
 pub fn leading_zero_count(bytes: &[u8]) -> usize {
     let mut offset = 0usize;
-    let mut iter = bytes.chunks_exact(16);
+    let (chunks, tail) = bytes.as_chunks::<16>();
 
-    for chunk in &mut iter {
-        let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
+    for chunk in chunks {
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
         } else {
@@ -116,7 +115,7 @@ pub fn leading_zero_count(bytes: &[u8]) -> usize {
         }
     }
 
-    offset + iter.remainder().iter().take_while(|&&b| b == 0).count()
+    offset + tail.iter().take_while(|&&b| b == 0).count()
 }
 
 /// Counts the number of trailing zero bytes in a slice.

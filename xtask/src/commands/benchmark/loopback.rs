@@ -445,7 +445,7 @@ pub(super) fn run_loopback_benchmarks(
         }
         client_results.push(BenchmarkResult::new(version.clone(), samples));
     }
-    client_results.sort_by(|a, b| a.mean.cmp(&b.mean));
+    client_results.sort_by_key(|r| r.mean);
 
     println!("\n=== Server Benchmarks (dev client -> version as daemon) ===");
     let mut server_results: Vec<BenchmarkResult> = Vec::new();
@@ -464,7 +464,7 @@ pub(super) fn run_loopback_benchmarks(
         }
         server_results.push(BenchmarkResult::new(version.clone(), samples));
     }
-    server_results.sort_by(|a, b| a.mean.cmp(&b.mean));
+    server_results.sort_by_key(|r| r.mean);
 
     if options.json {
         output_loopback_json(&client_results, &server_results)?;

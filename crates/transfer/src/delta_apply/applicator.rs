@@ -632,9 +632,9 @@ impl<'a> DeltaApplicator<'a> {
         if len < fast_io::CLONE_FILE_RANGE_MIN_BYTES {
             return Ok(false);
         }
-        if basis_off % REFLINK_BLOCK_ALIGNMENT != 0
-            || dest_off % REFLINK_BLOCK_ALIGNMENT != 0
-            || len % REFLINK_BLOCK_ALIGNMENT != 0
+        if !basis_off.is_multiple_of(REFLINK_BLOCK_ALIGNMENT)
+            || !dest_off.is_multiple_of(REFLINK_BLOCK_ALIGNMENT)
+            || !len.is_multiple_of(REFLINK_BLOCK_ALIGNMENT)
         {
             return Ok(false);
         }

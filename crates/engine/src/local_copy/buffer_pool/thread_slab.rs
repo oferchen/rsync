@@ -141,7 +141,7 @@ impl LocalSlab {
     /// Returns `true` when this return triggers a periodic donation.
     pub(super) fn should_donate(&mut self) -> bool {
         self.return_count = self.return_count.wrapping_add(1);
-        self.return_count % DONATION_INTERVAL == 0 && !self.buffers.is_empty()
+        self.return_count.is_multiple_of(DONATION_INTERVAL) && !self.buffers.is_empty()
     }
 
     /// Returns the current retained byte total. Tests-only inspector.
@@ -333,7 +333,10 @@ mod tests {
             |buf| {
                 drained.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 // Half accepted, half rejected to exercise both branches.
-                if drained.load(std::sync::atomic::Ordering::Relaxed) % 2 == 0 {
+                if drained
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .is_multiple_of(2)
+                {
                     Some(buf)
                 } else {
                     None

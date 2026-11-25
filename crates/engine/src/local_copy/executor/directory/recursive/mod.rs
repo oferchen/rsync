@@ -879,7 +879,7 @@ mod tests {
         std::fs::write(dest_dir.join("file2.txt"), vec![0u8; 200]).unwrap();
         std::fs::create_dir(dest_dir.join("dir")).unwrap();
 
-        let entries = vec![entry1, entry2, entry3];
+        let entries = [entry1, entry2, entry3];
         let planned: Vec<PlannedEntry> = vec![
             PlannedEntry {
                 entry: &entries[0],

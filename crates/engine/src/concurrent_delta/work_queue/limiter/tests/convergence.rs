@@ -280,7 +280,7 @@ fn target_always_within_bounds_under_random_pattern() {
     let mut state: u32 = 0xDEAD_BEEF;
     for _ in 0..500 {
         state = state.wrapping_mul(1103515245).wrapping_add(12345);
-        let is_overload = (state >> 16) % 5 == 0; // ~20% error rate
+        let is_overload = (state >> 16).is_multiple_of(5); // ~20% error rate
 
         if let Some(t) = limiter.try_acquire() {
             if is_overload {

@@ -70,7 +70,7 @@ fn normalize_text(text: &str) -> String {
 /// This function detects such doubled messages and returns just one copy.
 fn fix_doubled_message(text: &str) -> String {
     let len = text.len();
-    if len < 2 || len % 2 != 0 {
+    if len < 2 || !len.is_multiple_of(2) {
         return text.to_owned();
     }
 

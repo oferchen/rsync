@@ -1228,7 +1228,7 @@ fn write_sparse_chunk_sequential_calls() {
         .expect("write chunk2");
 
     // Third call: more data
-    let chunk3 = [b'E', b'F'];
+    let chunk3 = *b"EF";
     write_sparse_chunk(file.as_file_mut(), &mut state, &chunk3, path.as_path())
         .expect("write chunk3");
 
@@ -1261,7 +1261,7 @@ fn write_sparse_chunk_all_zeros_followed_by_data() {
         .expect("write zeros");
 
     // Then data
-    let data = [b'X', b'Y', b'Z'];
+    let data = *b"XYZ";
     write_sparse_chunk(file.as_file_mut(), &mut state, &data, path.as_path()).expect("write data");
 
     state

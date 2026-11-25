@@ -55,12 +55,6 @@ fn transfer_stats_incremental_fields_exist() {
     assert_eq!(stats.files_skipped, 2);
 }
 
-/// Test that incremental mode is selected when feature is enabled.
-#[test]
-fn incremental_mode_feature_enabled() {
-    assert!(cfg!(feature = "incremental-flist"));
-}
-
 /// Test wire format generation for flat directory.
 #[test]
 fn incremental_transfer_flat_directory() {

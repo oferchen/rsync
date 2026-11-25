@@ -102,7 +102,7 @@ Each release also ships three toolchain builds: **stable** (no suffix, recommend
 
 ### Build from source
 
-Requires Rust **1.89** or newer. The repository pins 1.89.0 in `rust-toolchain.toml`.
+Requires Rust **1.100** or newer. The repository pins 1.100.0 in `rust-toolchain.toml`.
 
 ```bash
 git clone https://github.com/oferchen/rsync.git
@@ -347,7 +347,7 @@ Of the 33 CVEs fixed upstream in rsync 3.5.0, 29 are fixed in oc-rsync, 1 is par
 ## Contributing
 
 1. Fork and create a feature branch.
-2. Install Rust 1.89.0 (pinned in `rust-toolchain.toml`) and [`cargo-nextest`](https://nexte.st/), then run the checks CI runs:
+2. Install Rust 1.100.0 (pinned in `rust-toolchain.toml`) and [`cargo-nextest`](https://nexte.st/), then run the checks CI runs:
    ```bash
    cargo fmt --all -- --check
    cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings

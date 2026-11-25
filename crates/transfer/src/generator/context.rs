@@ -1892,6 +1892,34 @@ fn confinement_root(connection: &crate::config::ConnectionConfig) -> Option<Path
     connection.confine_root.clone()
 }
 
+/// A bare `exit_cleanup(RERR_PROTOCOL)`: the run ends on the standard exit
+/// line alone, whose text is upstream's name for the code (log.c:90).
+fn silent_protocol_exit() -> io::Error {
+    protocol::bare_protocol_exit()
+}
+
+/// Where a peer-supplied NDX is read, which decides what a gap slot means.
+///
+/// upstream passes the same site to `flist_for_ndx()` as its
+/// `fatal_error_loc` (`rsync.c:951`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NdxSite {
+    /// An item request: a gap names its list's directory (`sender.c:552-558`).
+    ReadNdxAndAttrs,
+    /// A `MSG_SUCCESS` confirmation: a gap is refused (`sender.c:410-411`).
+    SuccessfulSend,
+}
+
+impl NdxSite {
+    /// The site name upstream prints in the refusal.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::ReadNdxAndAttrs => "read_ndx_and_attrs",
+            Self::SuccessfulSend => "successful_send",
+        }
+    }
+}
+
 #[cfg(test)]
 mod confinement_root_tests {
     use super::confinement_root;
@@ -2018,33 +2046,5 @@ mod confinement_root_tests {
             ..Default::default()
         };
         assert_eq!(confinement_root(&connection), None);
-    }
-}
-
-/// A bare `exit_cleanup(RERR_PROTOCOL)`: the run ends on the standard exit
-/// line alone, whose text is upstream's name for the code (log.c:90).
-fn silent_protocol_exit() -> io::Error {
-    protocol::bare_protocol_exit()
-}
-
-/// Where a peer-supplied NDX is read, which decides what a gap slot means.
-///
-/// upstream passes the same site to `flist_for_ndx()` as its
-/// `fatal_error_loc` (`rsync.c:951`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NdxSite {
-    /// An item request: a gap names its list's directory (`sender.c:552-558`).
-    ReadNdxAndAttrs,
-    /// A `MSG_SUCCESS` confirmation: a gap is refused (`sender.c:410-411`).
-    SuccessfulSend,
-}
-
-impl NdxSite {
-    /// The site name upstream prints in the refusal.
-    const fn name(self) -> &'static str {
-        match self {
-            Self::ReadNdxAndAttrs => "read_ndx_and_attrs",
-            Self::SuccessfulSend => "successful_send",
-        }
     }
 }

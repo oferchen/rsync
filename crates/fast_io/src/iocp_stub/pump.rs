@@ -84,7 +84,6 @@ impl CompletionPump {
 ///
 /// Returns a no-op handler and an empty receiver because the pump cannot be
 /// constructed on this platform; the receiver will never produce a value.
-#[must_use]
 pub fn oneshot_handler() -> (
     CompletionHandler,
     std::sync::mpsc::Receiver<io::Result<u32>>,

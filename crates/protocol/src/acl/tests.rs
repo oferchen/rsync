@@ -2167,10 +2167,8 @@ mod fake_super_store_oracle_tests {
     const UPSTREAM_DIR_DACL: [u32; 6] = [7, 5, 7, 5, NOBODY, NAMED_USER_RWX];
 
     fn le_u32s(bytes: &[u8]) -> Vec<u32> {
-        bytes
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect()
+        let (words, _) = bytes.as_chunks::<4>();
+        words.iter().map(|w| u32::from_le_bytes(*w)).collect()
     }
 
     /// The access ACL of `f` as `getfacl` reports it: `user::rw-`,

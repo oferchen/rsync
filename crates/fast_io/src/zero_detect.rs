@@ -282,17 +282,17 @@ fn select_impl() -> FindFn {
 /// Scalar fallback - processes 16 bytes per iteration via `u128`.
 fn find_first_nonzero_scalar(buf: &[u8]) -> usize {
     let mut offset = 0;
-    let mut iter = buf.chunks_exact(16);
+    let (chunks, tail) = buf.as_chunks::<16>();
 
-    for chunk in &mut iter {
-        let word = u128::from_ne_bytes(chunk.try_into().expect("chunk is exactly 16 bytes"));
+    for chunk in chunks {
+        let word = u128::from_ne_bytes(*chunk);
         if word != 0 {
             return offset + chunk.iter().position(|&b| b != 0).unwrap_or(16);
         }
         offset += 16;
     }
 
-    for &b in iter.remainder() {
+    for &b in tail {
         if b != 0 {
             return offset;
         }

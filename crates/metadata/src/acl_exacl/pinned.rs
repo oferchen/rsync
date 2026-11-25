@@ -360,7 +360,9 @@ fn decode(buf: &[u8]) -> io::Result<Vec<(u16, u16)>> {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     }
     Ok(entries
-        .chunks_exact(ACL_EA_ENT_LEN)
+        .as_chunks::<ACL_EA_ENT_LEN>()
+        .0
+        .iter()
         .map(|entry| {
             (
                 u16::from_le_bytes([entry[0], entry[1]]),

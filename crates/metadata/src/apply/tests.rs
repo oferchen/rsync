@@ -3643,7 +3643,7 @@ fn symlink_own_mode_is_noop_on_linux() {
     // On Linux a symlink's st_mode is a fixed 0o777 and fchmodat rejects
     // AT_SYMLINK_NOFOLLOW, so the capability const is false and the apply must
     // neither error nor change anything - report and action stay silent as one.
-    assert!(!crate::CAN_CHMOD_SYMLINK);
+    const { assert!(!crate::CAN_CHMOD_SYMLINK) };
 
     let temp = test_support::create_tempdir();
     let target = temp.path().join("t.txt");

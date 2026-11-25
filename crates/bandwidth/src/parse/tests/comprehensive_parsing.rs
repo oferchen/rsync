@@ -341,7 +341,7 @@ fn rounding_default_kilobyte() {
     // Default suffix is K, so rounds to 1024 boundaries
     let result = parse_bandwidth_argument("1500").unwrap();
     // 1500K = 1536000, rounded to nearest 1024 = 1536000
-    assert!(result.unwrap().get() % 1024 == 0);
+    assert!(result.unwrap().get().is_multiple_of(1024));
 }
 
 #[test]
@@ -349,7 +349,7 @@ fn rounding_decimal_base() {
     // "kb" uses base 1000 (1500 * 1000 = 1_500_000 bytes), but the pacing rate
     // is rounded to whole KiB (options.c:1831), so the result is a KiB multiple.
     let result = parse_bandwidth_argument("1500kb").unwrap();
-    assert!(result.unwrap().get() % 1024 == 0);
+    assert!(result.unwrap().get().is_multiple_of(1024));
 }
 
 #[test]

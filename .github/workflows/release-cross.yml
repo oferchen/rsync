@@ -118,9 +118,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: ${{ matrix.toolchain }}
+          channel: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
@@ -313,9 +313,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: ${{ matrix.toolchain }}
+          channel: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
       - name: Install cross
@@ -541,9 +541,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: ${{ matrix.toolchain }}
+          channel: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
@@ -622,9 +622,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: ./.github/actions/rust-toolchain
         with:
-          toolchain: ${{ matrix.toolchain }}
+          channel: ${{ matrix.toolchain }}
           targets: x86_64-pc-windows-msvc
 
       - name: Cache cargo builds

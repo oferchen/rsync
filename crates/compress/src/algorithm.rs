@@ -236,6 +236,44 @@ impl Default for CompressionAlgorithm {
     }
 }
 
+/// Error returned when attempting to parse an unsupported compression algorithm.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("unsupported compression algorithm: {input}")]
+pub struct CompressionAlgorithmParseError {
+    input: String,
+}
+
+impl CompressionAlgorithmParseError {
+    /// Creates a parse error capturing the original input.
+    #[must_use]
+    pub fn new(input: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+        }
+    }
+
+    /// Input string that failed to parse as a compression algorithm.
+    #[must_use]
+    pub fn input(&self) -> &str {
+        &self.input
+    }
+}
+
+impl FromStr for CompressionAlgorithm {
+    type Err = CompressionAlgorithmParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "zlib" | "zlibx" => Ok(CompressionAlgorithm::Zlib),
+            #[cfg(feature = "lz4")]
+            "lz4" => Ok(CompressionAlgorithm::Lz4),
+            #[cfg(feature = "zstd")]
+            "zstd" => Ok(CompressionAlgorithm::Zstd),
+            other => Err(CompressionAlgorithmParseError::new(other.to_owned())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,43 +671,5 @@ mod tests {
         let (fast, default, best) = (ZSTD_FAST_LEVEL, ZSTD_DEFAULT_LEVEL, ZSTD_BEST_LEVEL);
         assert!(fast < default);
         assert!(default < best);
-    }
-}
-
-/// Error returned when attempting to parse an unsupported compression algorithm.
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-#[error("unsupported compression algorithm: {input}")]
-pub struct CompressionAlgorithmParseError {
-    input: String,
-}
-
-impl CompressionAlgorithmParseError {
-    /// Creates a parse error capturing the original input.
-    #[must_use]
-    pub fn new(input: impl Into<String>) -> Self {
-        Self {
-            input: input.into(),
-        }
-    }
-
-    /// Input string that failed to parse as a compression algorithm.
-    #[must_use]
-    pub fn input(&self) -> &str {
-        &self.input
-    }
-}
-
-impl FromStr for CompressionAlgorithm {
-    type Err = CompressionAlgorithmParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "zlib" | "zlibx" => Ok(CompressionAlgorithm::Zlib),
-            #[cfg(feature = "lz4")]
-            "lz4" => Ok(CompressionAlgorithm::Lz4),
-            #[cfg(feature = "zstd")]
-            "zstd" => Ok(CompressionAlgorithm::Zstd),
-            other => Err(CompressionAlgorithmParseError::new(other.to_owned())),
-        }
     }
 }

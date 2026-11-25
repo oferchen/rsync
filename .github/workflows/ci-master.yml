@@ -101,15 +101,21 @@ jobs:
     - name: Check-run name uniqueness
       run: python3 tools/ci/check_pr_check_name_uniqueness.py
     - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      uses: ./.github/actions/rust-toolchain
       with:
+        channel: stable
         components: rustfmt, clippy
     - name: Rust cache
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
     - name: Regenerate Cargo.lock
-      run: cargo update --workspace --offline
+      # A cold cache (new toolchain, new lockfile hash) leaves the registry
+      # empty and the offline update cannot resolve anything; fetch the
+      # locked crates first, as cargo-lockfile-sync.yml does.
+      run: |
+        cargo fetch
+        cargo update --workspace --offline
       continue-on-error: true
     - name: Format check
       run: cargo fmt --all -- --check
@@ -268,9 +274,9 @@ jobs:
       with:
         remove-packages: 'true'
     - name: Install Rust (${{ matrix.toolchain }})
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      uses: ./.github/actions/rust-toolchain
       with:
-        toolchain: ${{ matrix.toolchain }}
+        channel: ${{ matrix.toolchain }}
     - name: Rust cache
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
@@ -281,7 +287,12 @@ jobs:
       with:
         tool: cargo-nextest
     - name: Regenerate Cargo.lock
-      run: cargo update --workspace --offline
+      # A cold cache (new toolchain, new lockfile hash) leaves the registry
+      # empty and the offline update cannot resolve anything; fetch the
+      # locked crates first, as cargo-lockfile-sync.yml does.
+      run: |
+        cargo fetch
+        cargo update --workspace --offline
       continue-on-error: true
     - name: Build pinned OpenSSH (ssh_config oracle)
       uses: ./.github/actions/build-openssh
@@ -324,7 +335,12 @@ jobs:
       with:
         install_nextest: 'true'
     - name: Regenerate Cargo.lock
-      run: cargo update --workspace --offline
+      # A cold cache (new toolchain, new lockfile hash) leaves the registry
+      # empty and the offline update cannot resolve anything; fetch the
+      # locked crates first, as cargo-lockfile-sync.yml does.
+      run: |
+        cargo fetch
+        cargo update --workspace --offline
       continue-on-error: true
     - name: Set up SSH loopback
       run: |
@@ -357,9 +373,9 @@ jobs:
     - name: Free disk space
       uses: ./.github/actions/free-disk-space
     - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      uses: ./.github/actions/rust-toolchain
       with:
-        toolchain: stable
+        channel: stable
     - name: Rust cache
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
@@ -399,8 +415,6 @@ jobs:
       uses: ./.github/actions/ci-setup-linux
       with:
         targets: x86_64-unknown-linux-musl
-    - name: Ensure musl target on active toolchain
-      run: rustup target add x86_64-unknown-linux-musl
     - name: Install musl toolchain
       run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
     - name: Rust cache
@@ -629,7 +643,7 @@ jobs:
         toolchain: ${{ matrix.toolchain }}
         install_nextest: 'true'
     - name: Build oc-rsync (for subprocess integration tests)
-      run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
+      run: rustup run "$OC_RUST_TOOLCHAIN" cargo build --locked -p bin --bin oc-rsync
     - name: Test
       shell: bash
       run: |
@@ -650,20 +664,20 @@ jobs:
         # macOS while every required check stayed green, because no cell ran
         # the crate off Linux. Measured on master before adding it: 665 tests,
         # 662 passed, 3 failed - the whole cost of closing the hole.
-        rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs -p fast_io --all-features 2>&1 | tee nextest-run.log
+        rustup run "$OC_RUST_TOOLCHAIN" cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs -p fast_io --all-features 2>&1 | tee nextest-run.log
         bash tools/ci/nextest_flaky_summary.sh nextest-run.log
     - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
       timeout-minutes: 15
-      run: rustup run ${{ matrix.toolchain }} cargo build --locked -p rsync_io -p cli -p daemon --features quic
+      run: rustup run "$OC_RUST_TOOLCHAIN" cargo build --locked -p rsync_io -p cli -p daemon --features quic
     - name: Test rsync_io (--features quic)
       timeout-minutes: 15
       shell: bash
       run: |
-        rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-quic.log
+        rustup run "$OC_RUST_TOOLCHAIN" cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-quic.log
         bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
     - name: Report UDP offload capabilities
       timeout-minutes: 10
-      run: rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
+      run: rustup run "$OC_RUST_TOOLCHAIN" cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
     - name: Upload build artifacts
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
@@ -690,26 +704,11 @@ jobs:
       uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
       uses: ./.github/actions/free-disk-space
-    - name: Pre-install toolchain (short-timeout retry on transient fetch)
-      run: |
-        for attempt in 1 2 3; do
-          if timeout 90 rustup toolchain install "${{ matrix.toolchain }}" \
-              --profile minimal --no-self-update \
-              --target x86_64-unknown-linux-musl; then
-            exit 0
-          fi
-          echo "::warning::rustup toolchain install attempt ${attempt}/3 failed or timed out; retrying"
-          sleep 5
-        done
-        echo "::error::rustup toolchain install failed after 2 retries"
-        exit 1
     - name: Install Rust (${{ matrix.toolchain }})
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      uses: ./.github/actions/rust-toolchain
       with:
-        toolchain: ${{ matrix.toolchain }}
+        channel: ${{ matrix.toolchain }}
         targets: x86_64-unknown-linux-musl
-    - name: Ensure musl target on active toolchain
-      run: rustup target add x86_64-unknown-linux-musl
     - name: Install musl toolchain
       run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
     - name: Rust cache

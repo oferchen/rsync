@@ -38,9 +38,9 @@ runs:
   using: composite
   steps:
     - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      uses: ./.github/actions/rust-toolchain
       with:
-        toolchain: stable
+        channel: stable
 
     - name: Rust cache
       uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2

@@ -31,3 +31,14 @@ max-struct-bools = 8
 
 # Threshold for struct field names similarity
 struct-field-name-threshold = 20
+
+# filetime's setters are deprecated on the pinned toolchain. Tests set
+# times through test_support::file_times instead, so a call copied from an
+# older test fails clippy at review time rather than on a newer compiler.
+disallowed-methods = [
+    { path = "filetime::set_file_mtime", reason = "deprecated on Rust 1.100+; use test_support::file_times, which sets times through fast_io::set_path_times" },
+    { path = "filetime::set_file_atime", reason = "deprecated on Rust 1.100+; use test_support::file_times, which sets times through fast_io::set_path_times" },
+    { path = "filetime::set_file_times", reason = "deprecated on Rust 1.100+; use test_support::file_times, which sets times through fast_io::set_path_times" },
+    { path = "filetime::set_symlink_file_times", reason = "deprecated on Rust 1.100+; use test_support::file_times, which sets times through fast_io::set_path_times" },
+    { path = "filetime::set_file_handle_times", reason = "deprecated on Rust 1.100+; use test_support::file_times, which sets times through fast_io::set_path_times" },
+]

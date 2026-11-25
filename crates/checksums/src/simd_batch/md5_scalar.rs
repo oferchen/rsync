@@ -124,8 +124,8 @@ fn process_block(state: &mut [u32; 4], block: &[u8]) {
     debug_assert_eq!(block.len(), 64);
 
     let mut m = [0u32; 16];
-    for (i, chunk) in block.chunks_exact(4).enumerate() {
-        m[i] = u32::from_le_bytes(chunk.try_into().expect("chunk is exactly 4 bytes"));
+    for (i, word) in block.as_chunks::<4>().0.iter().enumerate() {
+        m[i] = u32::from_le_bytes(*word);
     }
 
     let [mut a, mut b, mut c, mut d] = *state;

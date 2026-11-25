@@ -291,6 +291,10 @@ mod tests {
     fn non_ascii_host_is_kept_without_the_feature() {
         let host = "\u{10c}i\u{10d}ku.example";
         assert!(matches!(host_to_ascii(host), Cow::Borrowed(h) if h == host));
-        assert!(!SUPPORTED);
+        // `--version` must report `no IDN` even when the caller asks for it.
+        let config = crate::version::VersionInfoConfigBuilder::new()
+            .supports_idn(true)
+            .build();
+        assert!(!config.supports_idn);
     }
 }

@@ -301,19 +301,16 @@
 //! #     }
 //! #     DeltaScript::new(tokens, total_bytes, literal_bytes)
 //! # }
-//! #[test]
-//! fn wire_delta_to_script_converts_literals() {
-//!     let wire_ops = vec![
-//!         DeltaOp::Literal(vec![1, 2, 3, 4]),
-//!         DeltaOp::Literal(vec![5, 6, 7, 8]),
-//!     ];
+//! let wire_ops = vec![
+//!     DeltaOp::Literal(vec![1, 2, 3, 4]),
+//!     DeltaOp::Literal(vec![5, 6, 7, 8]),
+//! ];
 //!
-//!     let script = wire_delta_to_script(wire_ops);
+//! let script = wire_delta_to_script(wire_ops);
 //!
-//!     assert_eq!(script.tokens().len(), 2);
-//!     assert_eq!(script.total_bytes(), 8);
-//!     assert_eq!(script.literal_bytes(), 8);
-//! }
+//! assert_eq!(script.tokens().len(), 2);
+//! assert_eq!(script.total_bytes(), 8);
+//! assert_eq!(script.literal_bytes(), 8);
 //! ```
 //!
 //! ## Integration Tests

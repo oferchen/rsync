@@ -250,10 +250,8 @@ fn delete_after_deletes_after_all_transfers_complete() {
             LocalCopyAction::DataCopied => {
                 last_copy_index = Some(i);
             }
-            LocalCopyAction::EntryDeleted => {
-                if first_delete_index.is_none() {
-                    first_delete_index = Some(i);
-                }
+            LocalCopyAction::EntryDeleted if first_delete_index.is_none() => {
+                first_delete_index = Some(i);
             }
             _ => {}
         }
@@ -330,10 +328,8 @@ fn delete_after_timing_differs_from_delete_before() {
     for (i, record) in records_after.iter().enumerate() {
         match record.action() {
             LocalCopyAction::DataCopied => after_last_copy = Some(i),
-            LocalCopyAction::EntryDeleted => {
-                if after_first_delete.is_none() {
-                    after_first_delete = Some(i);
-                }
+            LocalCopyAction::EntryDeleted if after_first_delete.is_none() => {
+                after_first_delete = Some(i);
             }
             _ => {}
         }
@@ -345,10 +341,8 @@ fn delete_after_timing_differs_from_delete_before() {
     for (i, record) in records_before.iter().enumerate() {
         match record.action() {
             LocalCopyAction::EntryDeleted => before_last_delete = Some(i),
-            LocalCopyAction::DataCopied => {
-                if before_first_copy.is_none() {
-                    before_first_copy = Some(i);
-                }
+            LocalCopyAction::DataCopied if before_first_copy.is_none() => {
+                before_first_copy = Some(i);
             }
             _ => {}
         }
@@ -521,10 +515,8 @@ fn delete_after_with_multiple_directories() {
     for (i, record) in records.iter().enumerate() {
         match record.action() {
             LocalCopyAction::DataCopied => last_copy_index = Some(i),
-            LocalCopyAction::EntryDeleted => {
-                if first_delete_index.is_none() {
-                    first_delete_index = Some(i);
-                }
+            LocalCopyAction::EntryDeleted if first_delete_index.is_none() => {
+                first_delete_index = Some(i);
             }
             _ => {}
         }
@@ -581,10 +573,8 @@ fn delete_after_works_with_dry_run() {
     for (i, record) in records.iter().enumerate() {
         match record.action() {
             LocalCopyAction::DataCopied => last_copy_index = Some(i),
-            LocalCopyAction::EntryDeleted => {
-                if first_delete_index.is_none() {
-                    first_delete_index = Some(i);
-                }
+            LocalCopyAction::EntryDeleted if first_delete_index.is_none() => {
+                first_delete_index = Some(i);
             }
             _ => {}
         }
