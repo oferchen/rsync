@@ -251,6 +251,7 @@ include!("tests/chunks/run_daemon_requests_authentication_for_protected_module.r
 include!("tests/chunks/run_daemon_auth_failure_rejects_wrong_credentials.rs");
 include!("tests/chunks/run_daemon_deny_rule_refuses_before_checking_the_password.rs");
 include!("tests/chunks/module_setup_refusals_log_upstream_lines.rs");
+include!("tests/chunks/log_file_sinks_share_one_file_in_append_mode.rs");
 include!("tests/chunks/run_daemon_sends_motd_before_unknown_module_error.rs");
 include!("tests/chunks/run_daemon_rejects_unknown_hash_command.rs");
 include!("tests/chunks/run_daemon_serves_single_legacy_connection.rs");
