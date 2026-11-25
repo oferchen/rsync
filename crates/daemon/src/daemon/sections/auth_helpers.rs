@@ -4,6 +4,58 @@ fn log_connection(log: &SharedLogSink, host: &str, peer: &PeerAddress) {
     log_message(log, &message);
 }
 
+/// Resolves the peer's host name as `client_name()` does, logging why a lookup
+/// fell back to `UNKNOWN`.
+///
+/// upstream: clientname.c:100-156 `client_name()` - every failure is an FLOG
+/// line written before the `connect from` line that names the host.
+fn lookup_peer_host(peer_ip: IpAddr, log: Option<&SharedLogSink>) -> Option<String> {
+    match resolve_peer_hostname(peer_ip) {
+        Ok(name) => Some(name),
+        Err(failure) => {
+            if let Some(log) = log {
+                log_name_lookup_failure(log, &failure);
+            }
+            None
+        }
+    }
+}
+
+/// [`lookup_peer_host`] for a remote-shell peer, whose string may name no
+/// address: a non-IP stdin, or an environment value `valid_ipaddr()` accepted
+/// but `getaddrinfo` cannot read.
+///
+/// upstream: clientname.c:116-123 - `client_name()` parses the string with
+/// `AI_NUMERICHOST` and logs `malformed address %s: %s` when that fails.
+fn lookup_remote_peer_host(peer: &PeerAddress, log: Option<&SharedLogSink>) -> Option<String> {
+    match peer.ip() {
+        Some(ip) => lookup_peer_host(ip, log),
+        None => {
+            if let (Some(log), Some(failure)) = (log, malformed_peer_address(peer.text())) {
+                log_name_lookup_failure(log, &failure);
+            }
+            None
+        }
+    }
+}
+
+/// Logs that fd 0 has no peer to read.
+///
+/// upstream: clientname.c:323-326 - `rsyserr(FLOG, errno, "getpeername on fd%d
+/// failed", fd)`; a remote-shell daemon's `f_in` is fd 0. The role is
+/// who_am_i() before the server arguments are parsed.
+fn log_getpeername_failure(log: &SharedLogSink, error: &io::Error) {
+    let text = logging::rsyserr_io("rsync", "Receiver", "getpeername on fd0 failed", error);
+    log_message(log, &rsync_info!(text).with_role(Role::Daemon));
+}
+
+/// Logs a failed peer name lookup in upstream's words, if upstream logs it.
+fn log_name_lookup_failure(log: &SharedLogSink, failure: &NameLookupFailure) {
+    if let Some(line) = failure.log_line() {
+        log_message(log, &rsync_info!(line).with_role(Role::Daemon));
+    }
+}
+
 pub(crate) fn log_list_request(log: &SharedLogSink, host: &str, peer: &PeerAddress) {
     // upstream: clientserver.c:1565 - `module-list request from %s (%s)`
     let text = format!("module-list request from {host} ({peer})");

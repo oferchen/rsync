@@ -118,9 +118,9 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
     };
     let stream = DaemonStream::stdio(pair);
 
-    let peer = remote_shell_session_peer()?;
+    let peer = remote_shell_session_peer(log_sink.as_ref())?;
     let peer_host = if reverse_lookup {
-        peer.ip().and_then(resolve_peer_hostname)
+        lookup_remote_peer_host(&peer, log_sink.as_ref())
     } else {
         None
     };

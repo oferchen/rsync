@@ -506,10 +506,76 @@ fn module_peer_hostname_uses_cache() {
         })],
         ..Default::default()
     };
-    let mut cache = Some(Some("cached.example.com".to_owned()));
+    let mut cache = Some(Ok("cached.example.com".to_owned()));
     let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
     let result = module_peer_hostname(&def, &mut cache, addr, true);
     assert_eq!(result, Some("cached.example.com"));
+}
+
+// WHY: a daemon log names why a peer shows up as UNKNOWN in the same words
+// rsync 3.5.2's client_name() and check_name() use (clientname.c:113-156,
+// :425-466), so log readers and scripts see the same text from either daemon.
+#[test]
+fn peer_name_lookup_failures_log_upstream_lines() {
+    clear_test_hostname_overrides();
+    let peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7));
+    let other = IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1));
+    let line = |ip| resolve_peer_hostname(ip).unwrap_err().log_line();
+
+    set_test_hostname_override(peer, None);
+    assert_eq!(
+        line(peer).as_deref(),
+        Some("name lookup failed for 192.0.2.7: Name or service not known")
+    );
+
+    set_test_hostname_override(peer, Some("ptr.example"));
+    assert_eq!(
+        line(peer).as_deref(),
+        Some("forward name lookup for ptr.example failed: Name or service not known")
+    );
+
+    set_test_forward_override("ptr.example", &[]);
+    assert_eq!(
+        line(peer).as_deref(),
+        Some("no known address for \"ptr.example\": spoofed address?")
+    );
+
+    set_test_forward_override("ptr.example", &[other]);
+    assert_eq!(
+        line(peer).as_deref(),
+        Some("192.0.2.7 is not a known address for \"ptr.example\": spoofed address?")
+    );
+
+    set_test_forward_override("ptr.example", &[other, peer]);
+    assert_eq!(resolve_peer_hostname(peer).as_deref(), Ok("ptr.example"));
+}
+
+// WHY: client_name() parses the peer string with AI_NUMERICHOST before any
+// lookup and logs a string that is not numeric as malformed
+// (clientname.c:116-123); a numeric one goes on to the reverse lookup.
+#[test]
+fn a_non_numeric_peer_string_is_a_malformed_address() {
+    let line = malformed_peer_address("localhost")
+        .and_then(|failure| failure.log_line())
+        .expect("localhost is not a numeric address");
+    assert!(line.starts_with("malformed address localhost: "), "{line}");
+    assert_eq!(malformed_peer_address("192.0.2.7"), None);
+}
+
+// WHY: a daemon over a remote shell with no client variable in its
+// environment uses 0.0.0.0, and upstream returns UNKNOWN for it without a
+// lookup or a log line (clientname.c:113-114). A lookup here would put a
+// failure line in every such session's log.
+#[test]
+fn unaddressed_peer_is_unknown_without_a_lookup_or_log_line() {
+    clear_test_hostname_overrides();
+    let unaddressed = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+    set_test_hostname_override(unaddressed, Some("resolved.example"));
+    set_test_forward_override("resolved.example", &[unaddressed]);
+
+    let failure = resolve_peer_hostname(unaddressed).unwrap_err();
+    assert_eq!(failure, NameLookupFailure::Unaddressed);
+    assert_eq!(failure.log_line(), None);
 }
 
 // WHY: every daemon entry point - the accept loop, the async listener, the

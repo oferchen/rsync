@@ -32,8 +32,8 @@ pub(crate) use definition::{
 pub(crate) use hostname::PeerHost;
 pub(crate) use hostname::module_peer_hostname;
 pub(in crate::daemon) use hostname::{
-    UNDETERMINED_HOSTNAME, forward_resolve, netgroup_contains, peer_host_display,
-    resolve_peer_hostname,
+    NameLookupFailure, UNDETERMINED_HOSTNAME, forward_resolve, malformed_peer_address,
+    netgroup_contains, peer_host_display, resolve_peer_hostname,
 };
 pub(crate) use max_connections::MaxConnections;
 pub(crate) use runtime::{ModuleConnectionError, ModuleRuntime};
