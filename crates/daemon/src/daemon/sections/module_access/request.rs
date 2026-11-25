@@ -57,7 +57,7 @@ struct ModuleRequestContext<'a> {
     /// The listening parent is never torn down by it: only the single-session
     /// modes (stdio, inetd), where the process *is* the connection, surface it as
     /// the process exit status.
-    session_exit_code: &'a mut Option<ExitCode>,
+    session_exit_code: &'a mut Option<SessionExit>,
     /// The expanded `post-xfer exec` command, set once the module reaches
     /// upstream's post-xfer fork point (clientserver.c:971). Every later abort
     /// runs it; an abort before that point does not.
@@ -581,7 +581,7 @@ fn handle_authentication(
         AuthenticationStatus::DigestUnsupported => {
             // upstream: compat.c:891-895 - `exit_cleanup(RERR_UNSUPPORTED)` right
             // after the refusal line, with no challenge and no auth-failure log.
-            *ctx.session_exit_code = Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE);
+            *ctx.session_exit_code = Some(SessionExit::Refused(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE));
             ctx.conn_state = ctx.conn_state.close();
             Ok(None)
         }
@@ -690,7 +690,7 @@ fn respond_with_module_request(
     negotiated_protocol: Option<ProtocolVersion>,
     unsupported_peer_protocol: Option<u32>,
     client_digests: AdvertisedDigests<'_>,
-    session_exit_code: &mut Option<ExitCode>,
+    session_exit_code: &mut Option<SessionExit>,
     early_input_data: Option<Vec<u8>>,
     conn_state: ConnectionState,
 ) -> io::Result<()> {

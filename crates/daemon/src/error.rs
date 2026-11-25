@@ -22,7 +22,8 @@ use std::error::Error;
 use std::fmt;
 
 use core::exit_code::{ErrorCodification, ExitCode, HasExitCode};
-use core::message::Message;
+use core::message::{Message, Role};
+use core::rsync_error;
 
 /// Error returned when daemon orchestration fails.
 ///
@@ -33,6 +34,7 @@ pub struct DaemonError {
     exit_code: ExitCode,
     message: Message,
     preamble: Option<String>,
+    prints_trailer: bool,
 }
 
 impl DaemonError {
@@ -44,7 +46,29 @@ impl DaemonError {
             exit_code,
             message,
             preamble: None,
+            prints_trailer: true,
         }
+    }
+
+    /// Creates the exit status of a session whose transfer ran to its end.
+    ///
+    /// The process exits with `exit_code` and prints nothing: the transfer
+    /// already reported its errors to the peer, and upstream's own trailer for
+    /// it is queued behind the final goodbye where no client reads it
+    /// (log.c:1047-1048 through rwrite(), log.c:372-380).
+    pub(crate) fn exit_status(exit_code: ExitCode) -> Self {
+        let message =
+            rsync_error!(exit_code.as_i32(), exit_code.description()).with_role(Role::Daemon);
+        Self {
+            prints_trailer: false,
+            ..Self::with_code(exit_code, message)
+        }
+    }
+
+    /// Whether this error's message is printed when the daemon exits.
+    #[must_use]
+    pub const fn prints_trailer(&self) -> bool {
+        self.prints_trailer
     }
 
     /// Attaches text printed verbatim, on its own lines, before the trailer.

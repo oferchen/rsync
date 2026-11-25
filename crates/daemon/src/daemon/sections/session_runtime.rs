@@ -57,7 +57,7 @@ fn handle_session(
     stream: DaemonStream,
     peer_addr: SocketAddr,
     params: SessionParams<'_>,
-) -> io::Result<Option<ExitCode>> {
+) -> io::Result<Option<SessionExit>> {
     let SessionParams {
         modules,
         motd_lines,
@@ -294,6 +294,31 @@ fn write_limited(
     }
 }
 
+/// How a daemon session ended when it ended with a non-zero status.
+///
+/// Upstream's per-connection child ends in `exit_cleanup()`, whose
+/// `log_exit()` trailer goes through `rwrite()` (log.c:1047-1048, :350-399).
+/// A refusal is reported before the multiplexed stream starts, so an rsh-run
+/// daemon's trailer reaches its stderr. A transfer that ran has already sent
+/// its own diagnostics to the peer, and the trailer it ends with is queued
+/// behind the final goodbye where nothing reads it: the client never sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionExit {
+    /// The session was refused or aborted before any transfer ran.
+    Refused(ExitCode),
+    /// The transfer ran and finished with this status.
+    Transferred(ExitCode),
+}
+
+impl SessionExit {
+    /// The status the session's process exits with.
+    pub(crate) const fn code(self) -> ExitCode {
+        match self {
+            Self::Refused(code) | Self::Transferred(code) => code,
+        }
+    }
+}
+
 /// Maps the outcome of a single-session daemon run onto a process exit status.
 ///
 /// The stdio and inetd entry points serve exactly one connection, so the process
@@ -301,18 +326,19 @@ fn write_limited(
 /// becomes the exit status, exactly as `exit_cleanup()` ends that child. An I/O
 /// failure keeps the existing socket-IO code and `{context}: {error}` wording.
 pub(crate) fn single_session_exit(
-    outcome: io::Result<Option<ExitCode>>,
+    outcome: io::Result<Option<SessionExit>>,
     context: &str,
 ) -> Result<(), DaemonError> {
     match outcome {
         Ok(None) => Ok(()),
-        Ok(Some(exit)) => {
+        Ok(Some(SessionExit::Refused(exit))) => {
             let code = exit.as_i32();
             Err(DaemonError::new(
                 code,
                 rsync_error!(code, exit.description()).with_role(Role::Daemon),
             ))
         }
+        Ok(Some(SessionExit::Transferred(exit))) => Err(DaemonError::exit_status(exit)),
         Err(error) => Err(DaemonError::new(
             SOCKET_IO_EXIT_CODE,
             rsync_error!(SOCKET_IO_EXIT_CODE, format!("{context}: {error}"))
@@ -329,7 +355,7 @@ pub(crate) fn single_session_exit(
 /// Nothing reads the state once the handler returns, so what is worth
 /// recording is the invariant rather than the value: a handler must not reach
 /// a second teardown after already closing.
-fn end_session(state: ConnectionState, exit_code: Option<ExitCode>) -> Option<ExitCode> {
+fn end_session(state: ConnectionState, exit_code: Option<SessionExit>) -> Option<SessionExit> {
     debug_assert!(
         !state.is_terminal(),
         "daemon session torn down twice, from {state:?}"
@@ -359,7 +385,7 @@ fn handle_legacy_session(
     stream: DaemonStream,
     peer: PeerAddress,
     params: LegacySessionParams<'_>,
-) -> io::Result<Option<ExitCode>> {
+) -> io::Result<Option<SessionExit>> {
     let LegacySessionParams {
         modules,
         motd_lines,
@@ -406,7 +432,7 @@ fn handle_legacy_session(
     let mut negotiated_protocol = None;
     let mut unsupported_peer_protocol = None;
     let mut client_digests: Option<String> = None;
-    let mut session_exit_code: Option<ExitCode> = None;
+    let mut session_exit_code: Option<SessionExit> = None;
     let mut early_input_data: Option<Vec<u8>> = None;
 
     // upstream: clientserver.c:1451 - `set_daemon_handshake_timeout(
@@ -445,7 +471,10 @@ fn handle_legacy_session(
             }
             let _ = error;
             // FSM: -> Closing on the expired handshake deadline.
-            return Ok(end_session(conn_state, Some(ExitCode::Timeout)));
+            return Ok(end_session(
+                conn_state,
+                Some(SessionExit::Refused(ExitCode::Timeout)),
+            ));
         }
         Err(error) => return Err(error),
     } {
@@ -580,7 +609,10 @@ fn handle_legacy_session(
                                     .with_role(Role::Daemon);
                                 log_message(log, &message);
                             }
-                            return Ok(end_session(conn_state, Some(ExitCode::Timeout)));
+                            return Ok(end_session(
+                                conn_state,
+                                Some(SessionExit::Refused(ExitCode::Timeout)),
+                            ));
                         }
                         Err(error) => return Err(error),
                     }
@@ -1004,9 +1036,9 @@ mod session_runtime_tests {
         assert_eq!(
             end_session(
                 ConnectionState::Authenticating,
-                Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE)
+                Some(SessionExit::Refused(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE))
             ),
-            Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE)
+            Some(SessionExit::Refused(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE))
         );
     }
 

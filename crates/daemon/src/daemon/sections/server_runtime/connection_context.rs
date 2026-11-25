@@ -102,7 +102,7 @@ impl ConnectionContext {
         }));
 
         match result {
-            Ok(inner) => inner,
+            Ok(inner) => inner.map(|exit| exit.map(SessionExit::code)),
             Err(payload) => {
                 let description = describe_panic_payload(payload);
                 if let Some(log) = log_for_worker.as_ref() {

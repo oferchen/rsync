@@ -438,10 +438,34 @@ fn single_session_exit_maps_a_refusal_to_upstream_exit_code_4() {
     assert!(clean.is_ok());
 
     let refused = single_session_exit(
-        Ok(Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE)),
+        Ok(Some(SessionExit::Refused(
+            UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
+        ))),
         "stdio daemon session failed",
     );
     let error = refused.expect_err("a refusal must not report success");
     assert_eq!(error.exit_code(), ExitCode::Unsupported.as_i32());
     assert_eq!(error.exit_code(), 4);
+}
+
+/// A refusal prints its trailer; a transfer that ran exits with its status and
+/// prints nothing, because upstream's trailer for it is queued behind the
+/// final goodbye (log.c:1047-1048, :372-380) and no client reads it.
+#[test]
+fn single_session_exit_prints_a_trailer_only_for_a_refusal() {
+    let refused = single_session_exit(
+        Ok(Some(SessionExit::Refused(ExitCode::Syntax))),
+        "stdio daemon session failed",
+    )
+    .expect_err("a refusal must not report success");
+    assert!(refused.prints_trailer());
+    assert_eq!(refused.exit_code(), 1);
+
+    let transferred = single_session_exit(
+        Ok(Some(SessionExit::Transferred(ExitCode::PartialTransfer))),
+        "stdio daemon session failed",
+    )
+    .expect_err("a partial transfer must not report success");
+    assert!(!transferred.prints_trailer());
+    assert_eq!(transferred.exit_code(), 23);
 }
