@@ -334,6 +334,7 @@ jobs:
       uses: ./.github/actions/ci-setup-linux
       with:
         install_nextest: 'true'
+        apt_packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev libidn2-dev
     - name: Regenerate Cargo.lock
       # A cold cache (new toolchain, new lockfile hash) leaves the registry
       # empty and the offline update cannot resolve anything; fetch the
@@ -342,6 +343,12 @@ jobs:
         cargo fetch
         cargo update --workspace --offline
       continue-on-error: true
+    - name: Fetch upstream rsync 3.5.2
+      uses: ./.github/actions/fetch-upstream-rsync
+      with:
+        versions: '3.5.2'
+    - name: Build upstream rsync 3.5.2 (oracle)
+      run: bash tools/ci/run_interop.sh build-only --only-version=3.5.2
     - name: Set up SSH loopback
       run: |
         sudo systemctl start ssh
@@ -351,6 +358,8 @@ jobs:
         chmod 600 ~/.ssh/authorized_keys
         ssh -o StrictHostKeyChecking=no localhost true
     - name: Run SSH throughput regression (release build)
+      env:
+        OC_RSYNC_UPSTREAM_COMPAT: '1'
       run: cargo nextest run --locked --release -p bin --run-ignored ignored-only -E 'test(=ssh_push_throughput_regression_ssr1)'
   feature-flags:
     name: Feature flag combinations

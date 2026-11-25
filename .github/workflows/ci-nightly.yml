@@ -93,6 +93,33 @@ jobs:
           target/debug/xtask
         if-no-files-found: warn
         retention-days: 7
+  live-interop-fuzz:
+    name: live interop fuzz (upstream 3.5.2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        install_nextest: 'true'
+        apt_packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev libidn2-dev
+    - name: Fetch upstream rsync 3.5.2
+      uses: ./.github/actions/fetch-upstream-rsync
+      with:
+        versions: '3.5.2'
+    - name: Build upstream rsync 3.5.2 (oracle)
+      run: bash tools/ci/run_interop.sh build-only --only-version=3.5.2
+    - name: Build oc-rsync
+      run: cargo build --locked -p bin --bin oc-rsync
+    # The seed is drawn per run and printed; the failure message names the
+    # seed and iteration count that reproduce it.
+    - name: Run live interop fuzz
+      env:
+        OC_RSYNC_UPSTREAM_COMPAT: '1'
+        OC_RSYNC_FUZZ_ITERATIONS: '48'
+      run: cargo nextest run --locked -p bin --test live_interop_fuzz_1196 --run-ignored all --no-capture
   windows-test:
     name: Windows (${{ matrix.toolchain }})
     runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'windows-latest' }}

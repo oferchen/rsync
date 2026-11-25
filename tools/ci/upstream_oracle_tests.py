@@ -45,7 +45,10 @@ JOB_KEY = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 
 # Oracle cells kept out of the interop oracle step, each mapped to the
 # (workflow file, job id) that runs it.
-EXCLUDED: dict[str, tuple[str, str]] = {}
+EXCLUDED: dict[str, tuple[str, str]] = {
+    "tests/live_interop_fuzz_1196.rs": (".github/workflows/ci-nightly.yml", "live-interop-fuzz"),
+    "tests/ssh_push_throughput_regression_ssr1.rs": (".github/workflows/ci.yml", "ssh-throughput"),
+}
 
 
 def package_name(manifest: Path) -> str:
