@@ -288,6 +288,39 @@ impl FilterChain {
         self.daemon_gate_root = Some(root.into());
     }
 
+    /// Returns `true` when the daemon module's rules hide the transfer operand
+    /// `path`, as upstream's sender decides it right after the operand's
+    /// `link_stat()`.
+    ///
+    /// The name is matched relative to the module root: the sender has entered
+    /// the operand's directory, and rule_matches() prepends that directory
+    /// minus the module prefix to an absolute-path rule (exclude.c:1022-1027).
+    /// Under `--relative` each parent directory is checked too, and a hidden
+    /// one hides the operand.
+    ///
+    /// upstream: flist.c:2948-2950 - `is_excluded(fbuf, .., SERVER_FILTERS)`,
+    /// which consults only `daemon_filter_list` (exclude.c:1111-1115), and
+    /// `relative_paths && path_is_daemon_excluded(fbuf, 1)` (flist.c:556-576).
+    #[must_use]
+    pub fn daemon_hides_operand(&self, path: &Path, is_dir: bool, relative: bool) -> bool {
+        let (Some(gate), Some(root)) = (&self.daemon_gate, &self.daemon_gate_root) else {
+            return false;
+        };
+        let Ok(name) = path.strip_prefix(root) else {
+            return false;
+        };
+        if name.as_os_str().is_empty() {
+            return false;
+        }
+        !gate.allows_name(name, is_dir)
+            || (relative
+                && name
+                    .ancestors()
+                    .skip(1)
+                    .take_while(|dir| !dir.as_os_str().is_empty())
+                    .any(|dir| !gate.allows_name(dir, true)))
+    }
+
     /// Returns `true` when the daemon gate hides the merge file `filename`
     /// inside the directory whose transfer-relative prefix is `rel_dir`.
     ///

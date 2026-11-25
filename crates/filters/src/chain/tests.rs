@@ -1288,6 +1288,51 @@ fn daemon_gate_root_matches_the_module_relative_merge_path() {
     ungated.leave_directory(guard);
 }
 
+/// A pulled operand is judged by the daemon module's rules on its
+/// module-relative name, and under `--relative` by each parent directory too.
+///
+/// upstream: flist.c:2948-2950 - `is_excluded(fbuf, .., SERVER_FILTERS)` and
+/// `relative_paths && path_is_daemon_excluded(fbuf, 1)` (flist.c:556-576).
+#[test]
+fn daemon_hides_operand_matches_the_module_relative_name() {
+    let module = test_support::create_tempdir();
+    let root = module.path();
+    let mut chain = FilterChain::empty();
+    assert!(
+        !chain.daemon_hides_operand(&root.join("a1"), false, false),
+        "no daemon gate hides nothing"
+    );
+
+    chain.set_daemon_filter_gate(
+        FilterSet::from_rules([FilterRule::exclude("/a1"), FilterRule::exclude("/d")]).unwrap(),
+    );
+    assert!(
+        !chain.daemon_hides_operand(&root.join("a1"), false, false),
+        "without the module root the operand cannot be placed in the module"
+    );
+
+    chain.set_daemon_gate_root(root);
+    assert!(chain.daemon_hides_operand(&root.join("a1"), false, false));
+    assert!(!chain.daemon_hides_operand(&root.join("keep"), false, false));
+    assert!(
+        !chain.daemon_hides_operand(&root.join("x/a1"), false, false),
+        "an anchored rule names only the module root's a1"
+    );
+    assert!(chain.daemon_hides_operand(&root.join("d"), true, false));
+    assert!(
+        !chain.daemon_hides_operand(root, true, false),
+        "the module root itself is never hidden"
+    );
+    assert!(
+        !chain.daemon_hides_operand(&root.join("d/x"), false, false),
+        "without --relative only the operand's own name is checked"
+    );
+    assert!(
+        chain.daemon_hides_operand(&root.join("d/x"), false, true),
+        "under --relative a hidden parent hides the operand"
+    );
+}
+
 /// #226: a rule that names a side inside a `:s`/`:r` file is upstream's
 /// `filter_rule_err` (exclude.c:1447-1456), never silently given the file's
 /// side; the error names the file's line, not its text (exclude.c:133-137).
