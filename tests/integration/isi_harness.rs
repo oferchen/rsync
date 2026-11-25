@@ -248,7 +248,7 @@ fn split_stats(data: &[u8]) -> (Vec<u8>, [u64; 5]) {
     let mut body = data[..at].to_vec();
     body.extend_from_slice(&data[at + STATS_LEN..]);
     let mut stats = [0; 5];
-    for (value, bytes) in stats.iter_mut().zip(record.chunks_exact(3)) {
+    for (value, bytes) in stats.iter_mut().zip(record.as_chunks::<3>().0) {
         // write_varlong puts the top byte first, then the low two bytes;
         // a first byte of 0x80 or more would mean a longer encoding.
         assert!(
