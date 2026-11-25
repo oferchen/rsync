@@ -164,10 +164,11 @@ pub struct DeletionConfig {
     /// upstream: `options.c` `delete_excluded` global; `exclude.c:rule_matches()`
     /// drops the protection an exclude would otherwise grant during deletion.
     pub delete_excluded: bool,
-    /// Suppress server-side `MSG_DELETED` emission when the client requested
-    /// neither deletion verbosity (`-v` / `--info=del`) nor `--itemize-changes`.
+    /// Suppress server-side `MSG_DELETED` emission when the client asked for
+    /// no per-item output: no deletion or name info level and no forwarded
+    /// `--log-format` (see `InfoFlags::reports_deletions`).
     ///
-    /// upstream: `log.c:912-916` + `clientserver.c:1226-1230`.
+    /// upstream: `log.c:997-1006` + `clientserver.c:1226-1230`.
     pub suppress_msg_deleted: bool,
 }
 

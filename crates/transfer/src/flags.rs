@@ -493,6 +493,27 @@ pub struct InfoFlags {
     /// (main.c:829). Without this the notice was tied to the `-i` flag alone
     /// and was dropped under a custom `%i`-bearing `--out-format`.
     pub out_format_forwards_i: bool,
+    /// The client forwarded a `--log-format`, so upstream's `stdout_format`
+    /// is set on this server (options.c:3009-3021 sends it on a push).
+    pub log_format: bool,
+}
+
+impl InfoFlags {
+    /// Whether this server reports each deletion to the client as a
+    /// `MSG_DELETED` frame.
+    ///
+    /// upstream: log.c:997-1006 `log_delete()` sends the name only under
+    /// `INFO_GTE(DEL, 1) || stdout_format`, since the generator may not be
+    /// able to flush those frames before the sender's file list is complete;
+    /// options.c:2576-2579 sets `stdout_format` from `INFO_GTE(NAME, 1)` when
+    /// no format arrived. Reads this thread's output levels, so call it once
+    /// they are applied.
+    #[must_use]
+    pub fn reports_deletions(&self) -> bool {
+        self.log_format
+            || logging::info_gte(logging::InfoFlag::Del, 1)
+            || logging::info_gte(logging::InfoFlag::Name, 1)
+    }
 }
 
 impl ParsedServerFlags {

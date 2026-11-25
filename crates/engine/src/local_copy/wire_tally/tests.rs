@@ -247,6 +247,36 @@ fn the_created_directory_notice_is_one_info_frame() {
     assert_eq!(verbose, quiet + 4 + "created directory dst\n".len() as u64);
 }
 
+/// A deleted name reaches the client only when it asked for per-item output
+/// (log.c:997-1006): one `MSG_DELETED` frame per name, a directory's with its
+/// trailing NUL. Without that request the deletion costs nothing on the wire.
+#[test]
+fn deleted_names_are_counted_only_when_reported() {
+    let entries = [dir("."), file("f", 0)];
+    let totals = WireTotals::new(ProtocolVersion::NEWEST, local_flags());
+    let run = |totals: WireTotals| {
+        let mut t = WireTally::new(totals, &LocalCopyOptions::new(), false);
+        for (i, entry) in entries.iter().enumerate() {
+            t.add_entry(entry.clone(), i as u32, None);
+        }
+        t.deleted(Path::new("extra"), false);
+        t.deleted(Path::new("xdir"), true);
+        t.finish(None, [0; 5])
+    };
+    let mut bare = WireTally::new(totals, &LocalCopyOptions::new(), false);
+    for (i, entry) in entries.iter().enumerate() {
+        bare.add_entry(entry.clone(), i as u32, None);
+    }
+    let (_, none_deleted) = bare.finish(None, [0; 5]);
+    let (_, quiet) = run(totals);
+    let (_, reported) = run(totals.with_deletion_reports(true));
+    assert_eq!(quiet, none_deleted);
+    assert_eq!(
+        reported,
+        quiet + (4 + "extra".len() as u64) + (4 + "xdir".len() as u64 + 1)
+    );
+}
+
 /// The file list goes out in `readdir()` order (flist.c:send_directory()),
 /// and prefix compression makes its size depend on that order: here the
 /// readdir order shares no prefix between neighbours while sorted order
