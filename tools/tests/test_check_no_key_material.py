@@ -6,18 +6,20 @@ that wrap a generated body, and the short malformed inputs that test parse
 errors in the one allowlisted file. Both directions are pinned here, including
 that the allowance is tied to that exact path and never covers a real body.
 
-Every PEM-shaped string below is assembled at run time from random bytes, so
-this file holds no key material and does not trip the gate it tests.
+Every PEM-shaped string below is assembled at run time from seeded bytes, so
+this file holds no key material and does not trip the gate it tests. The body
+is fixed (seeded, not random) so each case matches exactly the rules it names:
+a random body occasionally contained `MII` and also tripped the bare-DER rule.
 """
 from __future__ import annotations
 
 import base64
-import os
+import random
 import tempfile
 import unittest
 from pathlib import Path
 
-from tools.ci.check_no_key_material import findings
+from tools.ci.check_no_key_material import BARE_DER, findings
 
 BEGIN = "-----BEGIN " + "CERTIFICATE-----"
 END = "-----END " + "CERTIFICATE-----"
@@ -26,9 +28,22 @@ KEY_END = "-----END " + "PRIVATE KEY-----"
 TRUST_RS = "crates/rsync_io/src/quic/trust.rs"
 
 
-def body() -> str:
-    encoded = base64.b64encode(os.urandom(300)).decode()
+def wrap(encoded: str) -> str:
     return "\n".join(encoded[i : i + 64] for i in range(0, len(encoded), 64))
+
+
+def seeded_b64(seed: int, size: int) -> str:
+    return base64.b64encode(random.Random(seed).randbytes(size)).decode()
+
+
+def body() -> str:
+    """A PEM body that matches the PEM rules and never the bare-DER rule."""
+    return wrap(seeded_b64(0, 300))
+
+
+def der_body() -> str:
+    """A PEM body whose first line is also a bare `MII...` DER blob."""
+    return wrap("MII" + seeded_b64(1, 300))
 
 
 class FindingsTests(unittest.TestCase):
@@ -60,8 +75,12 @@ class FindingsTests(unittest.TestCase):
         src = f'const CERT: &str = "{BEGIN}\\n{literal}\\n{END}";\n'
         self.assertEqual(len(self._scan("lib.rs", "// x\n" + src)), 1)
 
+    def test_fixed_bodies_match_only_the_rules_their_cases_name(self) -> None:
+        self.assertIsNone(BARE_DER.search(body().encode()))
+        self.assertIsNotNone(BARE_DER.search(der_body().encode()))
+
     def test_bare_base64_der_is_flagged(self) -> None:
-        blob = "MII" + base64.b64encode(os.urandom(60)).decode()
+        blob = "MII" + seeded_b64(2, 60)
         self.assertIn("base64 DER blob", self._scan("a.rs", f'"{blob}"')[0])
 
     def test_pem_encoder_around_a_generated_body_passes(self) -> None:
@@ -84,6 +103,15 @@ class FindingsTests(unittest.TestCase):
     def test_allowlisted_file_still_rejects_a_real_body(self) -> None:
         found = self._scan(TRUST_RS, f"{KEY_BEGIN}\n{body()}\n{KEY_END}\n")
         self.assertEqual(found, [f"{TRUST_RS}:1: embedded PEM block"])
+
+    def test_der_shaped_pem_body_is_reported_by_both_rules(self) -> None:
+        # Both rules apply independently: a PEM body that is itself a bare
+        # DER blob is reported once per rule, at the line each one matched.
+        for name in ("fixture.txt", TRUST_RS):
+            with self.subTest(name=name):
+                found = self._scan(name, f"{KEY_BEGIN}\n{der_body()}\n{KEY_END}\n")
+                self.assertEqual(found, [f"{name}:1: embedded PEM block",
+                                         f"{name}:2: embedded base64 DER blob"])
 
 
 if __name__ == "__main__":
