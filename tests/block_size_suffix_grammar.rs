@@ -19,7 +19,7 @@
 //!
 //! Skip conditions (test passes with a printed reason, except under
 //! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
-//! - The cross-implementation cell needs a built upstream 3.5.1 binary; without
+//! - The cross-implementation cell needs a built upstream 3.5.2 binary; without
 //!   it, it reports why it did not run.
 
 use std::fs;
@@ -31,7 +31,7 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
         .map(|upstream| upstream.binary().to_path_buf())
 }
 
@@ -117,7 +117,7 @@ fn the_grammar_table_matches_the_real_upstream_binary() {
         assert_eq!(
             fixture.accepts(&upstream, value),
             *expected,
-            "upstream 3.5.1 --block-size={value} acceptance"
+            "upstream 3.5.2 --block-size={value} acceptance"
         );
     }
 }

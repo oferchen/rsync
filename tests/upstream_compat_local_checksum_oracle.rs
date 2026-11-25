@@ -1,4 +1,4 @@
-//! Local `--checksum` decisions and output against upstream rsync 3.5.1.
+//! Local `--checksum` decisions and output against upstream rsync 3.5.2.
 //!
 //! oc decides a local `-c` copy by hashing both sides through the parallel
 //! checksum service, splitting files of two or more 4 MiB blocks into
@@ -13,7 +13,7 @@
 //! a middle and the last block.
 //!
 //! Gating: skips silently unless `OC_RSYNC_UPSTREAM_COMPAT=1`, then self-skips
-//! when upstream 3.5.1 is not installed (`require_upstream_rsync`).
+//! when upstream 3.5.2 is not installed (`require_upstream_rsync`).
 #![cfg(unix)]
 
 use std::fs::{self, File};
@@ -116,7 +116,7 @@ fn local_checksum_decisions_match_upstream() {
     if !upstream_compat_enabled() {
         return;
     }
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let work = tempdir().unwrap();

@@ -13,7 +13,7 @@
 //! whatever the errno (main.c:817-821). It runs before do_recv() forks
 //! (main.c:1248), so the line and the trailer name the unforked `Receiver`
 //! (rsync.c:987-995). Measured against the rsync 3.5.1 tarball build over a
-//! remote shell (3.5.0 gives the same codes):
+//! remote shell (3.5.2 gives the same codes):
 //!
 //! | client | server | protocol | client-observed exit |
 //! |--------|--------|----------|----------------------|
@@ -26,7 +26,7 @@
 //! port must gate on the protocol version alone, which is exactly what the two
 //! rows above show on the wire.
 //!
-//! Every cell runs under the oc client and, when it is installed, the 3.5.1
+//! Every cell runs under the oc client and, when it is installed, the 3.5.2
 //! client. The latter answers the frame with `kill_all(SIGUSR1)`
 //! (cleanup.c:202-203); the remote shell execs the server, so that kill lands
 //! on the server itself, and only a report printed before the frame survives.
@@ -59,18 +59,18 @@ fn oc_rsync_binary() -> PathBuf {
     built
 }
 
-/// The clients every cell runs under: oc, and 3.5.1 when it is installed.
+/// The clients every cell runs under: oc, and 3.5.2 when it is installed.
 ///
-/// A 3.5.1 binary that resolves but fails the banner check would silently
+/// A 3.5.2 binary that resolves but fails the banner check would silently
 /// drop its cells, so it fails the test instead of skipping it.
 fn clients() -> Vec<PathBuf> {
     let mut clients = vec![oc_rsync_binary()];
-    let located = locate_upstream_rsync(UpstreamVersion::V3_5_1);
-    match require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    let located = locate_upstream_rsync(UpstreamVersion::V3_5_2);
+    match require_upstream_rsync(UpstreamVersion::V3_5_2) {
         Some(upstream) => clients.push(upstream.binary().to_path_buf()),
         None => assert!(
             located.is_none(),
-            "3.5.1 at {located:?} was found but rejected; its cells would not run"
+            "3.5.2 at {located:?} was found but rejected; its cells would not run"
         ),
     }
     for client in &clients {
@@ -210,7 +210,7 @@ fn assert_mkdir_report(client: &Path, fname: &str, text: &str) {
 /// The regression. At the negotiated default protocol the server receiver's
 /// `RERR_FILEIO` must arrive as the client's own exit code, not the
 /// `RERR_FILESELECT` its EACCES would grade, and its report must survive the
-/// 3.5.1 client's kill.
+/// 3.5.2 client's kill.
 ///
 /// upstream: main.c:817-821; cleanup.c:251 `send_msg_int(MSG_ERROR_EXIT,
 /// exit_code)`; io.c:1930 `_exit_cleanup(val, __FILE__, 0 - __LINE__)`.

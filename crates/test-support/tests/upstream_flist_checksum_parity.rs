@@ -217,8 +217,8 @@ fn checksum_flist_stream_matches_upstream() {
     if !upstream_compat_enabled() {
         return;
     }
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_1)
-        .expect("OC_RSYNC_UPSTREAM_COMPAT=1 but upstream 3.5.1 is not installed");
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2)
+        .expect("OC_RSYNC_UPSTREAM_COMPAT=1 but upstream 3.5.2 is not installed");
     let up = upstream.binary();
     let (reference, up_itemize) = pull(up, up);
     let (candidate, oc_itemize) = pull(up, &test_support::oc_rsync_bin());
@@ -236,7 +236,7 @@ fn checksum_flist_stream_matches_upstream() {
     assert_eq!(oc_itemize, up_itemize, "client itemize output");
     assert!(
         candidate == reference,
-        "oc sender data stream differs from upstream 3.5.1 ({} vs {} bytes)",
+        "oc sender data stream differs from upstream 3.5.2 ({} vs {} bytes)",
         candidate.len(),
         reference.len()
     );

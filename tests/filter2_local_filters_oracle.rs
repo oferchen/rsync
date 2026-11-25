@@ -1,4 +1,4 @@
-//! The sender announces each per-directory filter scope as 3.5.1 does.
+//! The sender announces each per-directory filter scope as 3.5.2 does.
 //!
 //! upstream: exclude.c:858-867 `push_local_filters()` prints
 //! `[%s] pushing local filters for %s` at FILTER2 for every directory the
@@ -7,7 +7,7 @@
 //! sequence shows how often each scope is entered, which no transfer outcome
 //! can: a scope pushed twice holds the same rules twice and filters the same.
 //!
-//! Each cell runs one transfer with 3.5.1 and once with oc in the sender's
+//! Each cell runs one transfer with 3.5.2 and once with oc in the sender's
 //! seat and requires the two push/pop sequences to match line for line. The
 //! oc sender runs its lazy INC_RECURSE producer, except in the `--no-i-r`
 //! cell.
@@ -94,14 +94,14 @@ fn assert_same_trace(upstream: &Path, pull: bool, args: &[&str]) {
         expected
             .iter()
             .any(|line| line.contains("pushing local filters")),
-        "3.5.1 printed no push lines for {args:?}: the cell cannot discriminate"
+        "3.5.2 printed no push lines for {args:?}: the cell cannot discriminate"
     );
     assert_eq!(actual, expected, "{args:?}");
 }
 
 #[test]
 fn a_lazy_push_announces_each_scope_like_upstream() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     assert_same_trace(upstream.binary(), false, &["-r", "-F", "--debug=FILTER2"]);
@@ -109,7 +109,7 @@ fn a_lazy_push_announces_each_scope_like_upstream() {
 
 #[test]
 fn a_lazy_push_without_merge_rules_announces_pushes_only() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     assert_same_trace(upstream.binary(), false, &["-r", "--debug=FILTER2"]);
@@ -117,7 +117,7 @@ fn a_lazy_push_without_merge_rules_announces_pushes_only() {
 
 #[test]
 fn a_whole_list_push_announces_each_scope_like_upstream() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     assert_same_trace(
@@ -131,7 +131,7 @@ fn a_whole_list_push_announces_each_scope_like_upstream() {
 /// over the multiplexed stream.
 #[test]
 fn a_lazy_pull_from_an_oc_server_announces_each_scope_like_upstream() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     assert_same_trace(upstream.binary(), true, &["-r", "-F", "-vvv"]);

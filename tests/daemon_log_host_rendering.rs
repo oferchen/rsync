@@ -28,7 +28,7 @@
 //! Skip conditions (test passes with a printed reason, except under
 //! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - Loopback TCP is unavailable.
-//! - The cross-implementation cell additionally needs a built upstream 3.5.1
+//! - The cross-implementation cell additionally needs a built upstream 3.5.2
 //!   binary; without it that cell reports why it did not run.
 
 #![cfg(unix)]
@@ -45,11 +45,11 @@ fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// Locates the built upstream 3.5.1 oracle, or `None` when the interop tree has
+/// Locates the built upstream 3.5.2 oracle, or `None` when the interop tree has
 /// not been fetched and built. The cross-implementation cell degrades to a
 /// printed skip rather than a silent pass.
 fn upstream_binary() -> Option<PathBuf> {
-    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
         .map(|upstream| upstream.binary().to_path_buf())
 }
 
@@ -224,7 +224,7 @@ fn reverse_lookup_on_renders_a_resolved_name() {
     );
 }
 
-/// CROSS-IMPLEMENTATION: the same config served by the real 3.5.1 binary must
+/// CROSS-IMPLEMENTATION: the same config served by the real 3.5.2 binary must
 /// produce the same `%h` / `%a` rendering.
 ///
 /// This is what makes the sentinels evidence rather than a guess - the strings

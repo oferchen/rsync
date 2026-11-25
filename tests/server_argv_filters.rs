@@ -1,4 +1,4 @@
-//! Filter options on a remote-shell server's own argv, as 3.5.1 applies them.
+//! Filter options on a remote-shell server's own argv, as 3.5.2 applies them.
 //!
 //! upstream: options.c:1647-1683 and :1718-1727 parse `-f`, `--exclude`,
 //! `--include`, the `-from` pair and `-F` into `filter_list` ahead of the
@@ -7,7 +7,7 @@
 //! list, so an option ahead of `--server` applies twice. A missing filter file
 //! is `rsyserr()` plus RERR_FILEIO (exclude.c:1714-1719). A daemon parses the
 //! client's `-M` options in the same pass, short clusters included. Every
-//! transfer is driven by the 3.5.1 client under a deadline, so a hang fails as
+//! transfer is driven by the 3.5.2 client under a deadline, so a hang fails as
 //! a TIMEOUT.
 
 #![cfg(unix)]
@@ -31,7 +31,7 @@ fn oc_rsync() -> PathBuf {
 }
 
 fn upstream() -> Option<PathBuf> {
-    require_upstream_rsync(UpstreamVersion::V3_5_1).map(|u| u.binary().to_path_buf())
+    require_upstream_rsync(UpstreamVersion::V3_5_2).map(|u| u.binary().to_path_buf())
 }
 
 #[derive(Clone, Copy)]
@@ -51,7 +51,7 @@ struct Outcome {
 }
 
 /// Transfers `src/` (`d/a`, `d/b`, `d/g.tmp` and a `.rsync-filter` saying
-/// `- a`) between the 3.5.1 client and `server`, whose argv gets `before`
+/// `- a`) between the 3.5.2 client and `server`, whose argv gets `before`
 /// ahead of `--server` and `after` right behind it.
 fn transfer(server: &Path, direction: Direction, before: &[&str], after: &[&str]) -> Outcome {
     let temp = tempfile::tempdir().unwrap();
@@ -149,13 +149,13 @@ fn refusal(stderr: &str) -> Vec<String> {
         .collect()
 }
 
-/// Runs one cell against both servers and checks oc against 3.5.1, and 3.5.1
+/// Runs one cell against both servers and checks oc against 3.5.2, and 3.5.2
 /// against the outcome the cell exists to show.
 fn cell(direction: Direction, before: &[&str], after: &[&str], expected: &Outcome) {
     let reference = transfer(&upstream().unwrap(), direction, before, after);
     assert_eq!(
         &reference, expected,
-        "3.5.1 itself: {before:?} --server {after:?}"
+        "3.5.2 itself: {before:?} --server {after:?}"
     );
     let actual = transfer(&oc_rsync(), direction, before, after);
     assert_eq!(actual, reference, "{before:?} --server {after:?}");
@@ -315,12 +315,12 @@ fn daemon_push(daemon: &Path, option: &str) -> Vec<String> {
 }
 
 /// A filter inside a short cluster on a daemon's argv (`-M-rf- x`) protects
-/// `x` from a `--delete` push, as 3.5.1's popt pass reads it.
+/// `x` from a `--delete` push, as 3.5.2's popt pass reads it.
 #[test]
 fn clustered_filter_on_a_daemon_argv_protects_from_delete() {
     let Some(upstream) = upstream() else { return };
     let reference = daemon_push(&upstream, "-rf- x");
-    assert_eq!(reference, ["a", "x"], "3.5.1 itself");
+    assert_eq!(reference, ["a", "x"], "3.5.2 itself");
     assert_eq!(daemon_push(&oc_rsync(), "-rf- x"), reference);
 }
 
@@ -395,7 +395,7 @@ fn daemon_filtered_pull(daemon: &Path, rule: &str) -> Vec<String> {
 }
 
 /// The `!` (negate) and `/` (absolute-path) modifiers on a daemon-forwarded
-/// rule hide exactly what 3.5.1 hides. Before the daemon shared the client's
+/// rule hide exactly what 3.5.2 hides. Before the daemon shared the client's
 /// parser it ignored both and served every file.
 #[test]
 fn daemon_forwarded_rule_modifiers_hide_like_upstream() {
@@ -407,7 +407,7 @@ fn daemon_forwarded_rule_modifiers_hide_like_upstream() {
     ];
     for (rule, expected) in cases {
         let reference = daemon_filtered_pull(&upstream, rule);
-        assert_eq!(reference, expected, "3.5.1 itself: {rule:?}");
+        assert_eq!(reference, expected, "3.5.2 itself: {rule:?}");
         assert_eq!(
             daemon_filtered_pull(&oc_rsync(), rule),
             reference,
@@ -485,7 +485,7 @@ fn daemon_merge_refusal_names_the_sanitized_path() {
         ),
     ] {
         let reference = daemon_merge_refusal(&upstream, rule);
-        assert_eq!(reference, expected, "3.5.1 itself: {rule:?}");
+        assert_eq!(reference, expected, "3.5.2 itself: {rule:?}");
         assert_eq!(
             daemon_merge_refusal(&oc_rsync(), rule),
             reference,

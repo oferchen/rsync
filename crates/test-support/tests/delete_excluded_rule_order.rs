@@ -10,8 +10,8 @@
 //!
 //! Each cell captures the client-to-server stream through `capture-rsh` and
 //! looks for each rule's `write_int(len)` + text framing (exclude.c:1936-1937).
-//! The pinned bytes were recorded from rsync 3.5.1; when that release is
-//! installed, its client is captured too and must send the same bytes.
+//! The pinned bytes were recorded from rsync 3.5.1; when 3.5.2 is installed,
+//! its client is captured too and must send the same bytes.
 #![cfg(unix)]
 
 use std::fs;
@@ -68,11 +68,11 @@ fn client_to_server(client: &Path, server: &Path, pull: bool) -> Vec<u8> {
     recorder.finish().expect("transcript").client_to_server
 }
 
-/// The clients to capture: oc always, and 3.5.1 when it is installed. Both
+/// The clients to capture: oc always, and 3.5.2 when it is installed. Both
 /// talk to the same server so only the client differs.
 fn clients() -> (Vec<(&'static str, PathBuf)>, PathBuf) {
     let oc = test_support::oc_rsync_bin();
-    match require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    match require_upstream_rsync(UpstreamVersion::V3_5_2) {
         Some(upstream) => {
             let upstream = upstream.binary().to_path_buf();
             (vec![("oc", oc), ("upstream", upstream.clone())], upstream)

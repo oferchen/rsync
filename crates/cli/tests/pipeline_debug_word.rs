@@ -77,7 +77,7 @@ fn copy_tree(binary: &Path, args: &[&str]) -> (String, String) {
 
 /// The lines of `text` with the temp root replaced and every number masked,
 /// so runs compare by line shape. A digit run swallows the `,` and `.` inside
-/// it: 3.5.1 groups the rate's thousands and oc does not yet (filed apart).
+/// it: 3.5.2 groups the rate's thousands and oc does not yet (filed apart).
 fn line_shapes(text: &str, root: &str) -> BTreeSet<String> {
     text.replace(root, "ROOT")
         .lines()
@@ -148,7 +148,7 @@ fn the_pipeline_word_prints_its_lines_by_level() {
     }
 }
 
-/// Every line a local `-vvv` copy prints, 3.5.1 prints too. The oc-only
+/// Every line a local `-vvv` copy prints, 3.5.2 prints too. The oc-only
 /// SECCOMP and LANDLOCK words are in no `-v` row, so a sandbox line here is
 /// a regression.
 #[test]
@@ -156,7 +156,7 @@ fn local_vvv_prints_no_oc_only_line() {
     if !upstream_compat_enabled() {
         return;
     }
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     for verbosity in ["-vvv", "-vvvv"] {
@@ -169,7 +169,7 @@ fn local_vvv_prints_no_oc_only_line() {
             .collect();
         assert!(
             oc_only.is_empty(),
-            "{verbosity} lines 3.5.1 never prints: {oc_only:#?}"
+            "{verbosity} lines 3.5.2 never prints: {oc_only:#?}"
         );
     }
 }

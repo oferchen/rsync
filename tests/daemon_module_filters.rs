@@ -1,4 +1,4 @@
-//! A daemon module's own filter directives, as 3.5.1 applies them.
+//! A daemon module's own filter directives, as 3.5.2 applies them.
 //!
 //! upstream: clientserver.c:933-958 builds `daemon_filter_list` from `filter`,
 //! `include from`, `include`, `exclude from` and `exclude` through the same
@@ -6,7 +6,7 @@
 //! `XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3`. A directive the parser refuses ends
 //! the session before `@RSYNCD: OK` with the cause in the daemon log only
 //! (exclude.c:133-137, :1714-1719). Every cell pulls the same module from a
-//! 3.5.1 daemon and from oc's, with the 3.5.1 client under a deadline, and
+//! 3.5.2 daemon and from oc's, with the 3.5.2 client under a deadline, and
 //! compares the exit, the served files and the logged cause.
 
 #![cfg(unix)]
@@ -33,7 +33,7 @@ fn oc_rsync() -> PathBuf {
 }
 
 fn upstream() -> Option<PathBuf> {
-    require_upstream_rsync(UpstreamVersion::V3_5_1).map(|u| u.binary().to_path_buf())
+    require_upstream_rsync(UpstreamVersion::V3_5_2).map(|u| u.binary().to_path_buf())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -148,14 +148,14 @@ fn assert_parity(params: &[&str], rules: &str) -> Option<Served> {
     let actual = module_pull(&oc_rsync(), params, rules);
     assert_eq!(
         actual, expected,
-        "oc vs upstream 3.5.1 for {params:?} / {rules:?}"
+        "oc vs upstream 3.5.2 for {params:?} / {rules:?}"
     );
     Some(actual)
 }
 
 /// Rows A and B: the `!` (negate) and `/` (absolute-path) modifiers on a
 /// module's own rule. The daemon's old parser dropped `!` and anchored `/`,
-/// serving files 3.5.1 hides.
+/// serving files 3.5.2 hides.
 #[test]
 fn negate_and_abs_path_modifiers_match_upstream() {
     for rule in [

@@ -66,7 +66,7 @@ fn oc_sender_drops_a_file_whose_xattrs_cannot_be_read() {
     }
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     let wrapper = rsh_wrapper(temp.path());
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_1);
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2);
     let mut clients = vec![("oc", oc_rsync())];
     clients.extend(
         upstream

@@ -24,10 +24,10 @@ fn oc_rsync() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// The clients to drive each server with: always oc, plus 3.5.1 when present.
+/// The clients to drive each server with: always oc, plus 3.5.2 when present.
 fn clients() -> Vec<(&'static str, PathBuf)> {
     let mut clients = vec![("oc", oc_rsync())];
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         clients.push(("upstream", upstream.binary().to_path_buf()));
     }
     clients

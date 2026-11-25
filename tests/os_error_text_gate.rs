@@ -9,7 +9,7 @@
 //! through `RSYNC_CONNECT_PROG`. On the remote legs the failing side is the
 //! server, so the text also crosses the wire as `MSG_ERROR`. Every cell must
 //! name the errno, so a cell that reports no OS error at all fails instead of
-//! passing vacuously. When a 3.5.1 binary is available, the errno text of each
+//! passing vacuously. When a 3.5.2 binary is available, the errno text of each
 //! cell must equal upstream's.
 
 #![cfg(unix)]
@@ -214,20 +214,20 @@ fn assert_upstream_errno_text(root: &Path, leg: Leg, failure: &Failure) {
 }
 
 fn assert_matches_upstream(root: &Path, leg: Leg, failure: &Failure) {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let oc = run(&oc_binary(), root, leg, failure);
     let up = run(upstream.binary(), root, leg, failure);
     let oc_tails = errno_tails(&String::from_utf8_lossy(&oc.stderr));
     let up_tails = errno_tails(&String::from_utf8_lossy(&up.stderr));
-    // 3.5.1 can add a late `write error: Broken pipe (32)` after its trailer
+    // 3.5.2 can add a late `write error: Broken pipe (32)` after its trailer
     // depending on scheduling, so oc's errno set must be contained in
     // upstream's rather than equal to it.
     assert!(
         up_tails.iter().any(|tail| tail == failure.errno_text)
             && oc_tails.iter().all(|tail| up_tails.contains(tail)),
-        "{leg:?} {}: errno text differs from 3.5.1\noc:\n{}\n3.5.1:\n{}",
+        "{leg:?} {}: errno text differs from 3.5.2\noc:\n{}\n3.5.1:\n{}",
         failure.source,
         String::from_utf8_lossy(&oc.stderr),
         String::from_utf8_lossy(&up.stderr)
@@ -294,7 +294,7 @@ fn run_site(binary: &Path, root: &Path, site: &Site) -> Output {
     command.output().expect("run client")
 }
 
-/// oc prints the cause text without Rust's rendering and, when a 3.5.1
+/// oc prints the cause text without Rust's rendering and, when a 3.5.2
 /// binary is available, upstream prints the very same text, so the expected
 /// string is upstream's and not one this test made up.
 fn assert_site(root: &Path, name: &str, site: &Site) {
@@ -314,7 +314,7 @@ fn assert_site(root: &Path, name: &str, site: &Site) {
         "{name}: expected {:?}\n{stderr}",
         site.cause
     );
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let up = run_site(upstream.binary(), root, site);
@@ -322,11 +322,11 @@ fn assert_site(root: &Path, name: &str, site: &Site) {
     assert_eq!(
         up.status.success(),
         site.succeeds,
-        "{name}: 3.5.1\n{up_stderr}"
+        "{name}: 3.5.2\n{up_stderr}"
     );
     assert!(
         up_stderr.contains(&site.cause),
-        "{name}: 3.5.1 does not print {:?}\n{up_stderr}",
+        "{name}: 3.5.2 does not print {:?}\n{up_stderr}",
         site.cause
     );
 }

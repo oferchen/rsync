@@ -1,4 +1,4 @@
-//! Oracle cells: oc-rsync and upstream rsync 3.5.1 must parse filter rules alike.
+//! Oracle cells: oc-rsync and upstream rsync 3.5.2 must parse filter rules alike.
 //!
 //! Every cell runs the SAME local transfer through both binaries over identical
 //! fresh trees and compares what an operator can observe: the exit code, the
@@ -9,7 +9,7 @@
 //!
 //! # Gating
 //!
-//! Self-skips unless `OC_RSYNC_UPSTREAM_COMPAT=1` and an upstream 3.5.1 binary
+//! Self-skips unless `OC_RSYNC_UPSTREAM_COMPAT=1` and an upstream 3.5.2 binary
 //! resolves (`OC_RSYNC_UPSTREAM_BIN_3_5_1`, or the interop install). Once both
 //! are present every cell must run and match. Unix only: the pull cells run
 //! the server through a `/bin/sh` remote shell.
@@ -92,7 +92,7 @@ fn trailer(line: &str) -> String {
 enum Source {
     /// A local `src/`.
     Local,
-    /// `localhost:<tree>/src/` through a remote shell that runs upstream 3.5.1
+    /// `localhost:<tree>/src/` through a remote shell that runs upstream 3.5.2
     /// in place as the server, so the client's rules cross the wire to it.
     Pull,
     /// `src/` to `localhost:<tree>/dst/` through the same remote shell, so the
@@ -208,12 +208,12 @@ fn run(
     }
 }
 
-/// The resolved upstream 3.5.1 binary, or `None` when the cell must skip.
+/// The resolved upstream 3.5.2 binary, or `None` when the cell must skip.
 fn upstream() -> Option<test_support::UpstreamRsync> {
     if !upstream_compat_enabled() {
         return None;
     }
-    require_upstream_rsync(UpstreamVersion::V3_5_1)
+    require_upstream_rsync(UpstreamVersion::V3_5_2)
 }
 
 /// Asserts an oc client and an upstream client agree on `args` over `files`,
@@ -225,7 +225,7 @@ fn assert_parity_from(files: &[(&str, &str)], args: &[&str], source: Source) -> 
     let actual = run(&oc_rsync_bin(), server, files, args, source);
     assert_eq!(
         actual, expected,
-        "oc vs upstream 3.5.1 for {args:?} ({source:?})"
+        "oc vs upstream 3.5.2 for {args:?} ({source:?})"
     );
     Some(actual)
 }
@@ -235,7 +235,7 @@ fn assert_parity(files: &[(&str, &str)], args: &[&str]) -> Option<Outcome> {
     assert_parity_from(files, args, Source::Local)
 }
 
-/// #457: upstream 3.5.1 has no `exclude-if-present` rule. `parse_rule_tok`
+/// #457: upstream 3.5.2 has no `exclude-if-present` rule. `parse_rule_tok`
 /// takes `case 'e':`, `RULE_STRCMP(s, "exclude")` rejects the `-` after the
 /// keyword, and `filter_rule_err("Unknown filter rule")` exits RERR_SYNTAX
 /// (exclude.c:1297-1299, 1362-1363).

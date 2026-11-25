@@ -9,13 +9,13 @@
 //! An oc server receiver collected the entries but never sent them, so the
 //! client printed nothing.
 //!
-//! Every expected listing is the verbatim stdout of rsync 3.5.1 on the same
+//! Every expected listing is the verbatim stdout of rsync 3.5.2 on the same
 //! fixture with `TZ=UTC` on both ends. A directory's size is its filesystem
 //! `st_size`, which is not portable, so that column is blanked. The symlink's
 //! permission column is its `lstat` mode, which `symlink(2)` takes from the
 //! umask on macOS but fixes at 0777 on Linux, so it is rebuilt from the
 //! fixture's own link (see `for_this_host`). When rsync
-//! 3.5.1 is installed the same command also runs with upstream on both ends
+//! 3.5.2 is installed the same command also runs with upstream on both ends
 //! and with an upstream client against the oc server, and the outputs must be
 //! byte-identical.
 #![cfg(unix)]
@@ -38,7 +38,7 @@ use test_support::{
 /// 2020-01-02 03:04:05 UTC.
 const FIXTURE_MTIME: i64 = 1_577_934_245;
 
-/// rsync 3.5.1 `-rl --list-only` of [`fixture`]. Under INC_RECURSE each
+/// rsync 3.5.2 `-rl --list-only` of [`fixture`]. Under INC_RECURSE each
 /// directory heads its own sub-list, so `sub` follows the top-level files.
 const LISTING_RL: &str = "\
 drwxr-xr-x          4,096 2020/01/02 03:04:05 .
@@ -51,7 +51,7 @@ drwxr-xr-x          4,096 2020/01/02 03:04:05 sub/deep
 -rw-r--r--              2 2020/01/02 03:04:05 sub/deep/c.txt
 ";
 
-/// rsync 3.5.1 `-r --list-only`: without `-l` the server lists the symlink
+/// rsync 3.5.2 `-r --list-only`: without `-l` the server lists the symlink
 /// with no ` -> target` (upstream: generator.c:1377-1385 `preserve_links`).
 const LISTING_R: &str = "\
 drwxr-xr-x          4,096 2020/01/02 03:04:05 .
@@ -166,7 +166,7 @@ fn assert_listing(out: &CliOutput, expected: &str, what: &str) {
     assert_eq!(
         normalise(&out.stdout_str()),
         normalise(expected),
-        "{what}: listing differs from rsync 3.5.1"
+        "{what}: listing differs from rsync 3.5.2"
     );
 }
 
@@ -194,7 +194,7 @@ fn rsh_push_lists_through_the_oc_server() {
         assert_listing(&out, &expected, &format!("oc -> oc rsh push {flags}"));
         assert_destination_untouched(tmp.path());
 
-        let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+        let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
             continue;
         };
         let reference = run(
@@ -205,12 +205,12 @@ fn rsh_push_lists_through_the_oc_server() {
         assert_eq!(
             reference.stdout_str(),
             out.stdout_str(),
-            "{flags}: oc -> oc against 3.5.1 -> 3.5.1"
+            "{flags}: oc -> oc against 3.5.2 -> 3.5.2"
         );
         assert_eq!(
             reference.stdout_str(),
             mixed.stdout_str(),
-            "{flags}: 3.5.1 -> oc against 3.5.1 -> 3.5.1"
+            "{flags}: 3.5.2 -> oc against 3.5.2 -> 3.5.2"
         );
     }
 }
@@ -224,7 +224,7 @@ fn rsh_pull_control_lists_on_the_oc_client() {
     let oc = oc_rsync_bin();
     let out = run(&oc, &rsh_args(tmp.path(), "-rl", &oc, false));
     assert_listing(&out, &for_this_host(LISTING_RL, tmp.path()), "oc pull");
-    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
         let reference = run(
             upstream.binary(),
             &rsh_args(tmp.path(), "-rl", upstream.binary(), false),
@@ -232,7 +232,7 @@ fn rsh_pull_control_lists_on_the_oc_client() {
         assert_eq!(
             reference.stdout_str(),
             out.stdout_str(),
-            "oc pull against 3.5.1 pull"
+            "oc pull against 3.5.2 pull"
         );
     }
 }
@@ -283,7 +283,7 @@ fn daemon_push_lists_through_the_oc_daemon() {
     assert_listing(&out, &munged, "oc -> oc daemon push");
     assert_destination_untouched(tmp.path());
 
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let mixed = run(upstream.binary(), &daemon_args(tmp.path(), &daemon));
@@ -296,11 +296,11 @@ fn daemon_push_lists_through_the_oc_daemon() {
     assert_eq!(
         reference.stdout_str(),
         out.stdout_str(),
-        "oc -> oc daemon against 3.5.1"
+        "oc -> oc daemon against 3.5.2"
     );
     assert_eq!(
         reference.stdout_str(),
         mixed.stdout_str(),
-        "3.5.1 -> oc daemon against 3.5.1"
+        "3.5.2 -> oc daemon against 3.5.2"
     );
 }

@@ -95,7 +95,7 @@ fn oc_lazy_sender_stops_deleting_where_the_error_is_found() {
 
 #[test]
 fn oc_lazy_sender_matches_upstream_into_an_upstream_receiver() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let oc = test_support::oc_rsync_bin();

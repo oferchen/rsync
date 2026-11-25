@@ -11,8 +11,8 @@
 //! `log_exit()` then prints only the code's description (cleanup.c:248). Each
 //! cell sends one file to `/dev/full` under `--write-devices`, whose writes fail
 //! with ENOSPC, through each path whose receiver is oc: an rsh pull, an rsh
-//! push from an oc client and from a 3.5.1 client, and a daemon pull. A
-//! 3.5.1-to-3.5.1 pull runs the same assertions as the fixture's oracle.
+//! push from an oc client and from a 3.5.2 client, and a daemon pull. A
+//! 3.5.2-to-3.5.2 pull runs the same assertions as the fixture's oracle.
 //!
 //! Linux only: `/dev/full` is a Linux device. The trailer's role is not
 //! asserted here; the pull's role is task 268's.
@@ -136,28 +136,28 @@ fn upstream_client_push_to_an_oc_server_reports_the_write_site() {
     if !dev_full_present() {
         return;
     }
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let output = Fixture::new().push(upstream.binary(), &test_support::oc_rsync_bin());
-    // The trailer is not asserted: at protocol 31+ the 3.5.1 sender echoes the
+    // The trailer is not asserted: at protocol 31+ the 3.5.2 sender echoes the
     // server's MSG_ERROR_EXIT (io.c:1904-1925) and the oc server leaves on the
-    // echo without its own log_exit() line, which 3.5.1's server prints. That
+    // echo without its own log_exit() line, which 3.5.2's server prints. That
     // gap predates this fix and is tracked separately.
-    assert_site_line(&output, "3.5.1 client push to oc");
+    assert_site_line(&output, "3.5.2 client push to oc");
 }
 
-/// Oracle: the tarball 3.5.1 passes the same assertions on the same fixture.
+/// Oracle: the tarball 3.5.2 passes the same assertions on the same fixture.
 #[test]
 fn upstream_pull_into_dev_full_is_the_oracle() {
     if !dev_full_present() {
         return;
     }
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let output = Fixture::new().pull(upstream.binary(), upstream.binary());
-    assert_write_failure(&output, "3.5.1 pull");
+    assert_write_failure(&output, "3.5.2 pull");
 }
 
 #[cfg(feature = "daemon")]

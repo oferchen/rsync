@@ -3,7 +3,7 @@
 //! Builds a deep source tree (four directory levels) and seeds each level with
 //! a `.rsync-filter` that mixes include/exclude rules, `merge` and `dir-merge`
 //! directives, and the leading `+`/`-` modifiers. The test then runs both
-//! upstream rsync 3.4.4 and oc-rsync in dry-run mode with `-av -F` and asserts
+//! upstream rsync 3.5.2 and oc-rsync in dry-run mode with `-av -F` and asserts
 //! that the produced file lists agree.
 //!
 //! The dry-run output is parsed into the set of file/directory paths emitted by
@@ -24,9 +24,7 @@
 //! - Anchored (`/`-prefixed) and unanchored patterns appear together to
 //!   exercise the anchor semantics inherited across directory levels.
 //!
-//! The oracle is 3.4.4: 3.4.2 was never in the interop build matrix
-//! (3.0.9, 3.1.3, 3.4.1, 3.4.4, 3.5.0, 3.5.1), so this cell could not run, and
-//! 3.4.4 is the nearest supported release. It resolves through
+//! The oracle is 3.5.2, the reference release. It resolves through
 //! `test_support::require_upstream_rsync`: without the binary the test skips
 //! locally and fails under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 
@@ -203,7 +201,7 @@ fn parse_file_list(raw: &[u8]) -> BTreeSet<String> {
 #[test]
 fn nested_rsync_filter_inheritance_matches_upstream() {
     let Some(upstream) =
-        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
     else {
         return;
     };

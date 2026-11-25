@@ -1,6 +1,6 @@
 //! Upstream-compat port of `testsuite/daemon-gzip-download_test.py`.
 //!
-//! Pairs an upstream rsync client (3.5.1 by default) against an oc-rsync
+//! Pairs an upstream rsync client (3.5.2 by default) against an oc-rsync
 //! daemon over a real TCP socket. The transfer pulls a ~1 MB fixture with
 //! `-zz` (new-style zlibx codec). The invariant under test is that the
 //! goodbye envelope reaches the upstream client without a premature
@@ -30,8 +30,8 @@
 //! 1. `OC_RSYNC_UPSTREAM_COMPAT` env var is not `1` - the standard PR
 //!    nextest cell does not set this, so the test no-ops in well under
 //!    1 ms.
-//! 2. The upstream rsync 3.5.1 binary cannot be located at
-//!    `target/interop/upstream-install/3.5.1/bin/rsync` (run
+//! 2. The upstream rsync 3.5.2 binary cannot be located at
+//!    `target/interop/upstream-install/3.5.2/bin/rsync` (run
 //!    `tools/ci/run_interop.sh` to build it). The `OC_RSYNC_UPSTREAM_BIN_3_5_1`
 //!    env var overrides the path.
 //!
@@ -175,15 +175,15 @@ impl Fixture {
 /// `OC_RSYNC_UPSTREAM_COMPAT` unset the test skips, which keeps the standard
 /// PR nextest cell costless and the macOS/Windows cells green. Once it is set
 /// the test must never report green without having run: a missing upstream
-/// 3.5.1 binary is a setup error and fails loudly rather than returning.
+/// 3.5.2 binary is a setup error and fails loudly rather than returning.
 #[test]
 fn daemon_gzip_goodbye_does_not_truncate() {
     if !upstream_compat_enabled() {
         return;
     }
 
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_1).expect(
-        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.1 is not \
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2).expect(
+        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.2 is not \
          installed; build it with `bash tools/ci/run_interop.sh` or point \
          OC_RSYNC_UPSTREAM_BIN_3_5_1 at it",
     );

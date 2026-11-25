@@ -101,10 +101,10 @@ impl Fixture {
     }
 }
 
-/// 3.5.1 first, when installed, so the expectations are proven on the oracle
+/// 3.5.2 first, when installed, so the expectations are proven on the oracle
 /// before oc is held to them.
 fn implementations() -> Vec<(&'static str, PathBuf)> {
-    let mut impls: Vec<_> = require_upstream_rsync(UpstreamVersion::V3_5_1)
+    let mut impls: Vec<_> = require_upstream_rsync(UpstreamVersion::V3_5_2)
         .map(|u| ("upstream", u.binary().to_path_buf()))
         .into_iter()
         .collect();

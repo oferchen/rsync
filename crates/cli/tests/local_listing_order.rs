@@ -1,5 +1,5 @@
 //! Local `-vv` listing order: the generator's notices and the sender's names
-//! interleave as rsync 3.5.1 prints them, with and without `--progress`.
+//! interleave as rsync 3.5.2 prints them, with and without `--progress`.
 //!
 //! upstream: generator.c:2889-2927 - the generator prints `is uptodate` the
 //! moment it checks an entry, while each transferred name waits in its output
@@ -10,7 +10,7 @@
 //! # Gating
 //!
 //! The order cells always run. The oracle cell self-skips unless
-//! `OC_RSYNC_UPSTREAM_COMPAT=1` and an upstream 3.5.1 binary resolves
+//! `OC_RSYNC_UPSTREAM_COMPAT=1` and an upstream 3.5.2 binary resolves
 //! (override with `OC_RSYNC_UPSTREAM_BIN_3_5_1`).
 #![cfg(unix)]
 
@@ -195,7 +195,7 @@ fn listing_matches_upstream_3_5_1() {
     if !upstream_compat_enabled() {
         return;
     }
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let oc = oc_rsync_bin();

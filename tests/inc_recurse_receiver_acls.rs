@@ -11,7 +11,7 @@
 //! The fixture puts a default ACL on `sub/` and a different ACL on
 //! `sub/b.log`, so a dropped ACL is visible as the inherited entries. Every
 //! cell compares the destination's `getfacl` entries with the source's; the
-//! oc-to-oc cells run everywhere, and the cells with an upstream 3.5.1 peer
+//! oc-to-oc cells run everywhere, and the cells with an upstream 3.5.2 peer
 //! run when that binary resolves.
 
 #![cfg(target_os = "linux")]
@@ -116,7 +116,7 @@ fn inc_recurse_receiver_applies_sub_list_acls() {
     };
     let want = acl_snapshot(&src);
     let wrapper = rsh_wrapper(temp.path());
-    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_1);
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2);
     let mut peers = vec![("oc", oc_rsync())];
     peers.extend(
         upstream
