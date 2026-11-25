@@ -1,4 +1,4 @@
-//! G4 / #2278 - `--delete-delay` event-order parity vs upstream rsync 3.4.1.
+//! G4 / #2278 - `--delete-delay` event-order parity vs upstream rsync 3.5.2.
 //!
 //! Asserts that under `--delete-delay`, deletes for a given destination
 //! directory only execute after the final temp-file rename for any
@@ -23,8 +23,12 @@ use integration::delete_event_order_harness::{
 
 #[test]
 fn delete_event_order_delay_matches_upstream() {
+    let Some(oracle) = test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
+        return;
+    };
     let scenario = Scenario::before_after_default();
-    let outcome = match run_pair_capture(&scenario, &["--delete-delay"], &[]) {
+    let outcome = match run_pair_capture(&scenario, oracle.binary(), &["--delete-delay"], &[]) {
         Ok(o) => o,
         Err(e) => panic!("harness failure: {e}"),
     };

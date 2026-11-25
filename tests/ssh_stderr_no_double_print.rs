@@ -129,27 +129,12 @@ fn genuine_ssh_error_prints_exactly_once() {
     );
 }
 
-/// Locates a usable upstream rsync for the exit-23 path. Honours
-/// `OC_RSYNC_UPSTREAM_RSYNC`, else falls back to `rsync` on PATH. Returns
-/// `None` (test skips) when none runs.
+/// The rsync 3.5.2 oracle, resolved and banner-checked by
+/// `test_support::require_upstream_rsync`: `None` after a skip line when it is
+/// not installed, and a test failure instead under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 fn upstream_rsync() -> Option<PathBuf> {
-    let candidates = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC")
-        .map(PathBuf::from)
-        .into_iter()
-        .chain(std::iter::once(PathBuf::from("rsync")));
-    for cand in candidates {
-        let ok = Command::new(&cand)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            return Some(cand);
-        }
-    }
-    None
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+        .map(|oracle| oracle.binary().to_path_buf())
 }
 
 /// oc-rsync pulling a missing source from a real upstream rsync server. The
@@ -160,7 +145,6 @@ fn upstream_rsync() -> Option<PathBuf> {
 #[test]
 fn upstream_sender_error_prints_exactly_once() {
     let Some(rsync) = upstream_rsync() else {
-        eprintln!("skipping: no usable upstream rsync found (set OC_RSYNC_UPSTREAM_RSYNC)");
         return;
     };
 

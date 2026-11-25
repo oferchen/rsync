@@ -57,39 +57,12 @@ fn oc_rsync_binary() -> &'static str {
     env!("CARGO_BIN_EXE_oc-rsync")
 }
 
-/// Locates an upstream rsync 3.x binary, if one is installed.
-///
-/// Candidates, in order: an explicit `OC_RSYNC_UPSTREAM_RSYNC` override, the
-/// binaries the interop harness installs under `target/interop`, then whatever
-/// `rsync` is on `PATH`. Each must self-identify as `rsync version 3.x`, which
-/// rejects the `openrsync` shim macOS ships as `/usr/bin/rsync`.
-///
-/// Returns `None` when nothing suitable exists; the caller skips those legs
-/// rather than failing, since an upstream binary is an external resource.
+/// The rsync 3.5.2 oracle, resolved and banner-checked by
+/// `test_support::require_upstream_rsync`: `None` after a skip line when it is
+/// not installed, and a test failure instead under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 fn upstream_rsync() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
-        candidates.push(PathBuf::from(explicit));
-    }
-    candidates.extend(
-        ["3.4.4", "3.4.1", "3.1.3"]
-            .into_iter()
-            .filter_map(test_support::upstream_install_bin),
-    );
-    candidates.push(PathBuf::from("rsync"));
-
-    candidates.into_iter().find(|candidate| {
-        Command::new(candidate)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .is_some_and(|text| {
-                text.lines()
-                    .next()
-                    .is_some_and(|line| line.starts_with("rsync") && line.contains(" version 3."))
-            })
-    })
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+        .map(|oracle| oracle.binary().to_path_buf())
 }
 
 /// A daemon served in inetd mode on a listener bound before any session
@@ -165,9 +138,8 @@ fn run_client(binary: &Path, args: &[String], label: &str) -> ClientRun {
 /// any divergence between the two halves of this fix and so cannot detect it.
 fn peers() -> Vec<(String, PathBuf)> {
     let mut peers = vec![("oc-rsync".to_owned(), PathBuf::from(oc_rsync_binary()))];
-    match upstream_rsync() {
-        Some(upstream) => peers.push(("upstream-rsync".to_owned(), upstream)),
-        None => eprintln!("skip upstream legs: no rsync 3.x binary available"),
+    if let Some(upstream) = upstream_rsync() {
+        peers.push(("upstream-rsync".to_owned(), upstream));
     }
     peers
 }

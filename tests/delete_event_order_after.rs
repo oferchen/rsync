@@ -1,4 +1,4 @@
-//! G3 / #2277 - `--delete-after` event-order parity vs upstream rsync 3.4.1.
+//! G3 / #2277 - `--delete-after` event-order parity vs upstream rsync 3.5.2.
 //!
 //! Asserts that every `openat(O_CREAT)` precedes every `unlink`/`rmdir`
 //! under `--delete-after`. Upstream rsync runs `do_delete_pass()` only after
@@ -22,8 +22,12 @@ use integration::delete_event_order_harness::{
 
 #[test]
 fn delete_event_order_after_matches_upstream() {
+    let Some(oracle) = test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
+        return;
+    };
     let scenario = Scenario::before_after_default();
-    let outcome = match run_pair_capture(&scenario, &["--delete-after"], &[]) {
+    let outcome = match run_pair_capture(&scenario, oracle.binary(), &["--delete-after"], &[]) {
         Ok(o) => o,
         Err(e) => panic!("harness failure: {e}"),
     };

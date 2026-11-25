@@ -1,4 +1,4 @@
-//! Shared harness for ACL/xattr round-trip interop tests vs upstream rsync 3.4.1.
+//! Shared harness for ACL/xattr round-trip interop tests vs upstream rsync 3.5.2.
 //!
 //! These tests stage a directory tree carrying rich metadata (POSIX ACLs,
 //! NFSv4 ACLs where supported, user/system xattrs), bounce it through a
@@ -86,37 +86,6 @@ pub fn locate_oc_rsync() -> PathBuf {
         built.display()
     );
     built
-}
-
-/// Locate an upstream rsync binary. Honours `OC_RSYNC_UPSTREAM`, then the
-/// `target/interop/upstream-install/<ver>/bin/rsync` cache, then `which`.
-pub fn locate_upstream_rsync() -> Option<PathBuf> {
-    if let Some(p) = env::var_os("OC_RSYNC_UPSTREAM") {
-        let path = PathBuf::from(p);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for version in ["3.4.2", "3.4.1", "3.1.3", "3.0.9"] {
-        let in_tree = manifest_dir
-            .join("target/interop/upstream-install")
-            .join(version)
-            .join("bin/rsync");
-        if in_tree.is_file() {
-            return Some(in_tree);
-        }
-    }
-    let which = Command::new("sh")
-        .arg("-c")
-        .arg("command -v rsync 2>/dev/null")
-        .output()
-        .ok()?;
-    if !which.status.success() {
-        return None;
-    }
-    let path = PathBuf::from(String::from_utf8(which.stdout).ok()?.trim());
-    if path.is_file() { Some(path) } else { None }
 }
 
 /// Run an rsync-style binary with the canonical metadata flag set and
