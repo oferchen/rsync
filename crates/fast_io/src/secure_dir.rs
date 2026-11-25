@@ -22,7 +22,7 @@
 //!
 //! `openat2(2)` landed in Linux 5.6 (March 2020). On older kernels the syscall
 //! returns `ENOSYS`; the
-//! [`openat2_supported`](crate::linux_capabilities::openat2_supported) probe
+//! [`openat2_supported`] probe
 //! caches that result and we use plain
 //! `open(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` thereafter. The plain `open`
 //! path still rejects a symlink at the leaf - it just cannot reject symlinks

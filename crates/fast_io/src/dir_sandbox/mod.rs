@@ -29,14 +29,14 @@
 //!
 //! Every `*at` open issued by [`DirSandbox`] refuses to follow a symlink
 //! at the leaf. On Linux 5.6+ kernels - detected via
-//! [`openat2_supported`](crate::linux_capabilities::openat2_supported) -
+//! [`openat2_supported`] -
 //! the carrier upgrades to `openat2(2)` with
 //! `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` so the kernel also rejects
 //! any symlink along the path, any `..` traversal that would escape the
 //! anchoring dirfd, and any magic-link resolution. Pairing
 //! `RESOLVE_BENEATH` with a real anchoring dirfd is the supported
 //! configuration (unlike the `AT_FDCWD` bootstrap in
-//! [`secure_open_dir`](crate::secure_dir::secure_open_dir), which intentionally drops
+//! [`secure_open_dir`], which intentionally drops
 //! `RESOLVE_BENEATH` because the cwd anchor is the wrong scope for
 //! absolute paths).
 //!
@@ -58,7 +58,7 @@
 //!
 //! The only `unsafe` block in this module is the `openat2(2)` syscall
 //! invocation, which mirrors the safety argument in
-//! [`secure_open_dir`](crate::secure_dir::secure_open_dir). The
+//! [`secure_open_dir`]. The
 //! `openat(2)` fallback goes through `rustix`, which exposes a safe
 //! interface; no `unsafe` is needed there.
 

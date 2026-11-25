@@ -29,9 +29,9 @@
 //! `TEXT_FROM_FILE(NULL)` is `rule_src_in_file || false` (`exclude.c:67-69`),
 //! so it falls back to whether the parser is reading a file's contents right
 //! now. oc carries that same fact explicitly on
-//! [`RuleSource`](crate::rule_source::RuleSource), so callers render the text
+//! [`RuleSource`], so callers render the text
 //! through `rule_text` and pass the result here - the same shape as
-//! [`merge_name_overflows`](crate::merge_name_overflows).
+//! [`merge_name_overflows`].
 
 /// Renders upstream's over-long filter refusal for `rule`.
 ///

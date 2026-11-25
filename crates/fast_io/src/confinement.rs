@@ -2,7 +2,7 @@
 //! which opens the boundary applies to.
 //!
 //! The per-component confined walk lives in
-//! [`dir_sandbox`](crate::dir_sandbox); this module answers the question that
+//! [`dir_sandbox`]; this module answers the question that
 //! precedes it - *should this process confine this open at all, and against
 //! what root?*
 //!

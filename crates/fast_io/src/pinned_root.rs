@@ -62,8 +62,8 @@
 //!
 //! [`std::fs::Metadata`] has no public constructor, so an `fstatat` answer
 //! cannot be spelled as one - the same wall that produced
-//! [`AtMetadata`](crate::dir_sandbox::AtMetadata).
-//! [`EntryMetadata`](crate::EntryMetadata) is the pattern every anchored
+//! [`AtMetadata`].
+//! [`EntryMetadata`] is the pattern every anchored
 //! lookup answers with, source scan included: one arm per syscall
 //! shape, one accessor surface over both, named and widened after
 //! [`std::os::unix::fs::MetadataExt`] so a caller reads the same field names
