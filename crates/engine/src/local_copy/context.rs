@@ -1703,7 +1703,7 @@ mod tests {
     /// than compress the data again.
     #[test]
     fn only_the_token_stream_builds_a_token_encoder() {
-        fn visit(dir: &std::path::Path, found: &mut Vec<String>) {
+        fn visit(dir: &std::path::Path, found: &mut Vec<(std::path::PathBuf, &'static str)>) {
             for entry in std::fs::read_dir(dir).expect("read source dir") {
                 let path = entry.expect("dir entry").path();
                 if path.is_dir() {
@@ -1712,16 +1712,23 @@ mod tests {
                     let text = std::fs::read_to_string(&path).expect("read source");
                     for ctor in ["::new(", "::new_zstd(", "::new_lz4("] {
                         if text.contains(&format!("CompressedTokenEncoder{ctor}")) {
-                            found.push(format!("{} {ctor}", path.display()));
+                            found.push((path.clone(), ctor));
                         }
                     }
                 }
             }
         }
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/local_copy");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("local_copy");
+        let owner = std::path::Path::new("context_impl").join("token_stream.rs");
         let mut found = Vec::new();
         visit(&root, &mut found);
-        found.retain(|site| !site.contains("context_impl/token_stream.rs"));
+        found.retain(|(path, _)| !path.ends_with(&owner));
+        let found: Vec<String> = found
+            .iter()
+            .map(|(path, ctor)| format!("{} {ctor}", path.display()))
+            .collect();
         assert!(
             found.is_empty(),
             "token encoders built outside TokenStream: {found:?}"
