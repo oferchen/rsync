@@ -13,7 +13,7 @@ The gate deliberately covers ONLY the zero-caller-zero-test tier.  The wider
 zero-caller tier (hundreds of rows) is not ratcheted: a frozen baseline that
 large hides the one new dead function that matters inside it.
 
-Three classification rules are load-bearing, each one a measured defect in an
+Four classification rules are load-bearing, each one a measured defect in an
 earlier version of this instrument:
 
   1. A `use` / `pub use` line is NOT a call site.  Counting re-export lines as
@@ -24,6 +24,9 @@ earlier version of this instrument:
   3. Trait impl methods are EXCLUDED from the census: they are reached through
      dynamic or generic dispatch, so textual reference counting cannot see
      their callers.
+  4. A `use X as Y` rename is followed: a reference to `Y` counts for `X`.
+     Without it a function reached only through its renamed import was
+     reported as dead (`is_enabled_by_env as async_ssh_enabled`).
 
 References are counted textually (identifier tokens outside strings and
 comments), so a name with more than one production definition is ambiguous and
@@ -69,6 +72,7 @@ PUB_FN_RE = re.compile(
 IMPL_RE = re.compile(r"^\s*(?:unsafe\s+)?impl\b(?P<rest>.*)$")
 USE_RE = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?use\s")
 IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+USE_ALIAS_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s+as\s+([A-Za-z][A-Za-z0-9_]*)\b")
 CHAR_LIT_RE = re.compile(r"'(?:[^'\\\n]|\\(?:.|u\{[0-9a-fA-F_]+\}))'")
 
 
@@ -272,6 +276,19 @@ def scan_defs(sources: list[SourceFile]) -> dict[str, list[dict]]:
     return defs
 
 
+def use_aliases(sources: list[SourceFile], wanted: set[str]) -> dict[str, set[str]]:
+    """Map each new name of a `use X as Y` rename to the defined names it renames."""
+    aliases: dict[str, set[str]] = defaultdict(set)
+    for src in sources:
+        for idx, line in enumerate(src.lines):
+            if not src.use_mask[idx]:
+                continue
+            for original, alias in USE_ALIAS_RE.findall(line):
+                if original in wanted and alias != original:
+                    aliases[alias].add(original)
+    return aliases
+
+
 def scan_refs(
     sources: list[SourceFile], defs: dict[str, list[dict]]
 ) -> dict[str, dict[str, int]]:
@@ -279,9 +296,11 @@ def scan_refs(
 
     A reference is an identifier token outside strings/comments that is not on
     the definition's own line and not inside a `use` item.  `use` lines are
-    tallied separately as re-exports - they are never call sites.
+    tallied separately as re-exports - they are never call sites.  A
+    reference to the new name of a `use X as Y` rename counts for `X`.
     """
     wanted = set(defs)
+    aliases = use_aliases(sources, wanted)
     def_sites = defaultdict(set)
     for name, dlist in defs.items():
         for d in dlist:
@@ -289,7 +308,11 @@ def scan_refs(
     refs = {name: {"prod": 0, "test": 0, "reexport": 0} for name in wanted}
     for src in sources:
         for idx, line in enumerate(src.lines):
-            hit = set(IDENT_RE.findall(line)) & wanted
+            tokens = set(IDENT_RE.findall(line))
+            hit = tokens & wanted
+            if not src.use_mask[idx]:
+                for alias in tokens & aliases.keys():
+                    hit |= aliases[alias]
             if not hit:
                 continue
             for name in hit:
