@@ -1224,6 +1224,8 @@ fn refuse_emits_at_error_raw_pre_handshake() {
         &mut stream,
         &mut limiter,
         &AtError::message("The server is configured to refuse --delete"),
+        SessionExit::Aborted,
+        &mut None,
     )
     .expect("send pre-handshake error");
 
@@ -1239,6 +1241,39 @@ fn refuse_emits_at_error_raw_pre_handshake() {
     );
 }
 
+/// A pre-handshake refusal and the session's exit status are one call: the
+/// writer takes the status and the slot, so a refusal site cannot leave the
+/// session ending in success.
+///
+/// upstream: clientserver.c:787 `return -1` after the `@ERROR` line, and
+/// :1084 `exit_cleanup(RERR_UNSUPPORTED)` for the one refusal with a code of
+/// its own.
+#[test]
+fn a_pre_handshake_refusal_records_the_session_exit() {
+    for exit in [
+        SessionExit::Aborted,
+        SessionExit::Refused(ExitCode::from_raw(RERR_UNSUPPORTED_EXIT_CODE)),
+    ] {
+        let (mut stream, capture) = build_stdio_stream_with_capture();
+        let mut limiter: Option<BandwidthLimiter> = None;
+        let mut session_exit = None;
+        send_error(
+            &mut stream,
+            &mut limiter,
+            &AtError::message("no path setting."),
+            exit.clone(),
+            &mut session_exit,
+        )
+        .expect("send refusal");
+        assert_eq!(
+            capture.lock().unwrap().as_slice(),
+            b"@ERROR: no path setting.\n"
+        );
+        assert_eq!(session_exit, Some(exit));
+    }
+    assert_eq!(SessionExit::Aborted.code().as_i32(), 255);
+}
+
 #[test]
 fn refuse_emits_msg_error_xfer_post_handshake() {
     // Post-handshake path: client has switched its input to the multiplexed
@@ -1250,13 +1285,22 @@ fn refuse_emits_msg_error_xfer_post_handshake() {
     // OK, then rwrite(FERROR, ...) emits a MSG_ERROR_XFER frame.
     let (mut stream, capture) = build_stdio_stream_with_capture();
     let mut limiter: Option<BandwidthLimiter> = None;
+    let mut session_exit = None;
     send_multiplexed_error_and_exit(
         &mut stream,
         &mut limiter,
         "@ERROR: The server is configured to refuse --compress",
         RERR_UNSUPPORTED_EXIT_CODE,
+        &mut session_exit,
     )
     .expect("send multiplexed error");
+    // upstream: clientserver.c:1276 - the code sent is the code exited with.
+    assert_eq!(
+        session_exit,
+        Some(SessionExit::Refused(ExitCode::from_raw(
+            RERR_UNSUPPORTED_EXIT_CODE
+        )))
+    );
 
     let bytes = capture.lock().unwrap().clone();
     assert!(

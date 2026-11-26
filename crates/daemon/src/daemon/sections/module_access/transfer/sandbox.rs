@@ -101,7 +101,13 @@ fn apply_privilege_restrictions_with_upstream_errors(
         .with_role(Role::Daemon);
         log_message(log_sink, &message);
         let error = AtError::message("session is not isolated from the daemon");
-        send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+        send_error(
+            ctx.reader.get_mut(),
+            ctx.limiter,
+            &error,
+            SessionExit::Aborted,
+            ctx.session_exit_code,
+        )?;
         return Ok(None);
     }
 
@@ -138,7 +144,13 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 let (flog, error) = err.upstream_reply();
                 let message = rsync_error!(1, flog).with_role(Role::Daemon);
                 log_message(log_sink, &message);
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                send_error(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    &error,
+                    SessionExit::Aborted,
+                    ctx.session_exit_code,
+                )?;
                 return Ok(None);
             }
         }
@@ -174,7 +186,13 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 } else {
                     AtError::ChrootFailed
                 };
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                send_error(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    &error,
+                    SessionExit::Aborted,
+                    ctx.session_exit_code,
+                )?;
                 let host_owned = ctx.host_display().to_owned();
                 run_post_xfer_finalizer(
                     ctx,
@@ -243,7 +261,13 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 logging::upstream_errno_text(&err)
             );
             log_message(log_sink, &rsync_error!(1, flog).with_role(Role::Daemon));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ChdirFailed)?;
+            send_error(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                &AtError::ChdirFailed,
+                SessionExit::Aborted,
+                ctx.session_exit_code,
+            )?;
             let host_owned = ctx.host_display().to_owned();
             run_post_xfer_finalizer(
                 ctx,
@@ -274,7 +298,13 @@ fn apply_privilege_restrictions_with_upstream_errors(
         } else {
             AtError::SetgidFailed
         };
-        send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+        send_error(
+            ctx.reader.get_mut(),
+            ctx.limiter,
+            &error,
+            SessionExit::Aborted,
+            ctx.session_exit_code,
+        )?;
         let host_owned = ctx.host_display().to_owned();
         run_post_xfer_finalizer(
             ctx,
@@ -423,7 +453,13 @@ fn validate_module_path(
     if let Some(log) = ctx.log_sink {
         log_message(log, &rsync_info!(failure).with_role(Role::Daemon));
     }
-    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+    send_error(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        &error,
+        SessionExit::Aborted,
+        ctx.session_exit_code,
+    )?;
 
     Ok(None)
 }

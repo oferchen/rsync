@@ -639,7 +639,13 @@ fn build_server_config(
         }
         Err(err) => {
             let error = AtError::message(format!("failed to configure server: {err}"));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+            send_error(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                &error,
+                SessionExit::Aborted,
+                ctx.session_exit_code,
+            )?;
             Ok(None)
         }
     }

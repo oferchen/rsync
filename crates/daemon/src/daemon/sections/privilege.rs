@@ -240,6 +240,22 @@ fn munge_prefix_dir(definition: &ModuleDefinition) -> PathBuf {
     }
 }
 
+/// The refusal `munge symlinks` ends a session with when `prefix_dir` exists
+/// as a directory, and the status that session exits with.
+///
+/// upstream: clientserver.c:1080-1084 - `@ERROR: daemon security issue --
+/// contact admin`, then `exit_cleanup(RERR_UNSUPPORTED)`.
+fn munge_prefix_refusal(prefix_dir: &Path) -> Option<(AtError, SessionExit)> {
+    std::fs::metadata(prefix_dir)
+        .is_ok_and(|meta| meta.is_dir())
+        .then(|| {
+            (
+                AtError::message("daemon security issue -- contact admin"),
+                SessionExit::Refused(ExitCode::from_raw(RERR_UNSUPPORTED_EXIT_CODE)),
+            )
+        })
+}
+
 /// How a module's `use chroot` was carried out for one session.
 #[derive(Debug, PartialEq, Eq)]
 enum ChrootDecision {
@@ -1262,6 +1278,27 @@ mod privilege_tests {
             ..Default::default()
         };
         assert_eq!(munge_prefix_dir(&module), Path::new("/rsyncd-munged"));
+    }
+
+    /// upstream: clientserver.c:1080-1084 - an existing prefix directory ends
+    /// the session with the fixed line and `exit_cleanup(RERR_UNSUPPORTED)`;
+    /// a missing one, or a file of that name, does not.
+    #[test]
+    fn munge_prefix_refusal_exits_unsupported_for_an_existing_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prefix = dir.path().join("rsyncd-munged");
+        assert!(munge_prefix_refusal(&prefix).is_none());
+        std::fs::write(&prefix, b"").expect("plant a file");
+        assert!(munge_prefix_refusal(&prefix).is_none());
+        std::fs::remove_file(&prefix).expect("remove the file");
+        std::fs::create_dir(&prefix).expect("plant the directory");
+        let (error, exit) = munge_prefix_refusal(&prefix).expect("refusal");
+        assert_eq!(
+            error.line(),
+            "@ERROR: daemon security issue -- contact admin"
+        );
+        assert_eq!(exit.code().as_i32(), 4);
+        assert!(matches!(exit, SessionExit::Refused(_)));
     }
 
     /// upstream: clientserver.c:886-899, 1074-1075 - a failed probe switches

@@ -148,11 +148,23 @@ fn linger_before_close(phase: RefusalPhase) {
 /// and any further raw bytes are mis-parsed as multiplex frame headers
 /// (e.g. the 'T' of "The server..." surfaces as `unexpected tag 77`).
 /// Use [`send_multiplexed_error_and_exit`] once OK has been written.
+///
+/// The refusal and the status the session ends with are one decision:
+/// `exit` is recorded in `session_exit` here, so no refusal can be written
+/// without one. upstream: every `io_printf(f_out, "@ERROR: ...")` in
+/// `rsync_module()` is followed by `return -1` (clientserver.c:787, :806,
+/// :817, :842, :864, :885, :1012, :1057, :1064, :1105-1134), which
+/// `start_daemon()` and `main()` pass on as exit 255
+/// ([`SessionExit::Aborted`]), or by `exit_cleanup()` with its own code
+/// (clientserver.c:1084).
 fn send_error(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     error: &AtError,
+    exit: SessionExit,
+    session_exit: &mut Option<SessionExit>,
 ) -> io::Result<()> {
+    *session_exit = Some(exit);
     write_limited(stream, limiter, error.line().as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
     stream.flush()?;
@@ -180,7 +192,12 @@ fn send_multiplexed_error_and_exit(
     limiter: &mut Option<BandwidthLimiter>,
     payload: &str,
     exit_code: i32,
+    session_exit: &mut Option<SessionExit>,
 ) -> io::Result<()> {
+    // upstream: clientserver.c:1276 exit_cleanup(RERR_UNSUPPORTED) and
+    // main.c:1203 exit_cleanup(RERR_SYNTAX) - the code sent to the peer is
+    // also the status the server exits with.
+    *session_exit = Some(SessionExit::Refused(ExitCode::from_raw(exit_code)));
     let mut buffer = Vec::new();
     for line in payload.split('\n') {
         let mut frame_bytes = line.as_bytes().to_vec();
@@ -212,6 +229,7 @@ fn deny_module(
     peer: &PeerAddress,
     host: &str,
     limiter: &mut Option<BandwidthLimiter>,
+    session_exit: &mut Option<SessionExit>,
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
     let error = if !module.listable {
@@ -224,7 +242,7 @@ fn deny_module(
             addr: peer.to_string(),
         }
     };
-    send_error(stream, limiter, &error)
+    send_error(stream, limiter, &error, SessionExit::Aborted, session_exit)
 }
 
 /// Sends the "@RSYNCD: OK" acknowledgment to the client.
@@ -259,6 +277,8 @@ fn handle_max_connections_exceeded(
         &AtError::MaxConnections {
             limit: i64::from(limit),
         },
+        SessionExit::Aborted,
+        ctx.session_exit_code,
     )?;
     Ok(())
 }
@@ -275,7 +295,13 @@ fn handle_lock_error(
     if let (Some(log), Some(lock_file)) = (ctx.log_sink, lock_file) {
         log_module_lock_error(log, lock_file, error);
     }
-    send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ModuleLockError)?;
+    send_error(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        &AtError::ModuleLockError,
+        SessionExit::Aborted,
+        ctx.session_exit_code,
+    )?;
     Ok(())
 }
 
@@ -323,6 +349,7 @@ fn handle_refused_option_post_handshake(
         ctx.limiter,
         &text,
         RERR_UNSUPPORTED_EXIT_CODE,
+        ctx.session_exit_code,
     )?;
     if let Some(log) = ctx.log_sink {
         log_module_refused_option(log, refused);
@@ -355,6 +382,7 @@ fn handle_access_denied_post_handshake(
         ctx.limiter,
         payload,
         RERR_SYNTAX_EXIT_CODE,
+        ctx.session_exit_code,
     )
 }
 
@@ -389,6 +417,7 @@ fn handle_client_arg_rejection_post_handshake(
         ctx.limiter,
         payload,
         RERR_UNSUPPORTED_EXIT_CODE,
+        ctx.session_exit_code,
     )
 }
 
@@ -573,7 +602,16 @@ fn handle_authentication(
         AuthenticationStatus::DigestUnsupported => {
             // upstream: compat.c:891-895 - `exit_cleanup(RERR_UNSUPPORTED)` right
             // after the refusal line, with no challenge and no auth-failure log.
-            *ctx.session_exit_code = Some(SessionExit::Refused(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE));
+            let error = AtError::UnsupportedAuthDigest {
+                digests: supported_daemon_digest_list(),
+            };
+            send_error(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                &error,
+                SessionExit::Refused(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE),
+                ctx.session_exit_code,
+            )?;
             ctx.conn_state = ctx.conn_state.close();
             Ok(None)
         }
@@ -598,7 +636,13 @@ fn handle_authentication(
             let error = AtError::AuthFailed {
                 module: sanitize_module_identifier(&module.name).into_owned(),
             };
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+            send_error(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                &error,
+                SessionExit::Aborted,
+                ctx.session_exit_code,
+            )?;
             // FSM: -> Closing on auth failure (session ends).
             ctx.conn_state = ctx.conn_state.close();
             Ok(None)
@@ -629,6 +673,7 @@ fn handle_unknown_module(
     session_peer_host: Option<&str>,
     reverse_lookup: bool,
     log_sink: Option<&SharedLogSink>,
+    session_exit: &mut Option<SessionExit>,
 ) -> io::Result<()> {
     let error = AtError::UnknownModule(sanitize_module_identifier(request).into_owned());
 
@@ -641,7 +686,9 @@ fn handle_unknown_module(
         );
     }
 
-    send_error(stream, limiter, &error)
+    // upstream: clientserver.c:1574-1579 - an unknown module is answered and
+    // start_daemon() returns -1.
+    send_error(stream, limiter, &error, SessionExit::Aborted, session_exit)
 }
 
 /// Handles a denied module access.
@@ -655,7 +702,14 @@ fn handle_module_denied(
     if let Some(log) = ctx.log_sink {
         log_module_denied(log, &host, ctx.peer, ctx.request);
     }
-    deny_module(ctx.reader.get_mut(), module, ctx.peer, &host, ctx.limiter)
+    deny_module(
+        ctx.reader.get_mut(),
+        module,
+        ctx.peer,
+        &host,
+        ctx.limiter,
+        ctx.session_exit_code,
+    )
 }
 
 /// Handles a client's module access request.
@@ -687,9 +741,6 @@ fn respond_with_module_request(
     conn_state: ConnectionState,
 ) -> io::Result<()> {
     let Some(module) = modules.iter().find(|module| module.name == request) else {
-        // upstream: clientserver.c:1574-1579 - an unknown module is answered
-        // and start_daemon() returns -1, so the process exits 255.
-        *session_exit_code = Some(SessionExit::Aborted);
         return handle_unknown_module(
             reader.get_mut(),
             limiter,
@@ -698,6 +749,7 @@ fn respond_with_module_request(
             session_peer_host,
             reverse_lookup,
             log_sink,
+            session_exit_code,
         );
     };
 

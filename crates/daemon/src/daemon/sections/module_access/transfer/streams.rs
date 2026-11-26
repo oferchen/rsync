@@ -234,7 +234,13 @@ fn setup_transfer_streams(
         Ok(s) => s,
         Err(err) => {
             let error = AtError::message(format!("failed to clone stream: {err}"));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+            send_error(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                &error,
+                SessionExit::Aborted,
+                ctx.session_exit_code,
+            )?;
             return Ok(None);
         }
     };

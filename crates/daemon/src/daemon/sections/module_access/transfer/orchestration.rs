@@ -196,7 +196,13 @@ fn module_settings_usable(
         let message = rsync_error!(1, flog).with_role(Role::Daemon);
         log_message(log, &message);
     }
-    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+    send_error(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        &error,
+        SessionExit::Aborted,
+        ctx.session_exit_code,
+    )?;
     Ok(false)
 }
 
@@ -425,7 +431,13 @@ fn process_approved_module(
                     log_message(log, &rsync_info!(text).with_role(Role::Daemon));
                 }
                 let error = AtError::message("early exec failed".to_string());
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                send_error(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    &error,
+                    SessionExit::Aborted,
+                    ctx.session_exit_code,
+                )?;
                 // upstream: clientserver.c:998-1014 - early exec runs after
                 // the post-xfer-exec fork point, so its failure is a
                 // child exit the waiting parent still observes.
@@ -456,7 +468,13 @@ fn process_approved_module(
                     log_message(log, &rsync_info!(text).with_role(Role::Daemon));
                 }
                 let error = AtError::message("early exec preparation failed".to_string());
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                send_error(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    &error,
+                    SessionExit::Aborted,
+                    ctx.session_exit_code,
+                )?;
                 let host_owned = ctx.host_display().to_owned();
                 run_post_xfer_finalizer(
                     ctx,
@@ -539,26 +557,26 @@ fn process_approved_module(
     // after path validation and before the privilege drop and `@RSYNCD: OK`,
     // mirroring upstream's abort with `@ERROR: daemon security issue --
     // contact admin` and exit_cleanup(RERR_UNSUPPORTED).
-    if module.effective_munge_symlinks() {
-        let is_dir =
-            std::fs::metadata(munge_prefix_dir(&module.definition)).is_ok_and(|meta| meta.is_dir());
-        if is_dir {
-            send_error(
-                ctx.reader.get_mut(),
-                ctx.limiter,
-                &AtError::message("daemon security issue -- contact admin"),
-            )?;
-            let host_owned = ctx.host_display().to_owned();
-            run_post_xfer_finalizer(
-                ctx,
-                module,
-                &host_owned,
-                auth_user.as_deref(),
-                &[],
-                RERR_UNSUPPORTED_EXIT_CODE,
-            );
-            return Ok(());
-        }
+    if module.effective_munge_symlinks()
+        && let Some((error, exit)) = munge_prefix_refusal(&munge_prefix_dir(&module.definition))
+    {
+        send_error(
+            ctx.reader.get_mut(),
+            ctx.limiter,
+            &error,
+            exit,
+            ctx.session_exit_code,
+        )?;
+        let host_owned = ctx.host_display().to_owned();
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            &host_owned,
+            auth_user.as_deref(),
+            &[],
+            RERR_UNSUPPORTED_EXIT_CODE,
+        );
+        return Ok(());
     }
 
     // Split into separate steps so each failure sends the correct upstream
@@ -657,6 +675,7 @@ fn process_approved_module(
                 ctx.limiter,
                 payload,
                 RERR_UNSUPPORTED_EXIT_CODE,
+                ctx.session_exit_code,
             )?;
             run_post_xfer_finalizer(
                 ctx,
@@ -837,7 +856,13 @@ fn process_approved_module(
                     log_message(log, &rsync_error!(1, text).with_role(Role::Daemon));
                 }
                 let error = AtError::message("name-converter exec preparation failed");
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                send_error(
+                    ctx.reader.get_mut(),
+                    ctx.limiter,
+                    &error,
+                    SessionExit::Aborted,
+                    ctx.session_exit_code,
+                )?;
                 // upstream: clientserver.c:968-996 - the name-converter spawn
                 // runs after the post-xfer-exec fork point, so its failure
                 // is a child exit the waiting parent still observes.

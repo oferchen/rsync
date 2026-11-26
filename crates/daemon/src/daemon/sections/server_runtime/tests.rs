@@ -344,6 +344,51 @@ fn a_forked_session_that_refuses_its_client_exits_like_upstream() {
     }
 }
 
+/// A forked TCP session that refuses the requested module ends with the status
+/// upstream's child passes to `_exit()`: `rsync_module()` returns -1 after its
+/// `@ERROR` line (clientserver.c:885 for a module without a path), which
+/// `start_daemon()` returns and socket.c:770-773 exits with.
+#[cfg(unix)]
+#[test]
+fn a_forked_session_that_refuses_a_module_exits_255() {
+    use std::io::Write as _;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind tcp");
+    let addr = listener.local_addr().expect("local addr");
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\nnopath\n")
+        .expect("send client bytes");
+    client
+        .shutdown(std::net::Shutdown::Write)
+        .expect("half-close the client");
+    let (server, peer) = listener.accept().expect("accept");
+    let module = ModuleRuntime::new(
+        ModuleDefinition {
+            name: "nopath".to_owned(),
+            ..Default::default()
+        },
+        None,
+    );
+    let context = ConnectionContext::new(
+        Arc::new(vec![module]),
+        Arc::new(Vec::new()),
+        None,
+        Arc::from(""),
+        None,
+        false,
+        ProxyProtocolPolicy::Disabled,
+        None,
+    );
+
+    let status = serve_forked_session(&context, DaemonStream::plain(server), peer, peer);
+
+    assert_eq!(status, 255);
+    let mut reply = String::new();
+    std::io::Read::read_to_string(&mut client, &mut reply).expect("read the daemon's reply");
+    assert!(reply.ends_with("@ERROR: no path setting.\n"), "{reply:?}");
+}
+
 /// Builds a worker for a session that has ALREADY ENDED, and does not return
 /// until that is true.
 ///

@@ -258,10 +258,6 @@ fn perform_module_authentication(
     ) {
         Ok(digest) => digest,
         Err(_) => {
-            let error = AtError::UnsupportedAuthDigest {
-                digests: supported_daemon_digest_list(),
-            };
-            send_error(reader.get_mut(), limiter, &error)?;
             return Ok(AuthenticationStatus::DigestUnsupported);
         }
     };
