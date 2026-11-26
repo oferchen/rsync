@@ -738,9 +738,14 @@ fn handle_legacy_session(
         // unknown-module response reserved for a bad module name. The client
         // treats `@ERROR` as fatal and closes without reading further.
         let error = AtError::UnknownCommand(sanitize_module_identifier(&request).into_owned());
-        send_error(reader.get_mut(), &mut limiter, &error)?;
         // upstream: clientserver.c:1571 `return -1`.
-        session_exit_code = Some(SessionExit::Aborted);
+        send_error(
+            reader.get_mut(),
+            &mut limiter,
+            &error,
+            SessionExit::Aborted,
+            &mut session_exit_code,
+        )?;
     } else {
         respond_with_module_request(
             &mut reader,
