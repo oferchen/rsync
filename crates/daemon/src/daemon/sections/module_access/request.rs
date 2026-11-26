@@ -687,6 +687,9 @@ fn respond_with_module_request(
     conn_state: ConnectionState,
 ) -> io::Result<()> {
     let Some(module) = modules.iter().find(|module| module.name == request) else {
+        // upstream: clientserver.c:1574-1579 - an unknown module is answered
+        // and start_daemon() returns -1, so the process exits 255.
+        *session_exit_code = Some(SessionExit::Aborted);
         return handle_unknown_module(
             reader.get_mut(),
             limiter,
