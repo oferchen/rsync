@@ -161,8 +161,8 @@ pub(crate) use metadata_sync::sync_xattrs_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_nfsv4_acls_if_requested;
 
-pub use operands::operand_change_dir_failure;
 pub(crate) use operands::{DestinationSpec, SourceSpec, operand_is_remote};
+pub use operands::{excluded_operand_is_skipped, operand_change_dir_failure};
 
 pub use filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeRule, FilterProgram, FilterProgramEntry,

@@ -303,16 +303,28 @@ impl GeneratorContext {
         // for ancestors that are NOT also explicit entries. Keys are the
         // (base, wire-relative) pair so two entries that resolve to the same
         // filesystem path but through different `/./` anchors do not collide.
+        let send_implied_dirs = self.config.flags.relative
+            && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30);
         let mut explicit_dirs: HashSet<(PathBuf, PathBuf)> = HashSet::new();
-        for entry in entries {
-            if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
-                if rel.as_os_str().is_empty() {
-                    continue;
-                }
-                if let Ok(meta) = std::fs::symlink_metadata(&entry.path)
-                    && meta.is_dir()
-                {
+        // upstream: flist.c:2969-2972 - an excluded entry is skipped before
+        // send_implied_dirs(), so it implies no parents. Decided here, on the
+        // stat this loop already makes.
+        let mut implies_no_parents = vec![false; entries.len()];
+        for (entry, skipped) in entries.iter().zip(implies_no_parents.iter_mut()) {
+            if let Ok(rel) = entry.path.strip_prefix(&entry.base)
+                && !rel.as_os_str().is_empty()
+                && let Ok(meta) = std::fs::symlink_metadata(&entry.path)
+            {
+                if meta.is_dir() {
                     explicit_dirs.insert((entry.base.clone(), rel.to_path_buf()));
+                }
+                if send_implied_dirs {
+                    self.filter_chain.set_transfer_root(entry.base.clone());
+                    *skipped = engine::local_copy::excluded_operand_is_skipped(
+                        operand_has_dotdir_marker(&entry.path),
+                        true,
+                        !self.filter_chain.allows(rel, meta.is_dir()),
+                    );
                 }
             }
         }
@@ -372,10 +384,15 @@ impl GeneratorContext {
         // implied dirs are on OR the protocol forces them. When suppressed,
         // `emitted_dirs` stays empty, so `implied_only_dirs` below is empty and
         // the explicit top-level walk is left untouched (dedup unchanged).
-        if self.config.flags.relative
-            && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
-        {
-            for (entry, parents) in entries.iter().zip(implied.iter_mut()) {
+        if send_implied_dirs {
+            for ((entry, parents), skipped) in entries
+                .iter()
+                .zip(implied.iter_mut())
+                .zip(&implies_no_parents)
+            {
+                if *skipped {
+                    continue;
+                }
                 // upstream: flist.c:2948-2957 - an entry whose stat fails is
                 // dropped before flist.c:2983 sends its implied parents, so a
                 // parent the ownership walk refuses is never listed either.
