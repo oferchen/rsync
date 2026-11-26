@@ -286,6 +286,64 @@ fn a_forked_session_ended_before_its_request_line_exits_255() {
     drop(client);
 }
 
+/// A forked TCP session that refuses its client before any transfer ends with
+/// the status upstream's child passes to `_exit()` (socket.c:770-773): 255
+/// where `start_daemon()` returns -1 after its `@ERROR` line
+/// (clientserver.c:213-244, :1551-1554, :1568-1579), and `RERR_STREAMIO` (12)
+/// where the client closes inside the `#early_input=` payload
+/// (clientserver.c:1556, io.c:299-303). The client sends its bytes and
+/// half-closes before the session starts, so nothing waits on timing.
+#[cfg(unix)]
+#[test]
+fn a_forked_session_that_refuses_its_client_exits_like_upstream() {
+    use std::io::Write as _;
+
+    const GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+    let cells: [(String, i32); 7] = [
+        ("hello\n".to_owned(), 255),
+        ("@RSYNCD: 32.0\n".to_owned(), 255),
+        (format!("{GREETING}#foo\n"), 255),
+        (format!("{GREETING}nosuch\n"), 255),
+        (format!("{GREETING}@RSYNCD: EXIT\n"), 255),
+        (format!("{GREETING}#early_input=0\n"), 255),
+        (format!("{GREETING}#early_input=10\nabc"), 12),
+    ];
+    for (input, expected) in cells {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind tcp");
+        let addr = listener.local_addr().expect("local addr");
+        let mut client = TcpStream::connect(addr).expect("connect");
+        client
+            .write_all(input.as_bytes())
+            .expect("send client bytes");
+        client
+            .shutdown(std::net::Shutdown::Write)
+            .expect("half-close the client");
+        let (server, peer) = listener.accept().expect("accept");
+        let context = ConnectionContext::new(
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            None,
+            Arc::from(""),
+            None,
+            false,
+            ProxyProtocolPolicy::Disabled,
+            None,
+        );
+
+        let status = serve_forked_session(&context, DaemonStream::plain(server), peer, peer);
+
+        assert_eq!(status, expected, "client sent {input:?}");
+        assert!(
+            matches!(
+                SessionOutcome::from_child_end(platform::session_fork::ChildEnd::Exited(status)),
+                SessionOutcome::EndedWithStatus(code) if code == expected
+            ),
+            "client sent {input:?}"
+        );
+        drop(client);
+    }
+}
+
 /// Builds a worker for a session that has ALREADY ENDED, and does not return
 /// until that is true.
 ///

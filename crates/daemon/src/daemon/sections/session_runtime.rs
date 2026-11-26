@@ -521,7 +521,10 @@ fn handle_legacy_session(
             write_limited(reader.get_mut(), &mut limiter, b"\n")?;
             reader.get_mut().flush()?;
             // FSM: -> Closing after the fatal @ERROR refusal.
-            return Ok(end_session(conn_state, None));
+            // upstream: clientserver.c:213-244 - every greeting refusal in
+            // exchange_protocols() returns -1, which start_daemon() passes on
+            // (clientserver.c:1542-1543), so the process exits 255.
+            return Ok(end_session(conn_state, Some(SessionExit::Aborted)));
         }
         match parse_legacy_daemon_message(&line) {
             // upstream: clientserver.c:1544-1548 start_daemon() - the version
@@ -589,11 +592,15 @@ fn handle_legacy_session(
             // '@RSYNCD: OPTION ...'`. Module parameters come only from the
             // operator's config and the daemon's own `--dparam`
             // (loadparm.c:667 set_dparams()), never from the peer.
-            Ok(LegacyDaemonMessage::Version(_) | LegacyDaemonMessage::Other(_)) => {}
-            Ok(LegacyDaemonMessage::Exit) => {
-                // FSM: -> Closing on client-initiated exit.
-                return Ok(end_session(conn_state, None));
-            }
+            //
+            // `@RSYNCD: EXIT` is no exception: start_daemon() has no case for
+            // it, so it reaches lp_number() like any other name and is answered
+            // `@ERROR: Unknown module '@RSYNCD: EXIT'` (clientserver.c:1574-1579).
+            Ok(
+                LegacyDaemonMessage::Version(_)
+                | LegacyDaemonMessage::Other(_)
+                | LegacyDaemonMessage::Exit,
+            ) => {}
             Ok(
                 LegacyDaemonMessage::Ok
                 | LegacyDaemonMessage::Capabilities { .. }
@@ -621,7 +628,8 @@ fn handle_legacy_session(
                     )?;
                     reader.get_mut().flush()?;
                     // FSM: -> Closing after the fatal @ERROR refusal.
-                    return Ok(end_session(conn_state, None));
+                    // upstream: clientserver.c:1551-1554 `return -1`.
+                    return Ok(end_session(conn_state, Some(SessionExit::Aborted)));
                 }
                 EarlyInputLength::Valid(len) => {
                     let mut data = vec![0u8; len];
@@ -641,6 +649,36 @@ fn handle_legacy_session(
                             return Ok(end_session(
                                 conn_state,
                                 Some(SessionExit::Refused(ExitCode::Timeout)),
+                            ));
+                        }
+                        // upstream: clientserver.c:1556 `read_buf()` - EOF
+                        // inside the payload reaches whine_about_eof()
+                        // (io.c:299-303), which prints this line and calls
+                        // `exit_cleanup(RERR_STREAMIO)`. `stats.total_read`
+                        // is still 0: the lines read so far came through
+                        // read_line_old(), which does not count.
+                        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                            let cause = EARLY_INPUT_EOF_MESSAGE.to_owned();
+                            if let Some(log) = log_sink.as_ref() {
+                                log_message(
+                                    log,
+                                    &rsync_info!(cause.clone()).with_role(Role::Daemon),
+                                );
+                                log_message(
+                                    log,
+                                    &rsync_error!(
+                                        ExitCode::StreamIo.as_i32(),
+                                        ExitCode::StreamIo.description()
+                                    )
+                                    .with_role(Role::PreForkReceiver),
+                                );
+                            }
+                            return Ok(end_session(
+                                conn_state,
+                                Some(SessionExit::RefusedWithCause {
+                                    exit: ExitCode::StreamIo,
+                                    cause,
+                                }),
                             ));
                         }
                         Err(error) => return Err(error),
@@ -701,6 +739,8 @@ fn handle_legacy_session(
         // treats `@ERROR` as fatal and closes without reading further.
         let error = AtError::UnknownCommand(sanitize_module_identifier(&request).into_owned());
         send_error(reader.get_mut(), &mut limiter, &error)?;
+        // upstream: clientserver.c:1571 `return -1`.
+        session_exit_code = Some(SessionExit::Aborted);
     } else {
         respond_with_module_request(
             &mut reader,
@@ -726,6 +766,15 @@ fn handle_legacy_session(
     // request ran to completion.
     Ok(end_session(conn_state, session_exit_code))
 }
+
+/// What the daemon prints when its client closes inside the `#early_input=`
+/// payload.
+///
+/// upstream: io.c:299-301 whine_about_eof() - `RSYNC_NAME ": connection
+/// unexpectedly closed (%s bytes received so far) [%s]\n"` with
+/// `stats.total_read` 0 and `who_am_i()` still `Receiver`.
+const EARLY_INPUT_EOF_MESSAGE: &str =
+    "rsync: connection unexpectedly closed (0 bytes received so far) [Receiver]";
 
 /// What a request line says about `#early_input=`.
 #[derive(Debug, PartialEq, Eq)]
