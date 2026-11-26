@@ -29,13 +29,9 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 
 /// Literal flush threshold matching upstream rsync's `CHUNK_SIZE` (32 KiB).
 ///
-/// When pending literals accumulate beyond `block_length + CHUNK_SIZE` bytes,
-/// they are flushed early to bound memory usage. Without this, a large
-/// unmatched region would grow `pending_literals` to the entire file size.
-///
-/// Deviation from upstream: upstream flushes only the literal bytes up to
-/// `offset - blength` once the backlog reaches `blength + CHUNK_SIZE`, while
-/// this scan flushes the whole backlog, so literal token boundaries can differ.
+/// Pending literals are flushed in whole chunks of this size (see
+/// [`flush_whole_chunks`]), which bounds memory and keeps every literal piece
+/// on upstream's wire framing.
 ///
 /// upstream: rsync.h:159, match.c:408 `hash_search()`
 const CHUNK_SIZE: usize = 32 * 1024;
@@ -201,19 +197,30 @@ fn short_final_block_len(index: &DeltaSignatureIndex, block_len: usize) -> Optio
     (len > 0 && len < block_len).then_some(len)
 }
 
-/// The single source of truth for the literal-flush cadence.
+/// Moves the whole `CHUNK_SIZE` chunks of `pending` into one `Literal` token,
+/// keeping the remainder pending, and returns the number of bytes moved.
 ///
-/// The sequential scan ([`DeltaGenerator::generate`]) flushes its pending
-/// literal accumulator into one `Literal` token every time it reaches this many
-/// bytes, so a match-free region is framed as a run of fixed-size literal tokens
-/// (the final partial run aside). The parallel merge ([`push_split_literal_slice`])
-/// splits its gap literals at exactly this same cadence, so both paths frame
-/// literals identically by construction rather than by coincidence.
-///
-/// upstream: match.c:408-409 (`backup >= s->blength+CHUNK_SIZE`).
-#[inline]
-const fn literal_flush_cadence(block_len: usize) -> usize {
-    block_len + CHUNK_SIZE
+/// Upstream sends a literal run in `CHUNK_SIZE` pieces counted from the end of
+/// the previous match. Its early flush fires when the backlog reaches
+/// `blength + CHUNK_SIZE` and sends up to `offset - blength`, which is exactly
+/// one chunk (match.c:408-409), and `simple_send_token()` cuts every run at
+/// `CHUNK_SIZE` (token.c:316-330). The wire writer cuts each `Literal` token at
+/// `CHUNK_SIZE` from its own start, so a token that holds whole chunks keeps
+/// every piece on upstream's boundaries. This scan never revisits bytes that
+/// left its window, so it flushes a chunk as soon as it is complete instead of
+/// a block later; the pieces on the wire are the same. The parallel merge
+/// ([`push_split_literal_slice`]) splits its gap literals at `CHUNK_SIZE` too,
+/// so both paths frame literals identically.
+fn flush_whole_chunks(pending: &mut Vec<u8>, tokens: &mut Vec<DeltaToken<'static>>) -> u64 {
+    let whole = pending.len() - pending.len() % CHUNK_SIZE;
+    if whole == 0 {
+        return 0;
+    }
+    let mut rest = Vec::with_capacity(CHUNK_SIZE);
+    rest.extend_from_slice(&pending[whole..]);
+    pending.truncate(whole);
+    tokens.push(DeltaToken::Literal(std::mem::replace(pending, rest).into()));
+    whole as u64
 }
 
 /// Appends `slice` into `out` as one or more borrowed `DeltaToken::Literal` tokens split
@@ -257,7 +264,7 @@ struct CopyRun {
 /// duplicate-free basis: every match the sequential scan would find was scanned
 /// with a full window by the owning worker (so it is present here), and a run
 /// starting before the cursor is one the sequential scan also skips. Gaps are
-/// literal bytes sliced directly from `source` at [`literal_flush_cadence`]
+/// literal bytes sliced directly from `source` at `CHUNK_SIZE`
 /// boundaries in a single pass without intermediate staging buffers. The result
 /// covers `[0, source.len())` contiguously, so reconstruction is byte-exact
 /// regardless of the basis.
@@ -267,7 +274,6 @@ fn merge_copy_runs<'a>(
     block_len: usize,
 ) -> DeltaScript<'a> {
     let n = source.len() as u64;
-    let cadence = literal_flush_cadence(block_len);
 
     // Earliest start first; on a tie prefer the longer run so a seam-truncated
     // duplicate never shadows the owning worker's full run.
@@ -295,11 +301,11 @@ fn merge_copy_runs<'a>(
             }
             other => {
                 // Literal gap from the cursor up to the next accepted match (or
-                // EOF), sliced directly from `source` at `cadence` boundaries.
+                // EOF), sliced directly from `source` at `CHUNK_SIZE` boundaries.
                 let gap_end = other.map_or(n, |run| run.source_start);
                 let gap_slice = &source[cursor as usize..gap_end as usize];
                 literal_bytes += gap_slice.len() as u64;
-                push_split_literal_slice(&mut tokens, gap_slice, cadence);
+                push_split_literal_slice(&mut tokens, gap_slice, CHUNK_SIZE);
                 cursor = gap_end;
             }
         }
@@ -722,12 +728,10 @@ impl DeltaGenerator {
                     pending_literals.push(outgoing_byte);
 
                     // upstream: match.c:408-409 - flush early to bound memory growth
-                    if pending_literals.len() >= literal_flush_cadence(block_len) {
-                        literal_bytes += pending_literals.len() as u64;
-                        total_bytes += pending_literals.len() as u64;
-                        let filled =
-                            std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
-                        tokens.push(DeltaToken::Literal(filled.into()));
+                    if pending_literals.len() >= CHUNK_SIZE {
+                        let flushed = flush_whole_chunks(&mut pending_literals, &mut tokens);
+                        literal_bytes += flushed;
+                        total_bytes += flushed;
                     }
                 }
             } else {
@@ -844,14 +848,10 @@ impl DeltaGenerator {
                         if !w2.is_empty() {
                             pending_literals.extend_from_slice(&w2[..w2.len() - 1]);
                         }
-                        if pending_literals.len() >= literal_flush_cadence(block_len) {
-                            literal_bytes += pending_literals.len() as u64;
-                            total_bytes += pending_literals.len() as u64;
-                            let filled = std::mem::replace(
-                                &mut pending_literals,
-                                Vec::with_capacity(block_len),
-                            );
-                            tokens.push(DeltaToken::Literal(filled.into()));
+                        if pending_literals.len() >= CHUNK_SIZE {
+                            let flushed = flush_whole_chunks(&mut pending_literals, &mut tokens);
+                            literal_bytes += flushed;
+                            total_bytes += flushed;
                         }
                     }
                     window.clear();
@@ -1395,8 +1395,10 @@ impl DeltaGenerator {
                         if !w2.is_empty() {
                             pending_literals.extend_from_slice(&w2[..w2.len() - 1]);
                         }
-                        if pending_literals.len() >= literal_flush_cadence(block_len) {
-                            flush_pending!();
+                        if pending_literals.len() >= CHUNK_SIZE {
+                            let flushed = flush_whole_chunks(&mut pending_literals, &mut tokens);
+                            literal_bytes += flushed;
+                            total_bytes += flushed;
                         }
                         window.clear();
                         window.push_back(last_byte);
@@ -1600,7 +1602,7 @@ impl DeltaGenerator {
     /// [`Self::generate`] applies. Gaps are literal bytes taken straight from
     /// `source`, so a boundary can never drop or duplicate a byte, and
     /// `push_split_literal_slice` frames those gaps at the shared
-    /// `literal_flush_cadence`.
+    /// `CHUNK_SIZE`.
     ///
     /// # Wire transparency
     ///
@@ -1811,6 +1813,7 @@ pub fn generate_delta<R: Read>(
 mod tests {
     use super::*;
     use crate::script::apply_delta;
+    use proptest::prelude::*;
     use protocol::ProtocolVersion;
     use signature::{
         SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
@@ -2657,5 +2660,226 @@ mod tests {
         assert_eq!(plain.tokens(), inplace.tokens());
         assert!(copies_are_monotonic(&inplace, index.block_length()));
         assert_eq!(reconstruct(&basis, &index, &inplace), source);
+    }
+
+    /// The literal pieces the wire writer sends for `script`: each `Literal`
+    /// token is cut at `CHUNK_SIZE` from its own start (token.c:316-330), and a
+    /// `Copy` ends the run.
+    fn wire_literal_runs(script: &DeltaScript<'_>) -> Vec<Vec<usize>> {
+        let mut runs = vec![Vec::new()];
+        for token in script.tokens() {
+            match token {
+                DeltaToken::Literal(bytes) => {
+                    let pieces = runs.last_mut().expect("run");
+                    pieces.extend(bytes.chunks(CHUNK_SIZE).map(<[u8]>::len));
+                }
+                DeltaToken::Copy { .. } => runs.push(Vec::new()),
+            }
+        }
+        runs.retain(|run| !run.is_empty());
+        runs
+    }
+
+    /// 7 matched blocks, a 100,500-byte literal run, then one more matched
+    /// block: the shape of issue 8816 with a match after the run.
+    fn literal_run_fixture() -> (Vec<u8>, Vec<u8>, DeltaSignatureIndex) {
+        let basis = pseudo_random(200_000, 0x8816);
+        let index = build_index_fixed(&basis, 700);
+        let mut source = basis[..7 * 700].to_vec();
+        source.extend_from_slice(&pseudo_random(100_500, 0x5eed));
+        source.extend_from_slice(&basis[7 * 700..8 * 700]);
+        (basis, source, index)
+    }
+
+    /// rsync 3.5.2 sends a long literal run as whole `CHUNK_SIZE` pieces from
+    /// the previous match: its early flush sends exactly one chunk
+    /// (match.c:408-409) and the run's tail goes out when the next match is
+    /// found. Flushing the whole `blength + CHUNK_SIZE` backlog instead put a
+    /// 700-byte piece after every chunk, 4 bytes of extra framing each.
+    #[test]
+    fn sequential_scan_sends_a_long_literal_run_in_whole_chunks() {
+        let (basis, source, index) = literal_run_fixture();
+        let script = DeltaGenerator::new()
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("script");
+
+        assert_eq!(
+            wire_literal_runs(&script),
+            vec![vec![CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, 2196]]
+        );
+        assert_eq!(script.literal_bytes(), 100_500);
+        assert_eq!(reconstruct(&basis, &index, &script), source);
+    }
+
+    /// The parallel merge frames gap literals at the same boundaries as the
+    /// sequential scan, so a striped send is byte-identical on the wire.
+    #[test]
+    fn striped_scan_frames_a_long_literal_run_like_the_sequential_scan() {
+        let (basis, source, index) = literal_run_fixture();
+        let generator = DeltaGenerator::new();
+        assert!(generator.forced_stripe_count(source.len(), &index, 4) > 1);
+
+        let sequential = generator
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("sequential");
+        let striped = generator
+            .generate_chunked_forced(&source, &index, 4)
+            .expect("striped")
+            .0;
+
+        assert_eq!(wire_literal_runs(&striped), wire_literal_runs(&sequential));
+        assert_eq!(
+            wire_literal_runs(&striped),
+            vec![vec![CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE, 2196]]
+        );
+        assert_eq!(reconstruct(&basis, &index, &striped), source);
+    }
+
+    #[test]
+    fn flush_whole_chunks_keeps_the_partial_chunk_pending() {
+        let mut pending = pseudo_random(2 * CHUNK_SIZE + 5, 7);
+        let original = pending.clone();
+        let mut tokens = Vec::new();
+
+        assert_eq!(
+            flush_whole_chunks(&mut pending, &mut tokens),
+            2 * CHUNK_SIZE as u64
+        );
+        assert_eq!(pending, original[2 * CHUNK_SIZE..]);
+        assert!(
+            matches!(&tokens[..], [DeltaToken::Literal(bytes)] if bytes.as_ref() == &original[..2 * CHUNK_SIZE])
+        );
+
+        let mut short = vec![1u8; CHUNK_SIZE - 1];
+        assert_eq!(flush_whole_chunks(&mut short, &mut tokens), 0);
+        assert_eq!(short.len(), CHUNK_SIZE - 1);
+        assert_eq!(tokens.len(), 1);
+    }
+
+    /// What the wire writer sends for one script element.
+    #[derive(Debug, PartialEq, Eq)]
+    enum WirePiece {
+        /// One literal length word and its data (token.c:316-330).
+        Literal(usize),
+        /// One block-match token.
+        Block(u64),
+    }
+
+    /// The pieces the wire writer sends for `script`: each `Literal` token is
+    /// cut at `CHUNK_SIZE` from its own start, each `Copy` covers whole blocks.
+    fn wire_pieces(script: &DeltaScript<'_>, block_len: usize) -> Vec<WirePiece> {
+        let mut pieces = Vec::new();
+        for token in script.tokens() {
+            match token {
+                DeltaToken::Literal(bytes) => pieces.extend(
+                    bytes
+                        .chunks(CHUNK_SIZE)
+                        .map(|chunk| WirePiece::Literal(chunk.len())),
+                ),
+                DeltaToken::Copy { index, len } => {
+                    let blocks = (*len / block_len) as u64;
+                    pieces.extend((*index..*index + blocks).map(WirePiece::Block));
+                }
+            }
+        }
+        pieces
+    }
+
+    /// One stretch of a generated source file.
+    #[derive(Clone, Debug)]
+    enum Segment {
+        /// A copy of basis block `n`.
+        Block(usize),
+        /// `n` bytes the basis does not contain.
+        Literal(usize),
+    }
+
+    /// rsync 3.5.2's framing as a direct model: every literal piece is
+    /// `min(CHUNK_SIZE, remaining)` bytes counted from the end of the previous
+    /// match (match.c:408-409 sends exactly one chunk early, token.c:316-330
+    /// cuts the rest), and every matched block is one token.
+    fn model_pieces(segments: &[Segment]) -> Vec<WirePiece> {
+        let mut pieces = Vec::new();
+        let mut run = 0usize;
+        let close_run = |run: &mut usize, pieces: &mut Vec<WirePiece>| {
+            while *run > 0 {
+                let piece = (*run).min(CHUNK_SIZE);
+                pieces.push(WirePiece::Literal(piece));
+                *run -= piece;
+            }
+        };
+        for segment in segments {
+            match *segment {
+                Segment::Literal(len) => run += len,
+                Segment::Block(index) => {
+                    close_run(&mut run, &mut pieces);
+                    pieces.push(WirePiece::Block(index as u64));
+                }
+            }
+        }
+        close_run(&mut run, &mut pieces);
+        pieces
+    }
+
+    fn segment_strategy(blocks: usize) -> impl Strategy<Value = Segment> {
+        prop_oneof![
+            (0..blocks).prop_map(Segment::Block),
+            (1usize..=3 * CHUNK_SIZE + 1_000).prop_map(Segment::Literal),
+        ]
+    }
+
+    fn literal_framing_case() -> impl Strategy<Value = (usize, usize, Vec<Segment>, u64, usize)> {
+        (300usize..=2_000, 4usize..=12).prop_flat_map(|(block_len, blocks)| {
+            (
+                Just(block_len),
+                Just(blocks),
+                prop::collection::vec(segment_strategy(blocks), 1..=10),
+                any::<u64>(),
+                2usize..=4,
+            )
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        /// The sequential scan flushes a literal chunk as soon as it is
+        /// complete, while match.c:408-409 waits for one more block; the
+        /// pieces on the wire are the same only because both cut at
+        /// `CHUNK_SIZE` from the previous match. This checks that claim: for
+        /// any block length, file shape and stripe count, the sequential and
+        /// striped scans send exactly 3.5.2's pieces and rebuild the file.
+        #[test]
+        fn literal_pieces_follow_upstream_chunk_grid(
+            (block_len, blocks, segments, seed, stripes) in literal_framing_case()
+        ) {
+            let basis = pseudo_random(block_len * blocks, seed);
+            let index = build_index_fixed(&basis, block_len as u32);
+            let mut source = Vec::new();
+            for (n, segment) in segments.iter().enumerate() {
+                match *segment {
+                    Segment::Block(b) => {
+                        source.extend_from_slice(&basis[b * block_len..(b + 1) * block_len]);
+                    }
+                    Segment::Literal(len) => {
+                        source.extend(pseudo_random(len, seed ^ (n as u64 + 1).wrapping_mul(0x9e37)));
+                    }
+                }
+            }
+            let generator = DeltaGenerator::new();
+            let sequential = generator
+                .generate(Cursor::new(&source[..]), &index)
+                .expect("sequential");
+            let striped = generator
+                .generate_chunked_forced(&source, &index, stripes)
+                .expect("striped")
+                .0;
+
+            let expected = model_pieces(&segments);
+            prop_assert_eq!(&wire_pieces(&sequential, block_len), &expected);
+            prop_assert_eq!(&wire_pieces(&striped, block_len), &expected);
+            prop_assert_eq!(reconstruct(&basis, &index, &sequential), source.clone());
+            prop_assert_eq!(reconstruct(&basis, &index, &striped), source);
+        }
     }
 }

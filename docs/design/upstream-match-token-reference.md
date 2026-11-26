@@ -277,10 +277,13 @@ oc-rsync analogue:
 
 - `crates/matching/src/generator.rs:33-34` defines `CHUNK_SIZE: usize =
   32 * 1024` with the upstream cite.
-- `crates/matching/src/generator.rs:218-225` flushes when
-  `pending_literals.len() >= block_len + CHUNK_SIZE`, mirroring the
-  `backup >= s->blength + CHUNK_SIZE` guard. The `total_bytes` and
-  `literal_bytes` counters are bumped on the flush path.
+- `flush_whole_chunks()` in `crates/matching/src/generator.rs` flushes
+  the whole `CHUNK_SIZE` chunks of `pending_literals` as soon as one is
+  complete, keeping the remainder pending. Upstream flushes one block
+  later and only one chunk, but both put every literal piece on the
+  `CHUNK_SIZE` grid counted from the previous match, so the wire pieces
+  are the same. The `total_bytes` and `literal_bytes` counters are bumped
+  on the flush path.
 
 ### 1.5 match_sums() and the matches summary
 
