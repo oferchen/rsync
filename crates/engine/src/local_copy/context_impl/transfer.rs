@@ -1,3 +1,16 @@
+#[cfg(test)]
+thread_local! {
+    /// Bytes charged to the bandwidth limiter on this thread; the seam the
+    /// `--bwlimit` accounting test reads.
+    static LIMITER_BYTES_CHARGED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Drains the bytes charged to the bandwidth limiter on the calling thread.
+#[cfg(test)]
+pub(crate) fn take_limiter_bytes_charged() -> u64 {
+    LIMITER_BYTES_CHARGED.with(|charged| charged.replace(0))
+}
+
 impl<'a> CopyContext<'a> {
     /// Returns an interrupt-signal error once a shutdown signal has been
     /// received.
@@ -24,6 +37,8 @@ impl<'a> CopyContext<'a> {
         }
 
         if let Some(limiter) = self.limiter.as_mut() {
+            #[cfg(test)]
+            LIMITER_BYTES_CHARGED.with(|charged| charged.set(charged.get() + bytes));
             let bounded = bytes.min(usize::MAX as u64) as usize;
             let sleep = limiter.register(bounded);
             self.summary.record_bandwidth_sleep(sleep.requested());

@@ -44,9 +44,15 @@ impl std::io::Write for CountedSink<'_> {
 
 #[cfg(test)]
 thread_local! {
-    /// Streams built on this thread; the seam the one-stream tests read.
-    static TOKEN_STREAMS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Codec and zstd worker count of each stream built on this thread; the
+    /// seam the one-stream tests read.
+    static TOKEN_STREAMS_BUILT: std::cell::RefCell<Vec<BuiltTokenStream>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// What a test sees of one stream the engine built.
+#[cfg(test)]
+pub(crate) type BuiltTokenStream = (CompressionAlgorithm, Option<std::num::NonZeroU8>);
 
 impl TokenStream {
     /// Builds the run's stream for the session's codec, or `None` without `-z`.
@@ -62,16 +68,25 @@ impl TokenStream {
         if !options.compress_enabled() {
             return None;
         }
+        #[cfg(test)]
+        let mut workers = None;
         let encoder = match algorithm {
             CompressionAlgorithm::Zlib => {
                 protocol::wire::CompressedTokenEncoder::new(options.compression_level(), protocol)
             }
             #[cfg(feature = "zstd")]
-            CompressionAlgorithm::Zstd => protocol::wire::CompressedTokenEncoder::new_zstd(
-                zstd_level(options.compression_level()),
-                options.compression_threads(),
-            )
-            .ok()?,
+            CompressionAlgorithm::Zstd => {
+                let threads = options.compression_threads();
+                #[cfg(test)]
+                {
+                    workers = threads;
+                }
+                protocol::wire::CompressedTokenEncoder::new_zstd(
+                    zstd_level(options.compression_level()),
+                    threads,
+                )
+                .ok()?
+            }
             #[cfg(feature = "lz4")]
             CompressionAlgorithm::Lz4 => protocol::wire::CompressedTokenEncoder::new_lz4(),
             // A codec this build lacks (feature unification through another
@@ -80,17 +95,17 @@ impl TokenStream {
             _ => return None,
         };
         #[cfg(test)]
-        TOKEN_STREAMS_BUILT.with(|built| built.set(built.get() + 1));
+        TOKEN_STREAMS_BUILT.with(|built| built.borrow_mut().push((algorithm, workers)));
         Some(Self {
             encoder,
             file_bytes: 0,
         })
     }
 
-    /// Streams built on the calling thread so far.
+    /// Drains the streams built on the calling thread.
     #[cfg(test)]
-    pub(crate) fn built_on_this_thread() -> usize {
-        TOKEN_STREAMS_BUILT.with(std::cell::Cell::get)
+    pub(crate) fn take_built_on_this_thread() -> Vec<BuiltTokenStream> {
+        TOKEN_STREAMS_BUILT.with(|built| std::mem::take(&mut *built.borrow_mut()))
     }
 
     /// Starts a file's token stream.
