@@ -156,15 +156,23 @@ const IPADDR_BUF_LEN: usize = 100;
 ///
 /// upstream: clientname.c:70-77 plus `valid_ipaddr(buf, True)`.
 fn parse_peer_env_value(value: &str) -> Option<PeerAddress> {
-    let bytes = value.as_bytes();
-    let copied = &bytes[..bytes.len().min(IPADDR_BUF_LEN - 1)];
-    let field = copied.split(|&b| b == b' ').next().unwrap_or(copied);
+    let field = peer_env_field(value);
     if !valid_ipaddr(field, true) {
         return None;
     }
     std::str::from_utf8(field)
         .ok()
         .map(PeerAddress::from_remote_shell)
+}
+
+/// The part of an environment value upstream keeps in `ipaddr_buf`: at most 99
+/// bytes, cut at the first space.
+///
+/// upstream: clientname.c:71-74.
+fn peer_env_field(value: &str) -> &[u8] {
+    let bytes = value.as_bytes();
+    let copied = &bytes[..bytes.len().min(IPADDR_BUF_LEN - 1)];
+    copied.split(|&b| b == b' ').next().unwrap_or(copied)
 }
 
 /// Byte-for-byte port of upstream's address validator, including its quirks:
@@ -432,8 +440,9 @@ pub(in crate::daemon) enum RemoteShellPeer {
     /// Upstream falls through to `client_sockaddr()` here, which on a remote
     /// shell's pipe fails `getpeername` and aborts the connection. Reporting it
     /// separately lets the caller mirror that abort instead of quietly
-    /// substituting a default the operator did not configure.
-    Unusable,
+    /// substituting a default the operator did not configure. The field is the
+    /// text upstream left in `ipaddr_buf` (copied and cut at the first space).
+    Unusable(String),
 }
 
 /// Resolves the peer address for a daemon started behind a remote shell.
@@ -450,7 +459,10 @@ pub(in crate::daemon) fn remote_shell_peer_addr() -> RemoteShellPeer {
         )));
     };
 
-    parse_peer_env_value(&raw).map_or(RemoteShellPeer::Unusable, RemoteShellPeer::Addr)
+    parse_peer_env_value(&raw).map_or_else(
+        || RemoteShellPeer::Unusable(String::from_utf8_lossy(peer_env_field(&raw)).into_owned()),
+        RemoteShellPeer::Addr,
+    )
 }
 
 /// Normalises an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) to plain IPv4.
@@ -463,9 +475,9 @@ pub(in crate::daemon) fn remote_shell_peer_addr() -> RemoteShellPeer {
 /// upstream: clientname.c:329-356 - `client_sockaddr()` rewrites a V4MAPPED
 /// `sockaddr_in6` into a `sockaddr_in` before any lookup or comparison.
 ///
-/// Gated to Unix because its only caller is [`inherited_socket_peer_addr`],
-/// which is itself Unix-only: a V4MAPPED peer can only arrive through the
-/// inetd stdin socket this module reads. Without the gate the function is dead
+/// Gated to Unix because its only caller is [`stdin_socket_peer`], which is
+/// itself Unix-only: a V4MAPPED peer can only arrive through the stdin socket
+/// this module reads. Without the gate the function is dead
 /// on Windows, and `-D warnings` (set in `_interop-windows.yml` and
 /// `_test-features.yml`) turns that into a build failure.
 #[cfg(unix)]
@@ -476,47 +488,52 @@ fn normalize_v4_mapped(addr: IpAddr) -> IpAddr {
     }
 }
 
-/// Reads the real peer address from the socket inherited on stdin.
+/// Reads the peer of fd 0 for a remote-shell daemon whose environment named no
+/// usable address.
 ///
-/// Used by the inetd / socket-activation entry point, where fd 0 is the
-/// connected socket and the address is genuinely available.
+/// upstream: clientname.c:80-81 - `client_sockaddr(fd)` then
+/// `getnameinfo(NI_NUMERICHOST)` into `ipaddr_buf`, which still holds the
+/// environment field. An IP peer becomes its numeric address (an IPv4-mapped
+/// IPv6 one is rewritten to IPv4 first, clientname.c:329-356). A peer that is
+/// not an IP socket - the `AF_UNIX` socketpair a local `-e` command hands its
+/// child - is rendered by the C library's own `getnameinfo(NI_NUMERICHOST)`
+/// through `platform::peer_name::peer_numeric_host`: glibc writes
+/// `localhost`, and a library that refuses the family leaves the buffer
+/// holding the environment field (clientname.c:71-74, :81).
 ///
 /// `socket2::SockRef::from(&io::Stdin)` borrows the descriptor through `AsFd`
-/// without taking ownership, so nothing closes stdin and no `unsafe` is needed
-/// - the same construction `is_stdin_socket()` already uses to classify fd 0.
-///
-/// A peer that HAS an address but not an IP one (an `AF_UNIX` socket) degrades
-/// to [`REMOTE_SHELL_DEFAULT_ADDR`] rather than failing. `is_stdin_socket()`
-/// admits only `AF_INET`/`AF_INET6` peers, as upstream's `is_inetd_socket()`
-/// does (clientserver.c:1727-1743), so this arm is a defensive fallback. Were
-/// it reached, upstream's `getnameinfo` would fail unchecked (clientname.c:81)
-/// and leave `ipaddr_buf` empty; both "" and `0.0.0.0` match no realistic
-/// `hosts allow` token, so the ACL outcome is the same.
+/// without taking ownership, so nothing closes stdin and no `unsafe` is needed.
 ///
 /// # Errors
 ///
-/// Returns the `getpeername` error unchanged when the call itself fails. The
-/// caller must abort the session rather than substitute a placeholder; upstream
-/// treats that as `RERR_SOCKETIO` (clientname.c:323-327).
+/// Returns the `getpeername` error unchanged when stdin is not a socket (a
+/// pipe, as sshd hands a command). The caller must abort the session, as
+/// upstream does with `RERR_SOCKETIO` (clientname.c:323-327).
 #[cfg(unix)]
-pub(in crate::daemon) fn inherited_socket_peer_addr() -> std::io::Result<SocketAddr> {
+pub(in crate::daemon) fn stdin_socket_peer(env_field: &str) -> std::io::Result<PeerAddress> {
+    use std::os::fd::AsFd;
+
     let stdin = std::io::stdin();
-    let sock = socket2::SockRef::from(&stdin);
-    let peer = sock.peer_addr()?;
-    Ok(peer.as_socket().map_or_else(
-        || SocketAddr::new(REMOTE_SHELL_DEFAULT_ADDR, 0),
-        |addr| SocketAddr::new(normalize_v4_mapped(addr.ip()), addr.port()),
-    ))
+    let peer = socket2::SockRef::from(&stdin).peer_addr()?;
+    Ok(match peer.as_socket() {
+        Some(addr) => {
+            PeerAddress::from_socket(SocketAddr::new(normalize_v4_mapped(addr.ip()), addr.port()))
+        }
+        None => PeerAddress::from_remote_shell(
+            platform::peer_name::peer_numeric_host(stdin.as_fd())?
+                .as_deref()
+                .unwrap_or(env_field),
+        ),
+    })
 }
 
-/// Non-Unix stub: the inetd entry point is Unix-only (`is_stdin_socket()`
-/// returns `false` on other platforms), so this is unreachable in practice and
-/// exists to keep the module compiling everywhere.
+/// Non-Unix stub: daemon mode is refused on these platforms, so a remote-shell
+/// daemon never reaches this.
 #[cfg(not(unix))]
-pub(in crate::daemon) fn inherited_socket_peer_addr() -> std::io::Result<SocketAddr> {
+pub(in crate::daemon) fn stdin_socket_peer(_env_field: &str) -> std::io::Result<PeerAddress> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "inetd-style stdin sockets are not supported on this platform",
+        "stdin sockets are not supported on this platform",
     ))
 }
 
@@ -734,7 +751,10 @@ mod tests {
         let _remote_host = EnvGuard::set("REMOTE_HOST", OsStr::new("not-an-address"));
         let _ssh_connection =
             EnvGuard::set("SSH_CONNECTION", OsStr::new("10.1.2.3 5555 10.0.0.1 22"));
-        assert_eq!(remote_shell_peer_addr(), RemoteShellPeer::Unusable);
+        assert_eq!(
+            remote_shell_peer_addr(),
+            RemoteShellPeer::Unusable("not-an-address".to_owned())
+        );
     }
 
     /// The security-relevant default. `0.0.0.0` matches no realistic

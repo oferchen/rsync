@@ -283,6 +283,9 @@ pub(crate) use self::module_state::{
     ModuleConnectionError, ModuleDefinition, ModuleRuntime, PeerHost, UnresolvedId,
     UserAccessLevel, module_peer_hostname,
 };
+use self::module_state::{
+    NameLookupFailure, malformed_peer_address, peer_host_display, resolve_peer_hostname,
+};
 #[cfg(test)]
 pub(crate) use self::module_state::{
     TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV, TestSecretsEnvOverride,
@@ -290,7 +293,6 @@ pub(crate) use self::module_state::{
     set_test_netgroup_members,
 };
 use self::module_state::{build_module_runtimes, build_module_runtimes_with_lock_file};
-use self::module_state::{peer_host_display, resolve_peer_hostname};
 
 // upstream: log.c:142 logit() - every daemon log-file line is stamped
 // with `%Y/%m/%d %H:%M:%S [pid] `, provided by the LogFileWriter wrapper.
@@ -490,12 +492,12 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::remote_shell(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    let peer = remote_shell_session_peer()?;
+    let peer = remote_shell_session_peer(log_sink.as_ref())?;
 
     // upstream: clientname.c `client_name` forward-confirms unconditionally;
     // per-module `forward lookup` governs the access-control match.
     let peer_host = if reverse_lookup {
-        peer.ip().and_then(resolve_peer_hostname)
+        lookup_remote_peer_host(&peer, log_sink.as_ref())
     } else {
         None
     };
@@ -534,21 +536,23 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 /// admitted every client; `0.0.0.0` matches no realistic allow token.
 ///
 /// A set-but-invalid variable falls through to `client_sockaddr()` on fd 0.
-/// Behind a remote shell that is usually a pipe, so `getpeername` fails and
-/// upstream exits `RERR_SOCKETIO` (clientname.c:323-327); a socket stdin
-/// yields its real peer.
-fn remote_shell_session_peer() -> Result<PeerAddress, DaemonError> {
+/// A socket stdin yields its peer. Behind sshd, stdin is a pipe, so
+/// `getpeername` fails: upstream logs `rsyserr(FLOG, errno, "getpeername on
+/// fd%d failed", fd)` and exits `RERR_SOCKETIO` (clientname.c:323-327), whose
+/// trailer `log_exit()` writes to the log file and to stderr (log.c:1025-1051).
+fn remote_shell_session_peer(log: Option<&SharedLogSink>) -> Result<PeerAddress, DaemonError> {
     match peer_address::remote_shell_peer_addr() {
         peer_address::RemoteShellPeer::Addr(peer) => Ok(peer),
-        peer_address::RemoteShellPeer::Unusable => peer_address::inherited_socket_peer_addr()
-            .map(PeerAddress::from_socket)
+        peer_address::RemoteShellPeer::Unusable(field) => peer_address::stdin_socket_peer(&field)
             .map_err(|error| {
                 let code = ExitCode::SocketIo;
-                DaemonError::with_code(
-                    code,
-                    rsync_error!(code.as_i32(), format!("getpeername on fd0 failed: {error}"))
-                        .with_role(Role::Daemon),
-                )
+                let trailer = rsync_error!(code.as_i32(), code.description())
+                    .with_role(Role::PreForkReceiver);
+                if let Some(log) = log {
+                    log_getpeername_failure(log, &error);
+                    log_message(log, &trailer);
+                }
+                DaemonError::with_code(code, trailer)
             }),
     }
 }

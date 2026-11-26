@@ -698,16 +698,24 @@ fn respond_with_module_request(
         );
     };
 
-    let mut hostname_cache: Option<Option<String>> = None;
+    let mut hostname_cache = None;
     // upstream: clientserver.c:1535 resolves the host when `lp_reverse_lookup(-1)`
     // (the global default = `reverse_lookup`) is set, then rsync_module (:768-769)
     // resolves it per-module when `lp_reverse_lookup(i)` is set. The effective
     // per-module value is therefore the global default OR the module override.
     let module_reverse_lookup = reverse_lookup || module.reverse_lookup;
-    let module_peer_host = match peer.ip() {
-        Some(ip) => module_peer_hostname(module, &mut hostname_cache, ip, module_reverse_lookup),
-        None => None,
-    };
+    if let Some(ip) = peer.ip() {
+        module_peer_hostname(module, &mut hostname_cache, ip, module_reverse_lookup);
+    }
+    // upstream: clientname.c:104-105 caches the session's lookup, so only a
+    // module that turns `reverse lookup` on by itself makes `client_name()`
+    // run, and log a failure, here.
+    if let (false, Some(log), Some(Err(failure))) = (reverse_lookup, log_sink, &hostname_cache) {
+        log_name_lookup_failure(log, failure);
+    }
+    let module_peer_host = hostname_cache
+        .as_ref()
+        .and_then(|resolved| resolved.as_deref().ok());
 
     // upstream: clientserver.c:761/774-775 - RSYNC_MODULE_NAME, RSYNC_HOST_NAME
     // and RSYNC_HOST_ADDR are set before the access check reads `hosts allow`.

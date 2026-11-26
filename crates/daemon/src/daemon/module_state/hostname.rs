@@ -1,8 +1,8 @@
 use std::net::{IpAddr, SocketAddr};
 
-use dns_lookup::lookup_addr;
 #[cfg(not(test))]
 use dns_lookup::{AddrInfoHints, SockType, getaddrinfo};
+use dns_lookup::{LookupError, LookupErrorKind, lookup_addr};
 
 use super::ModuleDefinition;
 
@@ -101,7 +101,8 @@ impl<'a> PeerHost<'a> {
 ///
 /// Returns `None` when hostname lookup is disabled, the module has no hostname-based
 /// host patterns, or DNS resolution fails. Results are cached in `cache` to avoid
-/// repeated DNS lookups for the same peer.
+/// repeated DNS lookups for the same peer; a failure stays in the cache so the
+/// caller can log it.
 ///
 /// The reverse-DNS name is always forward-confirmed (see
 /// [`resolve_peer_hostname`]); the module's `forward lookup` parameter does not
@@ -114,7 +115,7 @@ impl<'a> PeerHost<'a> {
 /// (access.c:60 `allow_forward_dns`) gates only the config-token lookup.
 pub(crate) fn module_peer_hostname<'a>(
     module: &ModuleDefinition,
-    cache: &'a mut Option<Option<String>>,
+    cache: &'a mut Option<Result<String, NameLookupFailure>>,
     peer_ip: IpAddr,
     allow_lookup: bool,
 ) -> Option<&'a str> {
@@ -122,11 +123,10 @@ pub(crate) fn module_peer_hostname<'a>(
         return None;
     }
 
-    if cache.is_none() {
-        *cache = Some(resolve_peer_hostname(peer_ip));
-    }
-
-    cache.as_ref().and_then(|value| value.as_deref())
+    cache
+        .get_or_insert_with(|| resolve_peer_hostname(peer_ip))
+        .as_deref()
+        .ok()
 }
 
 /// Performs a reverse DNS lookup for the given IP address.
@@ -145,31 +145,153 @@ pub(crate) fn module_peer_hostname<'a>(
 /// upstream: clientname.c:147-153 `client_name()` calls `check_name()`
 /// (clientname.c:425) unconditionally, which replaces an unconfirmed name with
 /// the "UNKNOWN" placeholder. No daemon parameter disables it.
-pub(in crate::daemon) fn resolve_peer_hostname(peer_ip: IpAddr) -> Option<String> {
-    let name = reverse_lookup_name(peer_ip)?;
-    if !forward_confirms(&name, peer_ip) {
-        return None;
+pub(in crate::daemon) fn resolve_peer_hostname(
+    peer_ip: IpAddr,
+) -> Result<String, NameLookupFailure> {
+    if peer_ip == IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED) {
+        return Err(NameLookupFailure::Unaddressed);
     }
-    Some(name)
+    let name = reverse_lookup_name(peer_ip).map_err(|reason| NameLookupFailure::Reverse {
+        addr: peer_ip,
+        reason,
+    })?;
+    let addrs = resolve_forward_key(&normalize_hostname_owned(name.clone())).map_err(|reason| {
+        NameLookupFailure::Forward {
+            name: name.clone(),
+            reason,
+        }
+    })?;
+    if addrs.is_empty() {
+        return Err(NameLookupFailure::NoAddress { name });
+    }
+    if !addrs.iter().any(|addr| addr.ip() == peer_ip) {
+        return Err(NameLookupFailure::NotKnown {
+            addr: peer_ip,
+            name,
+        });
+    }
+    Ok(name)
 }
+
+/// Why `client_name()` fell back to `UNKNOWN`.
+///
+/// [`NameLookupFailure::log_line`] is the exact FLOG line upstream writes
+/// before it returns the placeholder, when it writes one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum NameLookupFailure {
+    /// The peer address is the `0.0.0.0` placeholder a daemon over a remote
+    /// shell uses when no environment variable names the client.
+    ///
+    /// upstream: clientname.c:113-114 - returned without a lookup or a log line.
+    Unaddressed,
+    /// The peer string is not a numeric address.
+    ///
+    /// upstream: clientname.c:120-123 `malformed address %s: %s`.
+    Malformed { text: String, reason: String },
+    /// The PTR lookup failed.
+    ///
+    /// upstream: clientname.c:149-151 `name lookup failed for %s: %s`.
+    Reverse { addr: IpAddr, reason: String },
+    /// The forward lookup of the PTR name failed.
+    ///
+    /// upstream: clientname.c:436-440 `forward name lookup for %s failed: %s`.
+    Forward { name: String, reason: String },
+    /// The forward lookup succeeded with no addresses.
+    ///
+    /// upstream: clientname.c:450-454 `no known address for "%s": spoofed address?`.
+    NoAddress { name: String },
+    /// The forward lookup does not include the peer's address.
+    ///
+    /// upstream: clientname.c:455-460 `%s is not a known address for "%s": spoofed address?`.
+    NotKnown { addr: IpAddr, name: String },
+}
+
+impl NameLookupFailure {
+    /// The line upstream logs for this failure, or `None` when it logs nothing.
+    pub(crate) fn log_line(&self) -> Option<String> {
+        match self {
+            Self::Unaddressed => None,
+            Self::Malformed { text, reason } => Some(format!("malformed address {text}: {reason}")),
+            Self::Reverse { addr, reason } => {
+                Some(format!("name lookup failed for {addr}: {reason}"))
+            }
+            Self::Forward { name, reason } => {
+                Some(format!("forward name lookup for {name} failed: {reason}"))
+            }
+            Self::NoAddress { name } => {
+                Some(format!("no known address for \"{name}\": spoofed address?"))
+            }
+            Self::NotKnown { addr, name } => Some(format!(
+                "{addr} is not a known address for \"{name}\": spoofed address?"
+            )),
+        }
+    }
+}
+
+/// The failure `client_name()` reports for a peer string that does not parse
+/// as a numeric address, or `None` when it parses.
+///
+/// upstream: clientname.c:116-123 - `getaddrinfo(ipaddr, NULL, &hint, ...)`
+/// with `AI_NUMERICHOST` and `SOCK_STREAM`; on failure it logs `malformed
+/// address %s: %s` with `gai_strerror()`.
+pub(in crate::daemon) fn malformed_peer_address(text: &str) -> Option<NameLookupFailure> {
+    let hints = dns_lookup::AddrInfoHints {
+        flags: AI_NUMERICHOST,
+        socktype: dns_lookup::SockType::Stream.into(),
+        ..dns_lookup::AddrInfoHints::default()
+    };
+    dns_lookup::getaddrinfo(Some(text), None, Some(hints))
+        .err()
+        .map(|error| NameLookupFailure::Malformed {
+            text: text.to_owned(),
+            reason: gai_reason(&error),
+        })
+}
+
+/// The C library's `AI_NUMERICHOST` hint, which `getaddrinfo` takes as an
+/// `i32` flag on every platform `dns_lookup` supports.
+#[cfg(not(windows))]
+const AI_NUMERICHOST: i32 = libc::AI_NUMERICHOST;
+
+/// WinSock's `AI_NUMERICHOST` hint (4, as in POSIX).
+#[cfg(windows)]
+const AI_NUMERICHOST: i32 = windows::Win32::Networking::WinSock::AI_NUMERICHOST as i32;
 
 /// Performs the PTR (reverse) lookup and strips a trailing root dot.
-fn reverse_lookup_name(peer_ip: IpAddr) -> Option<String> {
+///
+/// The error is `gai_strerror()`'s text for the failure.
+fn reverse_lookup_name(peer_ip: IpAddr) -> Result<String, String> {
     #[cfg(test)]
     if let Some(mapped) = TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow().get(&peer_ip).cloned()) {
-        return mapped.map(trim_root_dot);
+        return mapped
+            .map(trim_root_dot)
+            .ok_or_else(|| TEST_LOOKUP_FAILURE.to_owned());
     }
 
-    lookup_addr(&peer_ip).ok().map(trim_root_dot)
+    lookup_addr(&peer_ip)
+        .map(trim_root_dot)
+        .map_err(|error| gai_reason(&error))
 }
 
-/// Forward-resolves `name` and returns whether `peer_ip` is among its A/AAAA
-/// records. A forward lookup that fails (name does not resolve) returns false,
-/// matching upstream `check_name`'s fail-closed behaviour on `getaddrinfo`
-/// error (clientname.c:437-441).
-fn forward_confirms(name: &str, peer_ip: IpAddr) -> bool {
-    forward_resolve(name).is_some_and(|addrs| addrs.into_iter().any(|addr| addr.ip() == peer_ip))
+/// `gai_strerror()`'s text for a failed lookup, as upstream prints it.
+///
+/// `dns_lookup` renders a lookup error as `failed to lookup address
+/// information: <gai_strerror text>`; `EAI_SYSTEM` carries the errno text
+/// instead, where glibc's and the BSDs' `gai_strerror()` say `System error`.
+fn gai_reason(error: &LookupError) -> String {
+    if matches!(error.kind(), LookupErrorKind::System) {
+        return "System error".to_owned();
+    }
+    let text = error.to_string();
+    match text.strip_prefix("failed to lookup address information: ") {
+        Some(reason) => reason.to_owned(),
+        None => text,
+    }
 }
+
+/// `gai_strerror(EAI_NONAME)` on glibc, the reason test lookups fail with.
+#[cfg(test)]
+const TEST_LOOKUP_FAILURE: &str = "Name or service not known";
 
 /// Forward-resolves `name` to its A/AAAA records, each with the IPv6 scope id
 /// the resolver attached (0 for none).
@@ -194,36 +316,37 @@ fn forward_confirms(name: &str, peer_ip: IpAddr) -> bool {
 /// lookup.
 pub(in crate::daemon) fn forward_resolve(name: &str) -> Option<Vec<SocketAddr>> {
     let key = normalize_hostname_owned(name.to_owned());
-    resolve_forward_key(&key)
+    resolve_forward_key(&key).ok()
 }
 
 /// Test-build forward resolver: consults the injected override table and
 /// reports a FAILED lookup for unknown names, keeping access-control tests
 /// hermetic and free of real DNS traffic.
 #[cfg(test)]
-fn resolve_forward_key(key: &str) -> Option<Vec<SocketAddr>> {
-    TEST_FORWARD_OVERRIDES.with(|map| map.borrow().get(key).cloned())
+fn resolve_forward_key(key: &str) -> Result<Vec<SocketAddr>, String> {
+    TEST_FORWARD_OVERRIDES
+        .with(|map| map.borrow().get(key).cloned())
+        .ok_or_else(|| TEST_LOOKUP_FAILURE.to_owned())
 }
 
-/// Production forward resolver: queries the system resolver, reporting `None`
-/// when the lookup itself fails so callers can apply upstream's per-list rule.
+/// Production forward resolver: queries the system resolver, reporting
+/// `gai_strerror()`'s text when the lookup itself fails so callers can apply
+/// upstream's per-list rule or log the failure.
 ///
 /// upstream: access.c:76-82 `getaddrinfo(tok, NULL, &hints, &res0)` with
 /// `PF_UNSPEC` and `SOCK_STREAM`; the full socket address is kept because
 /// access.c:124-126 compares the IPv6 `sin6_scope_id`.
 #[cfg(not(test))]
-fn resolve_forward_key(key: &str) -> Option<Vec<SocketAddr>> {
+fn resolve_forward_key(key: &str) -> Result<Vec<SocketAddr>, String> {
     let hints = AddrInfoHints {
         socktype: SockType::Stream.into(),
         ..AddrInfoHints::default()
     };
-    let records = getaddrinfo(Some(key), None, Some(hints)).ok()?;
-    Some(
-        records
-            .filter_map(Result::ok)
-            .map(|info| info.sockaddr)
-            .collect(),
-    )
+    let records = getaddrinfo(Some(key), None, Some(hints)).map_err(|error| gai_reason(&error))?;
+    Ok(records
+        .filter_map(Result::ok)
+        .map(|info| info.sockaddr)
+        .collect())
 }
 
 /// Tests whether the connecting client `host` belongs to the named `netgroup`.

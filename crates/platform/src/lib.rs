@@ -47,6 +47,8 @@ pub mod memory;
 pub mod name_resolution;
 /// Network interface name and index lookups for IPv6 scope ids.
 pub mod net_interface;
+#[cfg(unix)]
+pub mod peer_name;
 /// Process privilege operations - chroot and uid/gid dropping.
 pub mod priority;
 pub mod privilege;

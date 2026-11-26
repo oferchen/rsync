@@ -214,8 +214,12 @@ fn process_approved_module(
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
     // upstream: clientserver.c:787-790 - access is logged before the slot is
-    // claimed, so a refusal by the cap or the lock file follows the line.
-    if let Some(log) = ctx.log_sink {
+    // claimed, so a refusal by the cap or the lock file follows the line. Only
+    // a listening daemon logs it (`am_daemon > 0`); a daemon over a remote
+    // shell does not.
+    if let Some(log) = ctx.log_sink
+        && !ctx.reader.get_ref().is_remote_shell()
+    {
         log_module_request(log, ctx.host_display(), ctx.peer, ctx.request);
     }
 

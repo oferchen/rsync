@@ -110,7 +110,7 @@ fn handle_session(
     // name unconditionally; per-module `forward lookup` still governs the
     // access-control match in `module_peer_hostname`.
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip())
+        lookup_peer_host(peer_addr.ip(), log_sink.as_ref())
     } else {
         None
     };

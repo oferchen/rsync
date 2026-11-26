@@ -130,6 +130,7 @@ caps = "0.5"
 checksums = { path = "../checksums", default-features = false }
 windows = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_Networking_WinSock",
 ] }
 
 [dev-dependencies]
