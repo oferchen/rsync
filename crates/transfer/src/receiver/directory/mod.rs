@@ -8,6 +8,8 @@
 
 mod backup;
 mod creation;
+/// The shared report for a `--delete` removal that failed.
+pub(in crate::receiver) mod delete_failure;
 /// Directory deletion, including the deferred `--delete-delay` queue.
 ///
 /// `pub(in crate::receiver)` so the receiver context can name `DeletedEntry`
