@@ -153,6 +153,23 @@ pub(crate) fn local_failure_error(
     // stream is rsyserr(FERROR_SOCKET, errno, "write error") and
     // exit_cleanup(RERR_SOCKETIO), whatever errno the write returned.
     if let Some(failed) = crate::server::PeerWriteError::of(error) {
+        // upstream: main.c:1077 do_recv() - after the fork the generator, the
+        // parent, is the process that writes the peer's stream, so a failed
+        // write is its report and its exit, folded with the remote shell's
+        // status (cleanup.c:146-153). The receiver child meets the closed
+        // stream on its own read (io.c:299-303) and exits 12, which is not
+        // the client's exit.
+        if let ReportingSide::PostFork { .. } = side {
+            let line = format!(
+                "[{}] write error: {}",
+                Role::Generator.as_str(),
+                upstream_io_error(failed)
+            );
+            let report = program_line_error(line, worse(ExitCode::SocketIo), Role::Generator);
+            let receiver_eof =
+                connection_unexpectedly_closed_error(bytes_received, ExitCode::StreamIo, role);
+            return report.after(receiver_eof);
+        }
         let line = format!("[{who}] write error: {}", upstream_io_error(failed));
         let report = program_line_error(line, worse(ExitCode::SocketIo), role);
         return side.finish(report, ExitCode::StreamIo);
@@ -392,6 +409,40 @@ mod tests {
                     Some(format!("[{who}] write error: {}", upstream_io_error(&cause)).as_str()),
                 );
             }
+        }
+    }
+
+    /// WHY: after do_recv()'s fork (main.c:1077) the generator writes the
+    /// peer's stream, so a failed write is the generator's `write error` and
+    /// RERR_SOCKETIO (io.c:961-967), or the remote shell's worse status once
+    /// it is reaped (cleanup.c:146-153). The receiver's own end-of-file report
+    /// (io.c:299-303) comes first and its 12 never decides the run: a pull
+    /// whose sender dies mid-delta exits 10 or 22, never 12.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_after_the_fork_is_the_generators_and_never_exits_12() {
+        let side = ReportingSide::PostFork {
+            generator_read: 112,
+        };
+        for (child, expected) in [
+            (None, ExitCode::SocketIo),
+            (Some(ExitCode::Malloc), ExitCode::Malloc),
+        ] {
+            let cause = io::Error::from_raw_os_error(32);
+            let failed = crate::server::PeerWriteError::wrap(io::Error::from_raw_os_error(32));
+            let report = local_failure_error(&failed, child, side, 104, None);
+            assert_eq!(report.code(), expected, "child {child:?}");
+            assert_eq!(
+                report.program_line(),
+                Some(format!("[generator] write error: {}", upstream_io_error(&cause)).as_str()),
+            );
+            assert!(report.to_string().contains("[generator="), "{report}");
+            let receiver = report.preceding().expect("the receiver reports first");
+            assert_eq!(receiver.code(), ExitCode::StreamIo);
+            assert_eq!(
+                receiver.program_line(),
+                Some("connection unexpectedly closed (104 bytes received so far) [receiver]")
+            );
         }
     }
 
