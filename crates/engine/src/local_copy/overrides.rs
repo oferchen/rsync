@@ -20,9 +20,56 @@ type DeviceIdOverrideFn = dyn Fn(&Path, &fs::Metadata) -> Option<u64> + 'static;
 type BackupRenameOverrideFn = dyn Fn(&Path, &Path) -> Option<io::Result<()>> + 'static;
 
 #[cfg(test)]
+type AltBasisOpenHookFn = dyn Fn(&Path) + 'static;
+
+#[cfg(test)]
 thread_local! {
     static HARD_LINK_OVERRIDE: RefCell<Option<Box<HardLinkOverrideFn>>> =
         const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+thread_local! {
+    static ALT_BASIS_OPEN_HOOK: RefCell<Option<Box<AltBasisOpenHookFn>>> =
+        const { RefCell::new(None) };
+}
+
+/// Runs `action` with `hook` called just before every alt-basis open, so a
+/// test can change the file system between the check and the open.
+#[cfg(test)]
+pub(crate) fn with_alt_basis_open_hook<F, R>(hook: F, action: impl FnOnce() -> R) -> R
+where
+    F: Fn(&Path) + 'static,
+{
+    struct ResetGuard;
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            ALT_BASIS_OPEN_HOOK.with(|cell| {
+                cell.replace(None);
+            });
+        }
+    }
+
+    ALT_BASIS_OPEN_HOOK.with(|cell| {
+        cell.replace(Some(Box::new(hook)));
+    });
+    let guard = ResetGuard;
+    let result = action();
+    drop(guard);
+    result
+}
+
+/// Opens an alternate-basis copy source; in tests the open hook runs first.
+pub(super) fn open_alt_basis(source: &super::executor::AltCopySource) -> io::Result<fs::File> {
+    #[cfg(test)]
+    ALT_BASIS_OPEN_HOOK.with(|cell| {
+        if let Some(hook) = cell.borrow().as_ref() {
+            hook(source.path());
+        }
+    });
+
+    source.open()
 }
 
 #[cfg(test)]

@@ -389,7 +389,10 @@ fn simulate_reference_match(
 
     let (action, basis) = match decision {
         ReferenceDecision::Skip(path) => (LocalCopyAction::MetadataReused, path),
-        ReferenceDecision::Copy(path) => (LocalCopyAction::ReferenceCopied, path),
+        ReferenceDecision::Copy(source) => (
+            LocalCopyAction::ReferenceCopied,
+            source.path().to_path_buf(),
+        ),
         // A degraded link-dest copy still itemizes as a local change.
         ReferenceDecision::Link(path) => (LocalCopyAction::ReferenceCopied, path),
         // Not requested above: a dry run builds no delta.

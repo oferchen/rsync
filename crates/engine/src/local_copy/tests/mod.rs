@@ -989,6 +989,8 @@ include!("execute_prune_empty_dirs.rs");
 include!("execute_hardlinks.rs");
 include!("execute_link_dest.rs");
 include!("execute_copy_dest.rs");
+#[cfg(unix)]
+include!("execute_alt_basis_open.rs");
 include!("execute_sparse.rs");
 include!("execute_min_size.rs");
 include!("max_size_filter.rs");

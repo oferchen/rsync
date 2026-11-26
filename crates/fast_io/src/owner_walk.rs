@@ -116,6 +116,31 @@ pub fn symlink_owner_is_trusted(uid: u32) -> bool {
     uid == 0 || uid == trusted_uid()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only: a symlink component with this name is judged as owned by
+    /// this uid, so a cell can plant a "foreign-owned" link without root.
+    static SYMLINK_OWNER_OVERRIDE: std::cell::RefCell<Option<(std::ffi::OsString, u32)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The owner the walk judges a symlink component by: its real owner, or in
+/// tests the injected one for a matching component name.
+fn judged_symlink_owner(name: &std::ffi::OsStr, uid: u32) -> u32 {
+    #[cfg(test)]
+    if let Some(owner) = SYMLINK_OWNER_OVERRIDE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .filter(|(planted, _)| planted.as_os_str() == name)
+            .map(|(_, owner)| *owner)
+    }) {
+        return owner;
+    }
+    #[cfg(not(test))]
+    let _ = name;
+    uid
+}
+
 /// Open an interior directory component beneath `dirfd`, refusing a symlink at
 /// the leaf.
 ///
@@ -693,7 +718,8 @@ pub(crate) fn owner_walk_open_tracked(
             // upstream: syscall.c:560 - an other-uid symlink is the attacker's
             // and is refused; uid 0 or our own euid is the operator's own
             // layout and is followed. This arm is reached for the leaf too.
-            if !symlink_owner_is_trusted(stat.uid()) && !is_namespace_pin(tracker.anchored(), &name)
+            if !symlink_owner_is_trusted(judged_symlink_owner(name.as_os_str(), stat.uid()))
+                && !is_namespace_pin(tracker.anchored(), &name)
             {
                 report_untrusted_symlink();
                 return Err(io::Error::from_raw_os_error(libc::ELOOP));
@@ -1939,13 +1965,22 @@ fn operator_symlink_metadata_kind(
     path: &Path,
     kind: crate::confinement::PathKind,
 ) -> io::Result<std::fs::Metadata> {
+    walked_symlink_metadata(path, kind).map(|(_, _, meta)| meta)
+}
+
+/// Walk `path`'s parent and `lstat` the leaf through it, returning the walked
+/// parent with the result.
+fn walked_symlink_metadata(
+    path: &Path,
+    kind: crate::confinement::PathKind,
+) -> io::Result<(OwnedFd, OsString, std::fs::Metadata)> {
     use std::os::unix::fs::MetadataExt as _;
 
     let (parent, leaf) = owner_trusted_parent_kind(path, kind)?;
     let confined = crate::fstatat_nofollow(parent.as_fd(), &leaf)?;
     let meta = std::fs::symlink_metadata(path)?;
     if meta.dev() == confined.dev() && meta.ino() == confined.ino() {
-        Ok(meta)
+        Ok((parent, leaf, meta))
     } else {
         Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -1954,12 +1989,73 @@ fn operator_symlink_metadata_kind(
     }
 }
 
+/// An alternate-basis entry `lstat`ed through the ownership walk, holding the
+/// walked parent directory so the file can be opened beneath that same
+/// directory later.
+///
+/// The open does not walk the path again: a parent component swapped after
+/// the check cannot redirect it, and the leaf is still opened with
+/// `O_NOFOLLOW`. Dropping the entry closes the parent.
+#[derive(Debug)]
+pub struct OperatorBasisEntry {
+    parent: OwnedFd,
+    leaf: OsString,
+    metadata: std::fs::Metadata,
+}
+
+impl OperatorBasisEntry {
+    /// The `lstat` result the walk took for the leaf.
+    #[must_use]
+    pub fn metadata(&self) -> &std::fs::Metadata {
+        &self.metadata
+    }
+
+    /// Open the leaf read-only beneath the walked parent, refusing a symlink
+    /// with `ELOOP`.
+    ///
+    /// upstream: `rsync-3.5.2/util1.c:414-428` `copy_file()` -
+    /// `openat(dfd, leaf, O_RDONLY | O_NOFOLLOW)` on the walked parent.
+    ///
+    /// # Errors
+    ///
+    /// The `openat(2)` error: `ELOOP` for a symlink at the leaf, `ENOENT` when
+    /// the name is gone, `EACCES` when the file cannot be read.
+    pub fn open_read(&self) -> io::Result<std::fs::File> {
+        walk_openat(
+            self.parent.as_fd(),
+            &self.leaf,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map(std::fs::File::from)
+    }
+}
+
+/// `lstat` an alternate-basis candidate the way [`operator_symlink_metadata`]
+/// does and keep the walked parent for a later [`OperatorBasisEntry::open_read`].
+///
+/// upstream: `rsync-3.5.2/generator.c:999` `basis_link_stat()` -
+/// `owner_walk_parent()` then `link_stat_at()` on the leaf.
+///
+/// # Errors
+///
+/// See [`operator_symlink_metadata`].
+pub fn operator_basis_entry(path: &Path) -> io::Result<OperatorBasisEntry> {
+    let (parent, leaf, metadata) =
+        walked_symlink_metadata(path, crate::confinement::PathKind::Ancillary)?;
+    Ok(OperatorBasisEntry {
+        parent,
+        leaf,
+        metadata,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::AbsPathTracker;
     use super::{
-        operator_open_append, operator_open_read, operator_read_to_string,
-        symlink_owner_is_trusted, trusted_uid,
+        SYMLINK_OWNER_OVERRIDE, operator_open_append, operator_open_basis_read, operator_open_read,
+        operator_read_to_string, symlink_owner_is_trusted, trusted_uid,
     };
     use crate::confinement::PathKind;
     use std::ffi::OsStr;
@@ -2644,6 +2740,83 @@ mod tests {
             !symlink_owner_is_trusted(foreign),
             "uid {foreign} is neither root nor the euid and must be refused"
         );
+    }
+
+    /// The alt-basis opener refuses a PARENT symlink owned by another uid and
+    /// follows the same symlink when it is the operator's own. This is the
+    /// interior swap a `--copy-dest` copy must not follow (util1.c:414-428
+    /// `copy_file()`: `owner_walk_parent()` then `openat(O_NOFOLLOW)`).
+    /// Planting a link owned by another uid needs root, so the walk is told
+    /// which owner to see for the planted component instead.
+    #[test]
+    fn basis_read_refuses_a_parent_symlink_owned_by_another_uid() {
+        use std::io::Read;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let real = temp.path().join("real");
+        std::fs::create_dir(&real).expect("real dir");
+        std::fs::write(real.join("f"), b"OUTDATA\n").expect("write");
+        std::os::unix::fs::symlink(&real, temp.path().join("alt")).expect("symlink");
+        let through_link = temp.path().join("alt").join("f");
+
+        let mut followed = String::new();
+        operator_open_basis_read(&through_link)
+            .expect("an operator-owned parent symlink is followed")
+            .read_to_string(&mut followed)
+            .expect("read");
+        assert_eq!(followed, "OUTDATA\n");
+
+        let foreign = (1..=8u32)
+            .find(|candidate| *candidate != trusted_uid())
+            .expect("at least one of uids 1..=8 differs from the euid");
+        SYMLINK_OWNER_OVERRIDE.with(|cell| cell.replace(Some(("alt".into(), foreign))));
+        let refused = operator_open_basis_read(&through_link);
+        SYMLINK_OWNER_OVERRIDE.with(|cell| cell.replace(None));
+
+        let error = refused.expect_err("a foreign-owned parent symlink must be refused");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    }
+
+    /// An entry opens the file it checked: once the parent is walked, renaming
+    /// that directory away and planting a symlink at its name does not
+    /// redirect the open, and a symlink planted at the leaf is refused.
+    #[test]
+    fn basis_entry_opens_beneath_the_checked_parent() {
+        use std::io::Read;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let alt = temp.path().join("alt");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&alt).expect("alt");
+        std::fs::create_dir(&outside).expect("outside");
+        std::fs::write(alt.join("f"), b"ALTDATA\n").expect("alt file");
+        std::fs::write(outside.join("f"), b"OUTDATA\n").expect("outside file");
+        std::fs::write(alt.join("g"), b"ALTDATA\n").expect("second alt file");
+
+        let entry = super::operator_basis_entry(&alt.join("f")).expect("check");
+        let leaf_entry = super::operator_basis_entry(&alt.join("g")).expect("check");
+        assert!(entry.metadata().is_file());
+
+        std::fs::rename(&alt, temp.path().join("checked")).expect("move alt away");
+        std::os::unix::fs::symlink(&outside, &alt).expect("plant dir symlink");
+        let mut read = String::new();
+        entry
+            .open_read()
+            .expect("the checked file is still reachable")
+            .read_to_string(&mut read)
+            .expect("read");
+        assert_eq!(
+            read, "ALTDATA\n",
+            "the open must not follow the swapped directory"
+        );
+
+        let checked = temp.path().join("checked");
+        std::fs::remove_file(checked.join("g")).expect("remove leaf");
+        std::os::unix::fs::symlink(outside.join("f"), checked.join("g")).expect("plant leaf");
+        let error = leaf_entry
+            .open_read()
+            .expect_err("a planted leaf symlink is refused");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
     }
 
     /// CLASS coverage: every confined operator-path family reaches the ONE

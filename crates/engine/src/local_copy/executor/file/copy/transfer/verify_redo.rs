@@ -59,7 +59,7 @@ pub(in crate::local_copy) fn execute_transfer(
     relative: Option<&Path>,
     flags: TransferFlags,
     mode: LocalCopyExecution,
-    copy_source_override: Option<PathBuf>,
+    copy_source_override: Option<crate::local_copy::executor::AltCopySource>,
     reference_basis: Option<PathBuf>,
     alt_dest_basis: Option<AltDestBasis>,
 ) -> Result<(), LocalCopyError> {

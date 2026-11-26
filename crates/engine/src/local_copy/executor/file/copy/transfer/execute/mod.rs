@@ -91,10 +91,12 @@ use super::super::super::compute_backup_path;
 use super::super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
 use super::finalize::finalize_guard_and_metadata;
-use super::open::{open_source_file, source_open_error};
+use super::open::{open_alt_basis_source, source_open_error};
 use super::write_strategy::{WriteStrategy, open_destination_writer, select_write_strategy};
 use super::{TransferFlags, TransferOutcome};
-use crate::local_copy::executor::AltDestBasis;
+use crate::local_copy::executor::{
+    AltCopySource, AltDestBasis, full_fname, report_generator_failure,
+};
 
 use skip::try_skip_up_to_date;
 
@@ -118,7 +120,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     relative: Option<&Path>,
     flags: TransferFlags,
     mode: LocalCopyExecution,
-    copy_source_override: Option<PathBuf>,
+    copy_source_override: Option<AltCopySource>,
     // When `Some`, the copy reconstructs the file from a `--copy-dest` basis.
     // The transfer itemizes as a local change (`c`) compared against the basis
     // rather than a network transfer (`>`).
@@ -567,45 +569,45 @@ pub(in crate::local_copy) fn execute_transfer_once(
         }
     }
 
-    let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
-        // The override is an ALT-BASE candidate (`--copy-dest` / `--link-dest`
-        // after a cross-device degrade), i.e. an operator-named path outside the
-        // source tree. It takes the operator-path resolver, not the transfer-root
-        // confinement, so no anchor is passed here; that routing is the alt-dest
-        // family's own change.
-        let file = match open_source_file(
-            override_path,
-            context.open_noatime_enabled(),
-            None,
-            context.follow_source_symlinks(),
-        ) {
-            Ok(file) => file,
+    // The override is the alt-basis file `basis_stat` chose (`--copy-dest`, or
+    // `--link-dest` at match level 2). It is opened again here through the
+    // alt-basis opener, so a name swapped after the check is not followed.
+    // upstream: util1.c:391-438 copy_file() - owner_walk_parent() then
+    // openat(O_RDONLY | O_NOFOLLOW). A failed open prints `open %s`
+    // (FERROR_XFER), copy_altdest_file() adds `copy_file %s => %s` under
+    // INFO_GTE(COPY, 1) (generator.c:974), and recv_generator() then transfers
+    // the file from the source (generator.c:1209-1213, :2197-2207).
+    let mut copy_source_override = copy_source_override;
+    let mut reference_basis = reference_basis;
+    let opened_override = match copy_source_override.as_ref() {
+        Some(override_source) => match open_alt_basis_source(override_source) {
+            Ok(file) => Some(file),
             Err(error) => {
-                // upstream: generator.c:968 - rsyserr(FINFO, errno,
-                // "copy_file %s => %s", full_fname(src), copy_to) under
-                // INFO_GTE(COPY, 1). The override path is the alt-base
-                // (`--copy-dest` / `--link-dest` after cross-device degrade)
-                // candidate; failing to open it is the local-copy analog of
-                // upstream's `copy_file()` failure. Wording mirrors
-                // `rsyserr`'s `copy_file SRC => DST: STRERROR (ERRNO)` form.
+                report_generator_failure(
+                    context,
+                    &format!("open {}", full_fname(override_source.path())),
+                    &error,
+                );
                 info_log!(
                     Copy,
                     1,
                     "copy_file {} => {}: {}",
-                    override_path.display(),
+                    override_source.path().display(),
                     destination.display(),
                     logging::upstream_errno_text(&error)
                 );
-                return Err(LocalCopyError::io(
-                    "copy file",
-                    override_path.clone(),
-                    error,
-                ));
+                None
             }
-        };
-        (file, override_path.as_path())
-    } else {
-        (reader, source)
+        },
+        None => None,
+    };
+    if opened_override.is_none() {
+        copy_source_override = None;
+        reference_basis = None;
+    }
+    let (mut reader, copy_source) = match (opened_override, copy_source_override.as_ref()) {
+        (Some(file), Some(override_source)) => (file, override_source.path()),
+        _ => (reader, source),
     };
     if copy_source_override.is_some() && append_offset > 0 {
         reader

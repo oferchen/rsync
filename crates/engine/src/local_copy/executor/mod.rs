@@ -54,7 +54,7 @@ pub(crate) use obstacle::{
     device_destination_blocks_regular_file, refuse_populated_directory,
 };
 pub(crate) use reference::{
-    AltDestBasis, ReferenceDecision, ReferenceQuery, find_compare_dest_symlink,
+    AltCopySource, AltDestBasis, ReferenceDecision, ReferenceQuery, find_compare_dest_symlink,
     find_copy_dest_basis, find_copy_dest_symlink, find_reference_action, reference_attrs_unchanged,
 };
 pub(crate) use sources::copy_sources;

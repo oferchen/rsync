@@ -16,10 +16,10 @@ use logging::info_log;
 
 use crate::local_copy::overrides::create_hard_link;
 use crate::local_copy::{
-    AltDestBasis, CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
-    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, ReferenceDecision,
-    ReferenceQuery, find_reference_action, map_metadata_error, reference_attrs_unchanged,
-    remove_source_entry_if_requested,
+    AltCopySource, AltDestBasis, CopyContext, CreatedEntryKind, LocalCopyAction,
+    LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    ReferenceDecision, ReferenceQuery, find_reference_action, map_metadata_error,
+    reference_attrs_unchanged, remove_source_entry_if_requested,
 };
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -53,7 +53,7 @@ fn is_already_hardlinked(destination: &Path, target: &Path) -> bool {
 
 /// Result of hard-link and reference-directory processing for a file.
 pub(super) struct LinkOutcome {
-    pub(super) copy_source_override: Option<PathBuf>,
+    pub(super) copy_source_override: Option<AltCopySource>,
     /// When set, the pending copy reconstructs the file from this
     /// `--copy-dest` basis and must itemize as a local change (`c`) compared
     /// against the basis rather than as a network transfer (`>`).
@@ -92,7 +92,7 @@ pub(super) fn process_links(
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
 
-    let mut copy_source_override: Option<PathBuf> = None;
+    let mut copy_source_override: Option<AltCopySource> = None;
     let mut reference_basis: Option<PathBuf> = None;
     let mut alt_dest_basis: Option<AltDestBasis> = None;
 
@@ -143,7 +143,7 @@ pub(super) fn process_links(
         #[cfg(unix)]
         if !attrs_match {
             return Ok(LinkOutcome {
-                copy_source_override: Some(link_target.clone()),
+                copy_source_override: Some(AltCopySource::unchecked(link_target.clone())),
                 reference_basis: Some(link_target),
                 alt_dest_basis: None,
                 completed: false,
@@ -780,14 +780,14 @@ pub(super) fn process_links(
                 // `fnamecmp`; the data still comes from the source.
                 alt_dest_basis = Some(basis);
             }
-            ReferenceDecision::Copy(path) => {
+            ReferenceDecision::Copy(source) => {
                 // upstream: generator.c:1200-1209 - copy_altdest_file() copies
                 // the basis into place and itemizes as ITEM_LOCAL_CHANGE (`c`).
                 // The copy still flows through the transfer pipeline via
                 // `copy_source_override`; `reference_basis` flags the record so
                 // it is attributed to the basis instead of a network transfer.
-                reference_basis = Some(path.clone());
-                copy_source_override = Some(path);
+                reference_basis = Some(source.path().to_path_buf());
+                copy_source_override = Some(source);
             }
             ReferenceDecision::Link(path) => {
                 if existing_metadata.is_some() {
@@ -830,7 +830,7 @@ pub(super) fn process_links(
                     // hard-link failure falls back to copy_altdest_file(), which
                     // still itemizes as a local change (`c`).
                     reference_basis = Some(path.clone());
-                    copy_source_override = Some(path);
+                    copy_source_override = Some(AltCopySource::unchecked(path));
                 } else if copy_source_override.is_none() {
                     apply_file_metadata_with_options(destination, metadata, &metadata_options)
                         .map_err(map_metadata_error)?;
