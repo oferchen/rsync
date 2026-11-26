@@ -57,7 +57,6 @@ use ::metadata::ModifyWindow;
 use bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
-use compress::zlib::CompressionLevel;
 use filters::FilterRule;
 use logging::{info_log, info_log_bytes};
 
@@ -1598,15 +1597,22 @@ mod tests {
     /// writing a batch builds one zlib stream and no zstd one.
     #[test]
     fn a_run_compresses_through_one_token_stream() {
-        let mut cells = vec![
+        let cells = [
             (CompressionAlgorithm::Zlib, true, CompressionAlgorithm::Zlib),
-            (CompressionAlgorithm::Zlib, false, CompressionAlgorithm::Zlib),
-        ];
-        #[cfg(feature = "zstd")]
-        cells.extend([
-            (CompressionAlgorithm::Zstd, false, CompressionAlgorithm::Zstd),
+            (
+                CompressionAlgorithm::Zlib,
+                false,
+                CompressionAlgorithm::Zlib,
+            ),
+            #[cfg(feature = "zstd")]
+            (
+                CompressionAlgorithm::Zstd,
+                false,
+                CompressionAlgorithm::Zstd,
+            ),
+            #[cfg(feature = "zstd")]
             (CompressionAlgorithm::Zstd, true, CompressionAlgorithm::Zlib),
-        ]);
+        ];
         for (algorithm, batch, built) in cells {
             for wire_totals in [false, true] {
                 assert_eq!(
@@ -1682,7 +1688,8 @@ mod tests {
         assert_eq!(charged, reference.file_bytes());
         assert_eq!(summary.compressed_bytes(), charged);
 
-        let mut zlib = compress::zlib::CountingZlibEncoder::new(CompressionLevel::Default);
+        let mut zlib =
+            compress::zlib::CountingZlibEncoder::new(compress::zlib::CompressionLevel::Default);
         zlib.write(&content).expect("zlib write");
         assert_ne!(
             charged,

@@ -815,8 +815,12 @@ impl<'a> CopyContext<'a> {
             })?;
 
             self.register_progress();
-            let wire_bytes =
-                self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
+            let wire_bytes = self.record_whole_file_chunk(
+                &mut batch_run,
+                &buffer[..read],
+                initial_bytes,
+                source,
+            )?;
             self.register_limiter_bytes(wire_bytes);
 
             total_bytes = total_bytes.saturating_add(read as u64);
@@ -835,11 +839,7 @@ impl<'a> CopyContext<'a> {
         self.register_limiter_bytes(tail);
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
-        let outcome = FileCopyOutcome::new(
-            literal_bytes,
-            MATCHED_NONE,
-            None,
-        );
+        let outcome = FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None);
 
         // The dense loop writes one contiguous run starting at the append
         // offset. upstream: fileio.c:251-252 credits each write_file() call.
@@ -922,8 +922,12 @@ impl<'a> CopyContext<'a> {
             write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?;
 
             self.register_progress();
-            let wire_bytes =
-                self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
+            let wire_bytes = self.record_whole_file_chunk(
+                &mut batch_run,
+                &buffer[..read],
+                initial_bytes,
+                source,
+            )?;
             self.register_limiter_bytes(wire_bytes);
 
             total_bytes = total_bytes.saturating_add(read as u64);
@@ -951,11 +955,7 @@ impl<'a> CopyContext<'a> {
         self.register_limiter_bytes(tail);
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
-        let outcome = FileCopyOutcome::new(
-            literal_bytes,
-            MATCHED_NONE,
-            None,
-        );
+        let outcome = FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None);
 
         Ok(outcome.with_touched_blocks(sparse_state.touched_blocks()))
     }

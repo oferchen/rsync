@@ -1106,11 +1106,7 @@ impl<'a> CopyContext<'a> {
         // `-vv` `total:` line reports cumulative figures.
         self.summary.record_delta_probe(file_matches, probe);
 
-        let outcome = FileCopyOutcome::new(
-            literal_bytes,
-            matched_bytes,
-            None,
-        );
+        let outcome = FileCopyOutcome::new(literal_bytes, matched_bytes, None);
         let touched_blocks = if sparse {
             sparse_state.touched_blocks()
         } else {

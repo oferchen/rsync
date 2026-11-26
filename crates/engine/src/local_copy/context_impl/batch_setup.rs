@@ -146,4 +146,3 @@ fn build_token_stream(options: &LocalCopyOptions) -> Option<TokenStream> {
         .unwrap_or(u32::from(protocol::ProtocolVersion::NEWEST.as_u8()));
     TokenStream::from_options(options, algorithm, protocol)
 }
-

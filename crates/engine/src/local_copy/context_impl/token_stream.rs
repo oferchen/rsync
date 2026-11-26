@@ -55,6 +55,7 @@ thread_local! {
 
 /// The worker count handed to the zstd encoder, recorded for the tests.
 #[cfg(test)]
+#[cfg(feature = "zstd")]
 fn zstd_workers_passed(workers: Option<std::num::NonZeroU8>) -> Option<std::num::NonZeroU8> {
     ZSTD_WORKERS_PASSED.with(|passed| passed.set(workers));
     workers
@@ -62,9 +63,7 @@ fn zstd_workers_passed(workers: Option<std::num::NonZeroU8>) -> Option<std::num:
 
 #[cfg(not(test))]
 #[cfg(feature = "zstd")]
-const fn zstd_workers_passed(
-    workers: Option<std::num::NonZeroU8>,
-) -> Option<std::num::NonZeroU8> {
+const fn zstd_workers_passed(workers: Option<std::num::NonZeroU8>) -> Option<std::num::NonZeroU8> {
     workers
 }
 
@@ -140,7 +139,10 @@ impl TokenStream {
         sink: Option<&mut std::io::Cursor<Vec<u8>>>,
         data: &[u8],
     ) -> std::io::Result<u64> {
-        let mut out = CountedSink { inner: sink, written: 0 };
+        let mut out = CountedSink {
+            inner: sink,
+            written: 0,
+        };
         self.encoder.send_literal(&mut out, data)?;
         Ok(self.count(out.written))
     }
@@ -153,7 +155,10 @@ impl TokenStream {
         block_index: u32,
         matched: Option<&[u8]>,
     ) -> std::io::Result<u64> {
-        let mut out = CountedSink { inner: sink, written: 0 };
+        let mut out = CountedSink {
+            inner: sink,
+            written: 0,
+        };
         self.encoder.send_block_match(&mut out, block_index)?;
         if let Some(data) = matched {
             self.encoder.see_token(data)?;
@@ -165,7 +170,10 @@ impl TokenStream {
     ///
     /// upstream: token.c:468-474 drains the stream and writes `END_FLAG`.
     fn finish(&mut self, sink: Option<&mut std::io::Cursor<Vec<u8>>>) -> std::io::Result<u64> {
-        let mut out = CountedSink { inner: sink, written: 0 };
+        let mut out = CountedSink {
+            inner: sink,
+            written: 0,
+        };
         self.encoder.finish(&mut out)?;
         Ok(self.count(out.written))
     }
@@ -178,7 +186,8 @@ impl TokenStream {
 
 /// The zstd level a `CompressionLevel` stands for.
 #[cfg(feature = "zstd")]
-fn zstd_level(level: CompressionLevel) -> i32 {
+fn zstd_level(level: compress::zlib::CompressionLevel) -> i32 {
+    use compress::zlib::CompressionLevel;
     match level {
         CompressionLevel::None | CompressionLevel::Default => 0,
         CompressionLevel::Fast => 1,
