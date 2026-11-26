@@ -30,18 +30,18 @@ use super::sync_xattrs_if_requested;
 use super::{apply_source_acls_if_requested, sync_acls_if_requested};
 
 use super::{
-    BackupDirCache, CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker,
-    LiteralLatch, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
-    LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress,
-    LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, MergeFileOrigin,
-    MergeFileRegistry, NestedDirMerge, ReferenceDirectory, SparseWriteState, compute_backup_path,
-    copy_entry_to_backup, copy_pre_image_to_backup, create_backup_parents,
-    delete_extraneous_entries, dir_merge_file_present, filter_program_local_error,
-    load_dir_merge_rules_recursive, map_metadata_error, record_directory_subtree,
-    remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy,
-    skip_matched_sparse, symlink_target_is_safe, trace_make_backup_copy, trace_make_backup_device,
-    trace_make_backup_hlink, trace_make_backup_rename, trace_make_backup_symlink,
-    write_sparse_chunk,
+    BackupCopyError, BackupCopyStep, BackupDirCache, CopyComparison, DeleteTiming,
+    DestinationWriteGuard, HardLinkTracker, LiteralLatch, LocalCopyAction, LocalCopyArgumentError,
+    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata,
+    LocalCopyOptions, LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport,
+    LocalCopySummary, MergeFileOrigin, MergeFileRegistry, NestedDirMerge, ReferenceDirectory,
+    SparseWriteState, compute_backup_path, copy_entry_to_backup, copy_pre_image_to_backup,
+    create_backup_parents, delete_extraneous_entries, dir_merge_file_present,
+    filter_program_local_error, load_dir_merge_rules_recursive, map_metadata_error,
+    record_directory_subtree, remove_source_entry_if_requested, resolve_dir_merge_path,
+    should_skip_copy, skip_matched_sparse, symlink_target_is_safe, trace_make_backup_copy,
+    trace_make_backup_device, trace_make_backup_hlink, trace_make_backup_rename,
+    trace_make_backup_symlink, write_sparse_chunk,
 };
 use super::{ScanRoot, SourceSpec};
 use crate::block_touch::BlockTouchTracker;

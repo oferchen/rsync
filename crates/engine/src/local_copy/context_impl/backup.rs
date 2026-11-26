@@ -337,7 +337,7 @@ impl<'a> CopyContext<'a> {
     pub(super) fn backup_existing_entry_copy(
         &mut self,
         destination: &Path,
-    ) -> Result<(), LocalCopyError> {
+    ) -> Result<InplaceBackup, LocalCopyError> {
         let backup_path = compute_backup_path(
             self.destination_root(),
             destination,
@@ -361,20 +361,48 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        // upstream: generator.c:2337 copy_file() - duplicate the pre-image; the
-        // destination inode is left in place to be rewritten by the inplace
-        // writer. A pre-existing backup is overwritten (upstream robust_unlinks
-        // it at generator.c:2340); the O_TRUNC create reaches the same end
-        // state. The backup path is operator-named, so it resolves through the
-        // ownership walk - generator.c:2286 raises `operator_path_resolve` for
-        // exactly this copy because it bypasses `make_backup()`.
+        // upstream: generator.c:2383-2396 (delta) and util1.c:347-376 (the
+        // whole-file copy_file()) - duplicate the pre-image; the destination
+        // inode is left in place to be rewritten by the inplace writer. A
+        // previous backup is unlinked and the new one created exclusively. The
+        // backup path is operator-named, so it resolves through the ownership
+        // walk - generator.c:2327 raises `operator_path_resolve` for exactly
+        // this copy because it bypasses `make_backup()`.
         let source_meta = match copy_pre_image_to_backup(destination, &backup_path) {
             Ok(meta) => meta,
             // A vanished destination has nothing to back up, mirroring the
             // NotFound arm of the rename path (backup.c:make_backup returns 3).
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => {
-                return Err(LocalCopyError::io("create backup", backup_path, error));
+            Err(failure)
+                if failure.step == BackupCopyStep::Source
+                    && failure.error.kind() == io::ErrorKind::NotFound =>
+            {
+                return Ok(InplaceBackup::Vanished);
+            }
+            // upstream: generator.c:2383-2396 - `rsyserr(FERROR_XFER, errno,
+            // "unlink %s" / "open %s", full_fname(backupptr))`, then `goto
+            // cleanup`: the file is skipped and the run finishes with exit 23.
+            Err(BackupCopyError {
+                step: step @ (BackupCopyStep::Unlink | BackupCopyStep::Create),
+                error,
+            }) => {
+                let call = if step == BackupCopyStep::Unlink {
+                    "unlink"
+                } else {
+                    "open"
+                };
+                crate::local_copy::report_generator_failure(
+                    self,
+                    &format!("{call} {}", crate::local_copy::full_fname(&backup_path)),
+                    &error,
+                );
+                return Ok(InplaceBackup::Refused);
+            }
+            Err(failure) => {
+                return Err(LocalCopyError::io(
+                    "create backup",
+                    backup_path,
+                    failure.error,
+                ));
             }
         };
 
@@ -414,7 +442,7 @@ impl<'a> CopyContext<'a> {
             backup_rel.display()
         );
 
-        Ok(())
+        Ok(InplaceBackup::Copied(backup_path))
     }
 
     /// Forcibly removes a type-conflicting destination entry (backing it up
@@ -558,4 +586,19 @@ fn remove_stale_backup_entry(backup_path: &Path) -> Result<(), LocalCopyError> {
             meta_error,
         )),
     }
+}
+
+/// What [`CopyContext::backup_existing_entry_copy`] did with the pre-image of
+/// an `--inplace` destination.
+#[derive(Debug)]
+pub(crate) enum InplaceBackup {
+    /// The pre-image now lives at this path: the basis upstream names
+    /// `FNAMECMP_BACKUP` (generator.c:2399).
+    Copied(PathBuf),
+    /// The destination vanished before it could be read; nothing was backed up.
+    Vanished,
+    /// The backup name could not be cleared or created. Upstream's
+    /// `unlink %s` / `open %s` line was printed and the file must be skipped
+    /// (generator.c:2383-2396 `goto cleanup`), finishing the run with exit 23.
+    Refused,
 }

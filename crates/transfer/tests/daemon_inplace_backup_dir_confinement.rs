@@ -1,26 +1,19 @@
 //! A daemon's `--inplace --backup-dir` must not write outside the module root
 //! through a *trusted-owned* symlink planted at the backup leaf.
 //!
-//! # Why the ownership walk is not enough here
-//!
 //! `--inplace --backup` bypasses the rename-to-backup mechanism: the
 //! destination inode is rewritten in place, so its pre-transfer bytes must be
-//! COPIED aside first. That copy opens the operator-named backup path with
-//! `O_WRONLY|O_CREAT|O_TRUNC`, and the ownership walk deliberately FOLLOWS a
-//! symlink owned by uid 0 or our own euid - that is the operator's own layout
-//! and refusing it would break the ordinary case. A non-chrooted daemon writes
-//! its `--backup-dir` entries as its own uid, so a backup entry left behind by
-//! an earlier transfer is TRUSTED-owned by construction. Point one at a file
-//! outside the module and the follow carries the in-module destination's
-//! contents out of the tree.
+//! COPIED aside first. A non-chrooted daemon writes its `--backup-dir` entries
+//! as its own uid, so a backup entry left behind by an earlier transfer is
+//! TRUSTED-owned by construction, and the ownership walk alone would follow a
+//! symlink there.
 //!
-//! Upstream closes this with the second half of the rule: `make_backup()`
-//! raises `operator_path_resolve` around the whole backup, and the in-place
-//! backup - which never reaches `make_backup()` - raises it around its own
-//! `copy_file()`. That flag is what arms `abspath_outside_confinement()`, which
-//! refuses a resolved path that has left the module root. Ownership decides
-//! whether to follow; the module root decides whether the landing site is
-//! acceptable.
+//! rsync 3.5.2 never writes through the backup leaf. Before the copy it
+//! unlinks whatever occupies the name and creates a fresh file with
+//! `O_EXCL`, so a planted symlink is replaced by a regular file holding the
+//! pre-image and its target - inside or outside the module - is untouched.
+//! Measured against a 3.5.2 daemon with this fixture: exit 0, the leaf is a
+//! regular file with the pre-image, and neither symlink target changes.
 //!
 //! # Deterministic, not a race
 //!
@@ -31,21 +24,18 @@
 //!
 //! # Why these cells run unprivileged
 //!
-//! Upstream refuses only `st_uid != 0 && st_uid != trusted_uid`
-//! (`syscall.c:499`), so uid 0 and the euid take one identical follow path into
-//! one identical confinement check. The daemon spawned here runs as the test's
-//! own uid, so a plant owned by that uid is exactly the root-owned case a
-//! privileged daemon would see, and needs no privilege to stage. The distinct
-//! third-uid REFUSAL arm stays with the root leg of the upstream testsuite,
-//! matching `crates/fast_io/tests/operator_open_module_confinement.rs`.
+//! The daemon spawned here runs as the test's own uid, so a plant owned by that
+//! uid is exactly the trusted-owned case a privileged daemon would see, and
+//! needs no privilege to stage.
 //!
 //! # Upstream Reference
 //!
 //! - `rsync-3.5.2/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 //!   1` around the entire backup.
-//! - `rsync-3.5.2/generator.c:2323-2343` and `:2327-2349` - the in-place backup
-//!   bypasses `make_backup()`, so the generator raises the flag around
-//!   `get_backup_name()` and the `copy_file()` / `do_open_at()` that follow.
+//! - `rsync-3.5.2/generator.c:2323-2343` (whole-file) and `:2371-2399`
+//!   (delta) - the in-place backup bypasses `make_backup()`; it unlinks the
+//!   backup name and creates it with `O_EXCL` (`unlink_and_reopen()`,
+//!   `util1.c:347-376`, on the whole-file path).
 //! - `rsync-3.5.2/syscall.c:232-291` `abspath_outside_confinement()` - refuses a
 //!   resolved path outside `confinement_root()`, but only while
 //!   `operator_path_resolve` is set.
@@ -82,12 +72,17 @@ enum Plant {
     SymlinkOutsideModule,
     /// A trusted-owned symlink pointing to another path INSIDE the module.
     SymlinkInsideModule,
+    /// The `--backup-dir` itself is a trusted-owned symlink to a directory
+    /// OUTSIDE the module, so the escape is an interior path component.
+    BackupDirSymlinkOutsideModule,
 }
 
 /// The filesystem state the assertions are made against.
 struct Outcome {
     /// Contents of the file outside the module root.
     outside: String,
+    /// Whether a backup appeared in the out-of-module directory.
+    outside_backup: bool,
     /// Contents of the in-module symlink target used by [`Plant::SymlinkInsideModule`].
     inside_target: io::Result<String>,
     /// Contents at the backup leaf, resolved through whatever it names.
@@ -145,7 +140,10 @@ fn push_over_destination(plant: Plant) -> Option<Outcome> {
     let module_root = root.join("module");
     let outside_dir = root.join("outside");
     fs::create_dir_all(&source_dir).expect("create source dir");
-    fs::create_dir_all(module_root.join("bak")).expect("create module root and backup dir");
+    fs::create_dir_all(&module_root).expect("create module root");
+    if !matches!(plant, Plant::BackupDirSymlinkOutsideModule) {
+        fs::create_dir(module_root.join("bak")).expect("create backup dir");
+    }
     fs::create_dir_all(&outside_dir).expect("create the out-of-module dir");
 
     let outside = outside_dir.join("secret");
@@ -167,6 +165,10 @@ fn push_over_destination(plant: Plant) -> Option<Outcome> {
         Plant::SymlinkInsideModule => {
             fs::write(&inside_target, "IN-MODULE-PLACEHOLDER").expect("seed in-module target");
             symlink(&inside_target, &backup_leaf).expect("plant the in-module symlink");
+        }
+        Plant::BackupDirSymlinkOutsideModule => {
+            symlink(&outside_dir, module_root.join("bak"))
+                .expect("plant the out-of-module backup dir symlink");
         }
     }
 
@@ -202,6 +204,7 @@ fn push_over_destination(plant: Plant) -> Option<Outcome> {
 
     Some(Outcome {
         outside: fs::read_to_string(&outside).expect("the out-of-module file must still exist"),
+        outside_backup: outside_dir.join("payload").exists(),
         inside_target: fs::read_to_string(&inside_target),
         backup_leaf: fs::read_to_string(&backup_leaf),
         backup_leaf_is_symlink: fs::symlink_metadata(&backup_leaf)
@@ -219,13 +222,11 @@ fn measured(plant: Plant, what: &str) -> Outcome {
 }
 
 /// THE PIN. A trusted-owned symlink at the backup leaf points outside the
-/// module root. The walk follows it - that part is correct and deliberate - so
-/// the module root has to refuse the landing site, or the destination's
-/// pre-transfer bytes are written to a file the operator never named and the
-/// peer never had access to.
+/// module root. rsync 3.5.2 unlinks it and creates the backup as a fresh file,
+/// so the out-of-module file keeps its contents and the transfer succeeds.
 ///
-/// Without the confinement half this cell observes `outside` holding
-/// [`PRE_IMAGE`]: an in-module file's contents, deposited outside the module.
+/// A copy that opened the leaf without unlinking it first would follow the
+/// link and deposit the destination's pre-transfer bytes outside the module.
 #[test]
 fn a_backup_symlink_leaving_the_module_must_not_be_written_through() {
     let outcome = measured(
@@ -240,40 +241,82 @@ fn a_backup_symlink_leaving_the_module_must_not_be_written_through() {
          file outside it (client exit {:?})\nstderr:\n{}",
         outcome.client_exit, outcome.client_stderr,
     );
-    assert!(
-        outcome.backup_leaf_is_symlink,
-        "the plant must survive as a symlink: a refusal that instead REPLACED \
-         it would be a different resolver (client exit {:?})",
-        outcome.client_exit,
-    );
+    assert_replaced_by_the_pre_image(&outcome);
 }
 
-/// POSITIVE CONTROL for over-refusal. The same shape of trusted-owned symlink,
-/// pointing at a path that stays INSIDE the module, must still be followed and
-/// written through. Upstream follows an in-tree trusted symlink by design;
-/// "refuse every symlink at the backup leaf" would satisfy the pin above while
-/// breaking the operator layouts the walk exists to keep working.
+/// The same trusted-owned symlink pointing INSIDE the module is replaced too:
+/// rsync 3.5.2 does not follow the backup leaf wherever it points, so the
+/// in-module target keeps its own contents.
 #[test]
-fn a_backup_symlink_staying_inside_the_module_is_still_followed() {
+fn a_backup_symlink_staying_inside_the_module_is_replaced() {
     let outcome = measured(Plant::SymlinkInsideModule, "in-module backup leaf plant");
 
     assert_eq!(
-        outcome.client_exit,
-        Some(0),
-        "an in-module backup target must not fail the transfer\nstderr:\n{}",
-        outcome.client_stderr,
-    );
-    assert_eq!(
         outcome.inside_target.as_deref().ok(),
-        Some(PRE_IMAGE),
-        "the in-module symlink target must receive the pre-transfer bytes: the \
-         confinement applies to the LANDING SITE, not to symlinks as such\
+        Some("IN-MODULE-PLACEHOLDER"),
+        "the in-module symlink target must not receive the pre-transfer bytes\
          \nstderr:\n{}",
         outcome.client_stderr,
     );
+    assert_replaced_by_the_pre_image(&outcome);
+}
+
+/// The `--backup-dir` path itself leaves the module through a trusted-owned
+/// directory symlink. The walk follows the link and then refuses the landing
+/// site, so no backup is written outside the module and the destination is
+/// not updated. rsync 3.5.2 refuses the `unlink` with `ELOOP` and skips the
+/// file (exit 23); oc refuses the same step but ends the run with exit 11,
+/// which is a known difference in how the network receiver reports a backup
+/// failure, so only a failing exit is asserted here.
+#[test]
+fn a_backup_dir_symlink_leaving_the_module_is_refused() {
+    let outcome = measured(
+        Plant::BackupDirSymlinkOutsideModule,
+        "out-of-module backup dir plant",
+    );
+
     assert!(
-        outcome.backup_leaf_is_symlink,
-        "following the link must not replace it",
+        !outcome.outside_backup,
+        "the in-place backup escaped the module root through an interior \
+         symlink (client exit {:?})\nstderr:\n{}",
+        outcome.client_exit, outcome.client_stderr,
+    );
+    assert_eq!(outcome.outside, OUTSIDE_MARKER);
+    assert!(
+        outcome.client_exit.is_some_and(|code| code != 0),
+        "a refused backup must fail the transfer (client exit {:?})\nstderr:\n{}",
+        outcome.client_exit,
+        outcome.client_stderr,
+    );
+    assert_eq!(
+        outcome.destination.as_deref().ok(),
+        Some(PRE_IMAGE),
+        "a file whose backup was refused must not be updated",
+    );
+}
+
+/// The planted leaf is now a regular file with the pre-image, the destination
+/// holds the new content, and the push succeeded - rsync 3.5.2's outcome.
+fn assert_replaced_by_the_pre_image(outcome: &Outcome) {
+    assert_eq!(
+        outcome.client_exit,
+        Some(0),
+        "replacing the backup leaf must not fail the transfer\nstderr:\n{}",
+        outcome.client_stderr,
+    );
+    assert!(
+        !outcome.backup_leaf_is_symlink,
+        "the planted symlink must be replaced by the backup file",
+    );
+    assert_eq!(
+        outcome.backup_leaf.as_deref().ok(),
+        Some(PRE_IMAGE),
+        "the backup leaf must hold the destination's pre-transfer bytes",
+    );
+    assert_eq!(
+        outcome.destination.as_deref().ok(),
+        Some(NEW_CONTENT),
+        "the destination must have been rewritten in place",
     );
 }
 

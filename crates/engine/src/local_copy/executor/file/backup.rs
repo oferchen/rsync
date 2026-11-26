@@ -54,12 +54,26 @@ use crate::local_copy::create_symlink;
 /// descriptor before the copy, so it describes the bytes that were copied,
 /// and is returned for the caller's `set_file_attrs()` on the backup.
 ///
-/// A vanished source surfaces as [`io::ErrorKind::NotFound`], exactly as
-/// `fs::copy` did, so callers keep their existing "nothing to back up" arm.
-pub fn copy_pre_image_to_backup(source: &Path, backup_path: &Path) -> io::Result<fs::Metadata> {
-    let mut reader = fast_io::destination_at::open_read(source)?;
-    let source_meta = reader.metadata()?;
+/// Any previous backup at `backup_path` is unlinked first and the new one is
+/// created exclusively, as upstream does (generator.c:2383-2396,
+/// util1.c:347-376 `unlink_and_reopen()`): a name that is not a removable file
+/// - a directory, say - fails the unlink instead of being written through.
+///
+/// The error names the step that failed, so a caller can print upstream's
+/// `unlink %s` or `open %s` line. A vanished source fails the
+/// [`BackupCopyStep::Source`] step with [`io::ErrorKind::NotFound`], so callers
+/// keep their "nothing to back up" arm.
+pub fn copy_pre_image_to_backup(
+    source: &Path,
+    backup_path: &Path,
+) -> Result<fs::Metadata, BackupCopyError> {
+    let failed = |step| move |error| BackupCopyError { step, error };
+    let mut reader =
+        fast_io::destination_at::open_read(source).map_err(failed(BackupCopyStep::Source))?;
+    let source_meta = reader.metadata().map_err(failed(BackupCopyStep::Source))?;
     let permissions = source_meta.permissions();
+
+    remove_previous_backup(backup_path).map_err(failed(BackupCopyStep::Unlink))?;
 
     #[cfg(unix)]
     let mut writer = {
@@ -67,16 +81,64 @@ pub fn copy_pre_image_to_backup(source: &Path, backup_path: &Path) -> io::Result
 
         // Mask to the permission bits: `mode()` carries the file-type bits too,
         // and only the low 12 are meaningful as an `O_CREAT` mode.
-        fast_io::operator_open_write_create_confined(backup_path, permissions.mode() & 0o7777)?
+        fast_io::operator_open_create_new_confined(backup_path, permissions.mode() & 0o7777)
+            .map_err(failed(BackupCopyStep::Create))?
     };
     // Non-Unix has no ownership walk to run; degrade to a plain create, as the
     // other operator-path helpers do.
     #[cfg(not(unix))]
-    let mut writer = fs::File::create(backup_path)?;
+    let mut writer = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(backup_path)
+        .map_err(failed(BackupCopyStep::Create))?;
 
-    io::copy(&mut reader, &mut writer)?;
-    writer.set_permissions(permissions)?;
+    io::copy(&mut reader, &mut writer).map_err(failed(BackupCopyStep::Copy))?;
+    writer
+        .set_permissions(permissions)
+        .map_err(failed(BackupCopyStep::Copy))?;
     Ok(source_meta)
+}
+
+/// The step of [`copy_pre_image_to_backup`] that failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackupCopyStep {
+    /// Opening or stating the pre-image.
+    Source,
+    /// Removing the previous backup (upstream's `unlink %s`).
+    Unlink,
+    /// Creating the new backup (upstream's `open %s`).
+    Create,
+    /// Copying the bytes or applying the mode.
+    Copy,
+}
+
+/// A failed [`copy_pre_image_to_backup`]: the step and its I/O error.
+#[derive(Debug)]
+pub struct BackupCopyError {
+    /// The step that failed.
+    pub step: BackupCopyStep,
+    /// The error that step returned.
+    pub error: io::Error,
+}
+
+impl From<BackupCopyError> for io::Error {
+    fn from(failure: BackupCopyError) -> Self {
+        failure.error
+    }
+}
+
+/// Removes the backup a previous run left at `path`; a missing one is not an
+/// error. upstream: util1.c:351 `robust_unlink(dest) && errno != ENOENT`.
+fn remove_previous_backup(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    let removed = fast_io::operator_remove_file_confined(path);
+    #[cfg(not(unix))]
+    let removed = fs::remove_file(path);
+    match removed {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
 }
 
 /// Computes the backup file path for a destination file.
@@ -463,7 +525,7 @@ pub(crate) fn copy_entry_to_backup(
         // is the same upstream `copy_file()` call with the same destination
         // policy.
         copy_pre_image_to_backup(source, backup_path)
-            .map_err(|error| LocalCopyError::io("create backup", backup_path, error))?;
+            .map_err(|failure| LocalCopyError::io("create backup", backup_path, failure.error))?;
         return Ok(Some(BackupStrategy::Copy));
     }
     if file_type.is_symlink() {
@@ -663,10 +725,9 @@ mod tests {
         assert_eq!(fs::read(&backup).expect("read backup"), b"PRE-IMAGE");
     }
 
-    /// upstream `robust_unlink`s an existing backup before writing the new one
-    /// (`generator.c:2340`); the `O_TRUNC` create has to reach the same end
-    /// state, or a shorter pre-image would leave the previous backup's tail
-    /// appended to it.
+    /// upstream `robust_unlink`s an existing backup before creating the new one
+    /// exclusively (`generator.c:2383-2391`), so a shorter pre-image never
+    /// keeps the previous backup's tail.
     #[test]
     fn copy_pre_image_to_backup_truncates_a_longer_pre_existing_backup() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -690,7 +751,46 @@ mod tests {
         let error = copy_pre_image_to_backup(&dir.path().join("gone"), &dir.path().join("gone~"))
             .expect_err("a missing source cannot be backed up");
 
-        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(error.step, BackupCopyStep::Source);
+        assert_eq!(error.error.kind(), io::ErrorKind::NotFound);
+    }
+
+    /// upstream's `robust_unlink()` fails on a directory at the backup name,
+    /// and generator.c:2383-2389 reports `unlink %s` and skips the file. The
+    /// directory must survive, and the failure must name the unlink step.
+    #[cfg(unix)]
+    #[test]
+    fn copy_pre_image_to_backup_refuses_a_directory_at_the_backup_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("dest");
+        let backup = dir.path().join("dest~");
+        fs::write(&source, b"PRE-IMAGE").expect("write source");
+        fs::create_dir_all(backup.join("inside")).expect("mkdir backup name");
+
+        let error = copy_pre_image_to_backup(&source, &backup)
+            .expect_err("a directory at the backup name cannot be replaced");
+
+        assert_eq!(error.step, BackupCopyStep::Unlink);
+        assert!(
+            backup.join("inside").is_dir(),
+            "the directory is left alone"
+        );
+    }
+
+    /// generator.c:2391-2396 reports `open %s` when the exclusive create of
+    /// the backup fails. A backup directory that does not exist makes the
+    /// unlink a harmless ENOENT and the create the failing step.
+    #[test]
+    fn copy_pre_image_to_backup_reports_the_create_step() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("dest");
+        fs::write(&source, b"PRE-IMAGE").expect("write source");
+
+        let error = copy_pre_image_to_backup(&source, &dir.path().join("missing").join("dest"))
+            .expect_err("a backup in a missing directory cannot be created");
+
+        assert_eq!(error.step, BackupCopyStep::Create);
+        assert_eq!(error.error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]

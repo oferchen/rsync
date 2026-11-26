@@ -1,3 +1,38 @@
+/// How the delta basis relates to the file the writer produces. The one input
+/// that decides both upstream flags the delta loop mirrors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DeltaBasis {
+    /// The writer builds a new file and the basis is a separate, unchanged
+    /// file: a temp-file write, a renamed backup, or a fuzzy basis.
+    Separate,
+    /// The writer rewrites the basis itself in place: `--inplace`, or a
+    /// `one_inplace` `--partial-dir` leaf.
+    UpdatedInPlace,
+    /// The writer rewrites the destination in place while the basis is the
+    /// backup copy made of it beforehand: `--inplace --backup`, upstream's
+    /// `FNAMECMP_BACKUP`.
+    BackupOfInPlace,
+}
+
+impl DeltaBasis {
+    /// Whether the scan may only match blocks the writer has not yet
+    /// overwritten, preferring a block at its own offset. upstream:
+    /// sender.c:637-638 `updating_basis_file = ... || (inplace &&
+    /// fnamecmp_type == FNAMECMP_FNAME)` - false for a backup basis.
+    pub(crate) const fn updating_basis_file(self) -> bool {
+        matches!(self, Self::UpdatedInPlace)
+    }
+
+    /// Whether the writer rewrites the destination in place, so a block already
+    /// at its own offset is skipped rather than written and the file is
+    /// truncated to its new length. upstream: receiver.c:1155-1157
+    /// `updating_basis_or_equiv = one_inplace || (inplace && (fnamecmp == fname
+    /// || fnamecmp_type == FNAMECMP_BACKUP))`.
+    pub(crate) const fn writes_in_place(self) -> bool {
+        !matches!(self, Self::Separate)
+    }
+}
+
 /// Bundles the sparse-write toggle and rolling zero-run state for a single
 /// call to `copy_matched_block`.
 pub(super) struct SparseCopy<'state> {
@@ -189,8 +224,7 @@ impl<'a> CopyContext<'a> {
         initial_bytes: u64,
         preallocated_len: u64,
         start: Instant,
-        basis_separate_from_writer: bool,
-        updating_in_place: bool,
+        basis: DeltaBasis,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         let mut sums = WholeFileSums::new();
         // upstream: receiver.c:receive_data() - the matched-block path mirrors
@@ -202,18 +236,13 @@ impl<'a> CopyContext<'a> {
         // read fd on the basis even in inplace mode so the copy fallback has
         // a source; the fast skip-path still fires for the common case.
         //
-        // When `basis_separate_from_writer` is true (e.g. `--inplace
-        // --backup-dir` moved the original destination to the backup
-        // location), the skip-path is never safe because the writer's file
-        // is freshly opened and contains nothing. Force every matched block
-        // through the copy path by treating the run as non-inplace.
-        //
-        // `updating_in_place` is upstream's `one_inplace` (`--partial-dir` leaf
-        // rewritten in place, receiver.c:1155 `updating_basis_or_equiv`): the
-        // basis IS the writer's file, so it takes the in-place path even without
-        // the `--inplace` flag.
-        let inplace_mode =
-            (self.inplace_enabled() || updating_in_place) && !basis_separate_from_writer;
+        // The scan's restriction and the writer's in-place handling are two
+        // upstream flags, derived here from the one basis role. Under
+        // `--inplace --backup` the basis is the backup copy: the scan matches
+        // anywhere in it, while the writer still rewrites the destination in
+        // place and skips blocks already at their own offset.
+        let updating_basis_file = basis.updating_basis_file();
+        let writes_in_place = basis.writes_in_place();
 
         // The batch body about to be written references blocks of this basis,
         // so the reserved sum_head must describe exactly this geometry.
@@ -279,7 +308,7 @@ impl<'a> CopyContext<'a> {
         // while the `-vv` `total:` line (match.c:480 match_report()) reports
         // them.
         let mut replay = matching::trace_deltasum::counters_reported()
-            .then(|| UpstreamHashTable::new(index, inplace_mode));
+            .then(|| UpstreamHashTable::new(index, updating_basis_file));
         let mut file_matches = 0u64;
         // Accumulated where matches are produced, never derived from
         // `total_size - literal_bytes`. upstream: match.c:144 `matched()` is the
@@ -320,7 +349,7 @@ impl<'a> CopyContext<'a> {
         let block_len = index.block_length();
         let mut consecutive_false_offsets = 0u32;
         let mut want_i: Option<usize> = (index.block_count() > 0).then_some(0);
-        let mut same_offset = if inplace_mode {
+        let mut same_offset = if updating_basis_file {
             vec![false; index.block_count()]
         } else {
             Vec::new()
@@ -393,7 +422,7 @@ impl<'a> CopyContext<'a> {
                 replay.probe_window(index, digest, scan_offset, front, back);
             }
             let inplace_ok = |idx: usize| -> bool {
-                !inplace_mode
+                !updating_basis_file
                     || (index.block(idx).index() * block_len as u64) >= scan_offset
                     || same_offset.get(idx).copied().unwrap_or(false)
             };
@@ -401,7 +430,7 @@ impl<'a> CopyContext<'a> {
                 let (front, back) = window.as_slices();
                 inplace_ok(hint) && index.check_block_match_slices(hint, digest, front, back)
             };
-            let (mut matched_block, had_weak_candidate, hint) = if inplace_mode {
+            let (mut matched_block, had_weak_candidate, hint) = if updating_basis_file {
                 let (front, back) = window.as_slices();
                 let (chain, weak) = index.find_match_inplace(
                     digest,
@@ -426,7 +455,7 @@ impl<'a> CopyContext<'a> {
             // upstream: match.c:290-334 - under --inplace the block at the
             // match's own offset wins, and an all-zero window off a boundary
             // is realigned onto the next boundary's matching block.
-            if inplace_mode && matched_block.is_some() {
+            if updating_basis_file && matched_block.is_some() {
                 let (front, back) = window.as_slices();
                 match index.inplace_alignment(scan_offset, digest, front, back) {
                     matching::InplaceAlignment::Keep => {}
@@ -512,7 +541,7 @@ impl<'a> CopyContext<'a> {
                 last_match = scan_offset + index.block(block_index).len() as u64;
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
-                    if inplace_mode && !sparse {
+                    if writes_in_place && !sparse {
                         seek_inplace_writer(writer, output_position, destination)?;
                     }
                     sums.received(&pending_literals);
@@ -543,7 +572,7 @@ impl<'a> CopyContext<'a> {
                     pending_literals.clear();
                 }
 
-                if inplace_mode {
+                if writes_in_place {
                     scratch.clear();
                     let (front, back) = window.as_slices();
                     scratch.extend_from_slice(front);
@@ -565,7 +594,7 @@ impl<'a> CopyContext<'a> {
                     block_len,
                     basis_offset,
                     total_bytes,
-                    inplace_mode && basis_offset == output_position,
+                    writes_in_place && basis_offset == output_position,
                 );
 
                 // upstream: receiver.c:640-645. The skip-fast-path only fires
@@ -575,7 +604,7 @@ impl<'a> CopyContext<'a> {
                 // does when `offset != offset2`. Without this fallback the
                 // writer keeps stale basis bytes at the new position and the
                 // final ftruncate clips the file off at the wrong length.
-                if inplace_mode && basis_offset == output_position {
+                if writes_in_place && basis_offset == output_position {
                     sums.received_from_basis(
                         destination_reader
                             .as_mut()
@@ -602,7 +631,7 @@ impl<'a> CopyContext<'a> {
                         destination,
                     )?;
                     output_position = output_position.saturating_add(block_len as u64);
-                } else if inplace_mode {
+                } else if writes_in_place {
                     // Inplace + basis == destination: reading basis at a
                     // back-references offset can race with prior writes that
                     // already overwrote that region. The matched window is
@@ -804,7 +833,7 @@ impl<'a> CopyContext<'a> {
                     index
                         .find_tail_match_window(rolling.digest(), &window, &mut scratch)
                         .filter(|&idx| {
-                            !inplace_mode
+                            !updating_basis_file
                                 || (!unlinked[idx]
                                     && (index.block(idx).index() * block_len as u64 >= tail_offset
                                         || same_offset[idx]))
@@ -843,7 +872,7 @@ impl<'a> CopyContext<'a> {
             }
             if !pending_literals.is_empty() {
                 let flushed_len = pending_literals.len();
-                if inplace_mode && !sparse {
+                if writes_in_place && !sparse {
                     seek_inplace_writer(writer, output_position, destination)?;
                 }
                 sums.received(&pending_literals);
@@ -884,10 +913,10 @@ impl<'a> CopyContext<'a> {
                 block_len,
                 basis_offset,
                 total_bytes,
-                inplace_mode && basis_offset == output_position,
+                writes_in_place && basis_offset == output_position,
             );
 
-            if inplace_mode && basis_offset == output_position {
+            if writes_in_place && basis_offset == output_position {
                 sums.received_from_basis(
                     destination_reader
                         .as_mut()
@@ -914,7 +943,7 @@ impl<'a> CopyContext<'a> {
                     destination,
                 )?;
                 output_position = output_position.saturating_add(block_len as u64);
-            } else if inplace_mode {
+            } else if writes_in_place {
                 if !sparse {
                     seek_inplace_writer(writer, output_position, destination)?;
                 }
@@ -970,7 +999,7 @@ impl<'a> CopyContext<'a> {
 
         if !pending_literals.is_empty() {
             let flushed_len = pending_literals.len();
-            if inplace_mode && !sparse {
+            if writes_in_place && !sparse {
                 seek_inplace_writer(writer, output_position, destination)?;
             }
             sums.received(&pending_literals);
@@ -1007,7 +1036,7 @@ impl<'a> CopyContext<'a> {
             // the delta loop's output_position rather than the sparse writer's
             // stream position; a fresh sparse copy uses the flushed logical end.
             let sparse_end = sparse_state.finish(writer, destination)?;
-            let final_position = if inplace_mode {
+            let final_position = if writes_in_place {
                 output_position
             } else {
                 sparse_end
@@ -1020,7 +1049,7 @@ impl<'a> CopyContext<'a> {
                 )
             })?;
             self.register_progress();
-        } else if inplace_mode {
+        } else if writes_in_place {
             // Truncate to the final output size in case the new file is
             // smaller than the old one.
             writer.set_len(output_position).map_err(|error| {

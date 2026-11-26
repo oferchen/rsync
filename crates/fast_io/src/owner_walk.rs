@@ -1642,6 +1642,34 @@ pub fn operator_open_write_create_confined(path: &Path, mode: u32) -> io::Result
     )
 }
 
+/// Exclusively create an operator-supplied path through the ownership walk,
+/// bound to the session's confinement root.
+///
+/// The `O_EXCL` twin of [`operator_open_write_create_confined`], for the
+/// `--inplace --backup` copy: upstream clears the previous backup with
+/// `robust_unlink()` and then creates the new one exclusively, so a name that
+/// reappears in between is refused rather than overwritten.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.2/generator.c:2383-2396` - `robust_unlink(backupptr)`, then
+///   `do_open_at(backupptr, O_WRONLY | O_CREAT | O_TRUNC | O_EXCL, 0600)`.
+/// - `rsync-3.5.2/util1.c:358-386` `unlink_and_reopen()` - the same pair for
+///   the whole-file backup made by `copy_file()`.
+///
+/// # Errors
+///
+/// - `EEXIST` when the name exists.
+/// - Otherwise see [`operator_open_write_create_confined`].
+pub fn operator_open_create_new_confined(path: &Path, mode: u32) -> io::Result<std::fs::File> {
+    operator_open_kind(
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+        Mode::from_bits_truncate(mode as rustix::fs::RawMode),
+        crate::confinement::PathKind::Confined,
+    )
+}
+
 /// Exclusively create an operator-supplied path through the ownership walk.
 ///
 /// The `O_EXCL` twin of [`operator_open_write_create`], for the receiver's

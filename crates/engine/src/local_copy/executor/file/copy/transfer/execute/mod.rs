@@ -79,8 +79,8 @@ use ::metadata::MetadataOptions;
 
 use crate::fuzzy::{FuzzyMatcher, trace_fuzzy_basis_selected};
 use crate::local_copy::{
-    CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
-    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CopyMethodKind, CreatedEntryKind, DeltaBasis, InplaceBackup, LocalCopyAction,
+    LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
 use super::super::super::append::{AppendMode, determine_append_mode};
@@ -262,6 +262,9 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // the fuzzy candidate, so seed the override with its path.
     let mut delta_basis_override: Option<PathBuf> =
         fuzzy_basis.as_ref().map(|(path, _)| path.clone());
+    // Set when the delta is built against the `--inplace --backup` copy, the
+    // basis upstream calls FNAMECMP_BACKUP.
+    let mut backup_is_basis = false;
     if let Some(existing) = existing_metadata {
         // upstream: generator.c:2323,2328 - under --inplace, --backup COPIES the
         // pre-image aside (preserving the destination inode for the in-place
@@ -272,10 +275,21 @@ pub(in crate::local_copy) fn execute_transfer_once(
             && context.options().backup_enabled()
             && !context.mode().is_dry_run();
         if inplace_regular_backup {
-            context.backup_existing_entry_copy(destination)?;
-            // The destination stays in place as the true in-place basis, so no
-            // basis override: copy_file_contents rewrites the existing inode via
-            // the proven inplace path (which truncates to the final length).
+            // upstream: generator.c:2371-2399 - the delta is built against the
+            // backup copy (`fnamecmp_type = FNAMECMP_BACKUP`) while the
+            // destination inode is rewritten in place; receiver.c:1022-1024
+            // reads matched blocks from that backup. A backup name that cannot
+            // be cleared or created skips the file (`goto cleanup`).
+            match context.backup_existing_entry_copy(destination)? {
+                InplaceBackup::Copied(backup_path) => {
+                    if delta_signature.is_some() {
+                        delta_basis_override = Some(backup_path);
+                        backup_is_basis = true;
+                    }
+                }
+                InplaceBackup::Vanished => {}
+                InplaceBackup::Refused => return Ok(TransferOutcome::Complete),
+            }
         } else {
             // upstream: rsync.c:898 - `make_backup(fname, False)` tries a
             // hard link into the backup area before renaming.
@@ -514,6 +528,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
     if delta_signature.is_some() {
         if partial_dir_basis.is_some() {
             context.record_batch_basis(protocol::FnameCmpType::PartialDir, &[])?;
+        } else if backup_is_basis {
+            context.record_batch_basis(protocol::FnameCmpType::Backup, &[])?;
         } else if existing_metadata.is_none_or(|existing| !existing.is_file())
             && let Some((path, _)) = fuzzy_basis.as_ref()
         {
@@ -710,8 +726,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // fuzzy basis is used, point the delta transfer at that separate location so
     // it reads matched blocks from there while the writer builds a fresh
     // destination. Under `--inplace --backup` the destination is instead copied
-    // aside (inode preserved) and rewritten in place, so `delta_basis_override`
-    // stays unset and the writer IS the basis.
+    // aside (inode preserved) and rewritten in place, and the delta reads its
+    // matched blocks from that copy.
     //
     // A `one_inplace` `--partial-dir` update overrides both: the leaf IS the
     // basis and IS the writer's file (the InplacePartialDir strategy opened it,
@@ -722,19 +738,23 @@ pub(in crate::local_copy) fn execute_transfer_once(
         Some(ref leaf) => leaf.as_path(),
         None => delta_basis_override.as_deref().unwrap_or(destination),
     };
-    // The inplace skip-optimization is unsafe whenever the writer's file is
-    // separate from the basis: a freshly created destination contains nothing to
-    // skip over, so every matched block must be copied through. Forcing
-    // non-inplace here keeps matched-block bytes flowing to the writer instead of
-    // being skipped against an empty file. A `one_inplace` leaf is the exception:
-    // basis and writer are the same file, so it stays in-place.
-    let basis_separate_from_writer =
-        delta_basis_override.is_some() && one_inplace_partial_file.is_none();
-    // upstream: receiver.c:1155 `one_inplace` sets `updating_basis_or_equiv`, so
-    // the delta loop takes the in-place skip/rewrite path even without the
-    // `--inplace` flag. The InplacePartialDir writer holds the leaf open for
-    // in-place rewrite, so honour that here.
-    let updating_in_place = one_inplace_partial_file.is_some();
+    // The basis role decides the delta loop's two in-place flags.
+    // - upstream: receiver.c:1155 `one_inplace` sets `updating_basis_or_equiv`,
+    //   so a `--partial-dir` leaf the InplacePartialDir writer holds open is
+    //   rewritten in place even without the `--inplace` flag.
+    // - The `--inplace --backup` copy is a basis separate from the in-place
+    //   writer (sender.c:637-638, receiver.c:1157).
+    // - Any other separate basis (renamed backup, fuzzy) sits beside a freshly
+    //   created destination with nothing to skip over.
+    let basis_role = if one_inplace_partial_file.is_some() {
+        DeltaBasis::UpdatedInPlace
+    } else if backup_is_basis {
+        DeltaBasis::BackupOfInPlace
+    } else if delta_basis_override.is_none() && context.inplace_enabled() {
+        DeltaBasis::UpdatedInPlace
+    } else {
+        DeltaBasis::Separate
+    };
     // Snapshot the short-read counter so the check below sees only THIS
     // pass's report, not one an earlier file already recorded.
     let source_read_events_before = context.source_read_events();
@@ -758,8 +778,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         append_offset,
         preallocated_len,
         start,
-        basis_separate_from_writer,
-        updating_in_place,
+        basis_role,
     );
     if context.take_literal_latch()
         && let Some(existing_guard) = guard.as_mut()

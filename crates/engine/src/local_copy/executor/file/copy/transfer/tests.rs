@@ -14,8 +14,8 @@ use ::metadata::MetadataOptions;
 use super::TransferFlags;
 use super::execute::execute_transfer_once;
 use crate::local_copy::{
-    CopyContext, LocalCopyExecution, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
-    LocalCopyRecordHandler,
+    CopyContext, DeltaBasis, LocalCopyExecution, LocalCopyOptions, LocalCopyProgress,
+    LocalCopyRecord, LocalCopyRecordHandler,
 };
 
 /// Length the file list recorded, and the length the copy must NOT stop at.
@@ -115,8 +115,7 @@ fn assert_copy_stops_at_the_declared_length(sparse: bool) {
             0,
             0,
             Instant::now(),
-            false,
-            false,
+            DeltaBasis::Separate,
         )
         .expect("copy");
     drop(writer);
@@ -277,8 +276,7 @@ fn assert_short_source_is_recorded(sparse: bool, paced: bool) {
             0,
             0,
             Instant::now(),
-            false,
-            false,
+            DeltaBasis::Separate,
         )
         .expect("a short source must not abort the copy");
     drop(writer);
@@ -343,8 +341,7 @@ fn a_complete_source_records_no_read_error() {
             0,
             0,
             Instant::now(),
-            false,
-            false,
+            DeltaBasis::Separate,
         )
         .expect("copy");
     drop(writer);
@@ -418,8 +415,7 @@ fn mover_progress_updates(whole_file_enabled: bool) -> (usize, u64) {
                 0,
                 0,
                 Instant::now(),
-                false,
-                false,
+                DeltaBasis::Separate,
             )
             .expect("copy");
     }
@@ -522,8 +518,7 @@ fn no_whole_file_copy_of_a_complete_source_records_no_read_error() {
             0,
             0,
             Instant::now(),
-            false,
-            false,
+            DeltaBasis::Separate,
         )
         .expect("copy");
     drop(writer);
@@ -655,8 +650,7 @@ fn delta_copy_outcome_with(
             0,
             0,
             Instant::now(),
-            false,
-            false,
+            DeltaBasis::Separate,
         )
         .expect("a short source must not abort the copy");
     drop(writer);
