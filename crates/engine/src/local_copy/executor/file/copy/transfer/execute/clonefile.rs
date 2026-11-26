@@ -63,7 +63,8 @@ pub(super) fn eligible(
         && !copy_source_override_present
         && !context.has_bandwidth_limiter()
         && !context.delay_updates_enabled()
-        && context.temp_directory_path().is_none();
+        && context.temp_directory_path().is_none()
+        && context.mover_allowed(crate::local_copy::DataMover::Clone);
 
     // Extended attributes: clonefile copies all xattrs verbatim. We can still
     // take the fast path when xattrs are disabled (`-a` without `-X`) by

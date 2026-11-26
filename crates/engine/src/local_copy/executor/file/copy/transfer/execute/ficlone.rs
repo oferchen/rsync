@@ -60,7 +60,8 @@ pub(super) fn eligible(
         && !copy_source_override_present
         && !context.has_bandwidth_limiter()
         && !context.delay_updates_enabled()
-        && context.temp_directory_path().is_none();
+        && context.temp_directory_path().is_none()
+        && context.mover_allowed(crate::local_copy::DataMover::Clone);
 
     // Unlike macOS clonefile, FICLONE clones data extents only into a fresh
     // File::create() inode - it never copies the source's xattrs, so plain

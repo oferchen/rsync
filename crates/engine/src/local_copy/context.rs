@@ -451,6 +451,12 @@ pub(crate) struct CopyContext<'a> {
     /// the destination stat; oc knows them only once the record is built,
     /// which every executor does after finalizing the delta entry.
     batch_report_slot: Option<(usize, usize)>,
+    /// File checksum of a whole-file run, fed by the literal tokens as the
+    /// run is recorded so `finalize_batch_file_delta()` need not read the
+    /// source again. `None` for a delta, whose tokens do not cover every byte.
+    ///
+    /// upstream: match.c:439-488 sums the file in the pass that sends it.
+    batch_whole_file_sum: Option<FileSum>,
     /// Owner uids, then group gids, in first-seen send order, for the id lists
     /// that follow a non-INC_RECURSE batch file list.
     ///
@@ -933,6 +939,7 @@ include!("context_impl/options/transfer.rs");
 include!("context_impl/options/dirs.rs");
 include!("context_impl/options/filter.rs");
 include!("context_impl/options/batch.rs");
+include!("context_impl/data_mover.rs");
 include!("context_impl/wire_tally.rs");
 include!("context_impl/transfer.rs");
 include!("context_impl/delta_transfer.rs");
@@ -1452,6 +1459,66 @@ mod tests {
         context.batch_flist_index = 1;
         context.begin_batch_file_delta().expect("begin file delta");
         context
+    }
+
+    /// While a batch is recorded only a mover that copies the bytes unread is
+    /// refused; a clone keeps its shared extents and its one capture read.
+    /// With no batch every mover may run.
+    #[test]
+    fn batch_refuses_only_the_kernel_mover() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let recording = batch_file_context(dir.path());
+        assert!(!recording.mover_allowed(DataMover::Kernel));
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        assert!(recording.mover_allowed(DataMover::Clone));
+
+        let plain = CopyContext::new(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::new(),
+            None,
+            dir.path().join("dst"),
+        );
+        assert!(plain.mover_allowed(DataMover::Kernel));
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        assert!(plain.mover_allowed(DataMover::Clone));
+    }
+
+    /// The batch file checksum of a whole-file run comes from the read that
+    /// recorded its tokens: finalizing does not open the source again, so it
+    /// succeeds for a source that no longer exists, and the sum is the
+    /// protocol's seeded MD4 of the recorded bytes (checksum.c:622-628).
+    #[test]
+    fn whole_file_batch_sum_comes_from_the_recording_read() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut context = batch_file_context(dir.path());
+        let gone = dir.path().join("never-created");
+        let content: Vec<u8> = (0..70_000u32).map(|i| (i * 7) as u8).collect();
+        let mut run = Vec::new();
+        for piece in content.chunks(25_600) {
+            context
+                .record_whole_file_chunk(&mut run, piece, 0, &gone)
+                .expect("record chunk");
+        }
+        context
+            .flush_whole_file_run(&mut run, &gone)
+            .expect("flush run");
+        context
+            .finalize_batch_file_delta(&gone)
+            .expect("finalize without reopening the source");
+
+        let seed = context
+            .options
+            .get_batch_writer()
+            .expect("batch writer")
+            .lock()
+            .expect("writer lock")
+            .config()
+            .checksum_seed;
+        let mut md4 = checksums::strong::Md4::new();
+        md4.update(&seed.to_le_bytes());
+        md4.update(&content);
+        let (_, entry) = context.batch_delta_entries.last().expect("file entry");
+        assert_eq!(entry[entry.len() - 16..], md4.finalize());
     }
 
     fn batch_file_bytes(context: &CopyContext<'_>) -> Vec<u8> {

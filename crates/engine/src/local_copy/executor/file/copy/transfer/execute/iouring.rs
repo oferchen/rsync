@@ -77,6 +77,7 @@ pub(super) fn eligible(
         && !context.has_bandwidth_limiter()
         && append_offset == 0
         && file_size >= IOURING_DATA_WRITES_MIN_BYTES
+        && context.mover_allowed(crate::local_copy::DataMover::Kernel)
 }
 
 /// Attempts to drive the transfer through io_uring; returns `true` on success.
