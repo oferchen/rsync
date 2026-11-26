@@ -94,15 +94,6 @@ impl ParallelExecutor {
         Self::default()
     }
 
-    /// Sets the number of threads to use.
-    ///
-    /// Pass 0 to use rayon's default (typically number of CPU cores).
-    #[must_use]
-    pub fn with_thread_count(mut self, count: usize) -> Self {
-        self.thread_count = count;
-        self
-    }
-
     /// Sets the buffer size for I/O operations.
     #[must_use]
     pub fn with_buffer_size(mut self, size: usize) -> Self {
@@ -175,70 +166,6 @@ impl ParallelExecutor {
             successes,
             errors,
             bytes_processed: 0,
-        }
-    }
-
-    /// Processes file paths in parallel.
-    ///
-    /// Specialized version for file operations that tracks bytes processed.
-    /// Respects `thread_count` for I/O-bound stat workloads.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a dedicated rayon thread pool cannot be built.
-    pub fn process_files<P, U, F>(&self, paths: &[P], process_fn: F) -> ParallelResult<U>
-    where
-        P: AsRef<Path> + Sync,
-        U: Send,
-        F: Fn(&Path) -> io::Result<(U, u64)> + Sync,
-    {
-        let bytes = AtomicU64::new(0);
-
-        // Ordering: fold+reduce does NOT preserve input order - same as process().
-        // Errors carry their original index. Callers must not assume positional order.
-        let session = logging::Session::capture();
-        let run = || -> (Vec<U>, Vec<(usize, io::Error)>) {
-            paths
-                .par_iter()
-                .enumerate()
-                .fold(
-                    || (Vec::new(), Vec::new()),
-                    |(mut successes, mut errors), (idx, path)| {
-                        let _log = session.enter();
-                        match process_fn(path.as_ref()) {
-                            Ok((result, file_bytes)) => {
-                                bytes.fetch_add(file_bytes, AtomicOrdering::Relaxed);
-                                successes.push(result);
-                            }
-                            Err(e) => errors.push((idx, e)),
-                        }
-                        (successes, errors)
-                    },
-                )
-                .reduce(
-                    || (Vec::new(), Vec::new()),
-                    |(mut s1, mut e1), (s2, e2)| {
-                        s1.extend(s2);
-                        e1.extend(e2);
-                        (s1, e1)
-                    },
-                )
-        };
-
-        let (successes, errors) = if self.thread_count > 0 {
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(self.thread_count)
-                .build()
-                .expect("failed to build rayon thread pool");
-            pool.install(run)
-        } else {
-            run()
-        };
-
-        ParallelResult {
-            successes,
-            errors,
-            bytes_processed: bytes.load(AtomicOrdering::Relaxed),
         }
     }
 

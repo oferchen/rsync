@@ -138,13 +138,6 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
-    /// Adds a reference directory.
-    #[must_use]
-    pub fn reference_directory(mut self, reference: ReferenceDirectory) -> Self {
-        self.reference_directories.push(reference);
-        self
-    }
-
     /// Extends reference directories.
     #[must_use]
     pub fn reference_directories<I>(mut self, references: I) -> Self

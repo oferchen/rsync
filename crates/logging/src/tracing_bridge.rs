@@ -251,38 +251,6 @@ pub fn init_tracing(config: VerbosityConfig) {
     tracing_subscriber::registry().with(layer).init();
 }
 
-/// Initialize tracing with a custom filter in addition to rsync verbosity.
-///
-/// This allows combining rsync's verbosity system with standard tracing filters
-/// for more fine-grained control.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use logging::{VerbosityConfig, init_tracing_with_filter};
-/// use tracing_subscriber::EnvFilter;
-///
-/// let config = VerbosityConfig::from_verbose_level(2);
-/// let filter = EnvFilter::from_default_env();
-/// init_tracing_with_filter(config, filter);
-/// ```
-pub fn init_tracing_with_filter<F>(config: VerbosityConfig, filter: F)
-where
-    F: Layer<tracing_subscriber::Registry> + Send + Sync + 'static,
-{
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-
-    super::context::init(config.clone());
-
-    let layer = RsyncLayer::new(config);
-
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(layer)
-        .init();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

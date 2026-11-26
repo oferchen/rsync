@@ -127,4 +127,4 @@ pub use upstream_text::{comma_dnum, comma_num, permstring, timestring_at_offset}
 pub use verify_failure::{VerifyFailure, verification_failure};
 
 #[cfg(feature = "tracing")]
-pub use tracing_bridge::{RsyncLayer, init_tracing, init_tracing_with_filter};
+pub use tracing_bridge::{RsyncLayer, init_tracing};

@@ -488,14 +488,6 @@ impl FileListReader {
         &self.xattr_cache
     }
 
-    /// Returns a mutable reference to the xattr cache.
-    ///
-    /// Needed during the data exchange phase when abbreviated xattr values
-    /// are replaced with full values received from the sender.
-    pub fn xattr_cache_mut(&mut self) -> &mut XattrCache {
-        &mut self.xattr_cache
-    }
-
     /// Whether INC_RECURSE was negotiated for this session.
     fn inc_recurse(&self) -> bool {
         self.compat_flags

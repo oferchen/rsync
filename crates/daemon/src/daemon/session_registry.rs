@@ -211,19 +211,6 @@ impl SessionRegistry {
         }
     }
 
-    /// Updates the byte counters for a session.
-    ///
-    /// Returns `true` if the session was found and updated.
-    pub fn update_bytes(&self, id: &SessionId, received: u64, sent: u64) -> bool {
-        if let Some(mut entry) = self.sessions.get_mut(id) {
-            entry.bytes_received = received;
-            entry.bytes_sent = sent;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Adds to the byte counters for a session.
     ///
     /// Returns `true` if the session was found and updated.
@@ -243,15 +230,6 @@ impl SessionRegistry {
         self.sessions
             .iter()
             .filter(|entry| entry.value().is_active())
-            .map(|entry| entry.value().clone())
-            .collect()
-    }
-
-    /// Returns a snapshot of all sessions (including completed/failed).
-    #[must_use]
-    pub fn all_sessions(&self) -> Vec<SessionInfo> {
-        self.sessions
-            .iter()
             .map(|entry| entry.value().clone())
             .collect()
     }

@@ -101,12 +101,6 @@ impl UpstreamBinary {
         self.path.exists() && self.path.is_file()
     }
 
-    /// Get version string for display.
-    #[allow(dead_code)]
-    pub fn version_string(&self) -> &str {
-        &self.version
-    }
-
     /// Get path to the binary.
     pub fn binary_path(&self) -> &Path {
         &self.path

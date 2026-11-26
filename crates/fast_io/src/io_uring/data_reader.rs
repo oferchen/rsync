@@ -86,24 +86,6 @@ impl IoUringFileReader {
         self.size == 0
     }
 
-    /// Reads up to `dst.len()` bytes at the current cursor position via a
-    /// single `IORING_OP_READ` SQE, advancing the cursor by the number of
-    /// bytes read.
-    ///
-    /// Returns `Ok(0)` at end of file.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the underlying io_uring submission or completion error.
-    pub fn read_into(&mut self, dst: &mut [u8]) -> io::Result<usize> {
-        if dst.is_empty() || self.position >= self.size {
-            return Ok(0);
-        }
-        let n = self.inner.read_at(self.position, dst)?;
-        self.position = self.position.saturating_add(n as u64);
-        Ok(n)
-    }
-
     /// Reads the entire file into a fresh `Vec<u8>` using the batched
     /// `IORING_OP_READ` slurp path.
     ///

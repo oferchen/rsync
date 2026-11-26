@@ -53,9 +53,6 @@ pub use handler::SshClientHandler;
 #[cfg(feature = "embedded-ssh")]
 pub use resolve::resolve_host;
 #[cfg(feature = "embedded-ssh")]
-pub use sync_bridge::{
-    DEFAULT_CHANNEL_CAPACITY, SyncAsyncBridge, SyncReader as BridgeSyncReader,
-    SyncWriter as BridgeSyncWriter, into_sync_halves, into_sync_halves_with_capacity,
-};
+pub use sync_bridge::{DEFAULT_CHANNEL_CAPACITY, SyncAsyncBridge};
 #[cfg(feature = "embedded-ssh")]
 pub use types::{IpPreference, StrictHostKeyChecking};

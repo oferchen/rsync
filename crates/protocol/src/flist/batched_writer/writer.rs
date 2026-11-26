@@ -197,12 +197,6 @@ impl BatchedFileListWriter {
         &self.stats
     }
 
-    /// Returns the file list statistics from the underlying writer.
-    #[must_use]
-    pub const fn flist_stats(&self) -> &crate::flist::state::FileListStats {
-        self.writer.stats()
-    }
-
     /// Returns the number of entries in the current unflushed batch.
     #[must_use]
     pub const fn pending_entries(&self) -> usize {

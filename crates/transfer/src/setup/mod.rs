@@ -28,7 +28,6 @@ mod types;
 
 pub(crate) use capability::parse_peer_subprotocol;
 pub use capability::{build_capability_string, build_capability_string_suffix};
-pub use compat::exchange_compat_flags_direct;
 pub use negotiator::{
     CapabilityNegotiator, ChecksumSeedExchanger, CompatFlagsExchanger, ProtocolNegotiator,
     RsyncNegotiator, resolve_checksum_seed,

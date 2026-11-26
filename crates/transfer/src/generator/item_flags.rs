@@ -102,12 +102,6 @@ impl ItemFlags {
         self.raw
     }
 
-    /// Returns the lower 16 bits suitable for wire transmission.
-    #[must_use]
-    pub const fn wire_bits(&self) -> u16 {
-        self.raw as u16
-    }
-
     /// Returns the wire-format value with only significant flags preserved.
     ///
     /// Applies [`Self::SIGNIFICANT_ITEM_FLAGS`] mask, then truncates to 16 bits.

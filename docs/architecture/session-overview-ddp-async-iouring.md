@@ -172,8 +172,8 @@ default) and the async `AsyncSshTransport` (opt-in via the
 
 - `crates/rsync_io/src/ssh/embedded/` - in-process SSH client.
 - `connect.rs::connect_and_exec` is async over a `russh::Channel`.
-- `sync_bridge.rs::into_sync_halves` wraps the russh channel as
-  `(std::io::Read, std::io::Write)` halves backed by a background
+- `connect_and_exec` wraps the russh channel as `connect.rs`'s
+  `ChannelReader` / `ChannelWriter` (`std::io::Read`, `std::io::Write`) halves backed by a background
   tokio task with bounded `mpsc::channel(64)` queues, so the existing
   synchronous multiplex and transfer code drives a russh channel
   without being ported to async. This is the inverse of the channel
@@ -186,7 +186,7 @@ default) and the async `AsyncSshTransport` (opt-in via the
 | `--no-default-features`                            | n/a     | `SshConnection` (sync subprocess), tokio not linked                                        |
 | Workspace default                                  | yes     | `SshConnection` (sync subprocess)                                                          |
 | `--features async-ssh`                             | no      | `AsyncSshTransport` (tokio-process subprocess); wired through the core remote dispatch     |
-| `--features embedded-ssh`                          | no      | `russh` channel wrapped in `SyncAsyncBridge` / `into_sync_halves`                          |
+| `--features embedded-ssh`                          | no      | `russh` channel wrapped in `ChannelReader` / `ChannelWriter` (`embedded/connect.rs`)      |
 | `--features async-ssh,embedded-ssh`                | no      | Caller selects; argv-equivalence and channel-bridge tests cover both                       |
 
 Default builds stay tokio-free at the CLI level; the runtime is only
@@ -430,7 +430,7 @@ and `async-ssh`, executes the following pipeline:
    via tokio; `split()` hands the receiver thread an
    `(AsyncRead, AsyncWrite)` pair that is bridged into the sync
    multiplex layer via the existing channel adapter (the inverse of
-   `embedded::sync_bridge::into_sync_halves`).
+   the embedded `connect.rs` channel pump).
 2. The receiver consumes INC_RECURSE flist segments. For each
    `FLAG_CONTENT_DIR` directory in a segment,
    `receive_extra_file_lists` posts a `compute_extras` job to rayon;

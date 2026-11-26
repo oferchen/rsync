@@ -171,25 +171,3 @@ pub fn run_scenarios(
 
     Ok(results)
 }
-
-/// Print a summary of scenario results.
-#[allow(dead_code)]
-pub fn print_summary(results: &[ScenarioResult]) {
-    let passed = results.iter().filter(|r| r.passed).count();
-    let failed = results.len() - passed;
-
-    eprintln!("\n=== Exit Code Validation Summary ===");
-    eprintln!("Total scenarios: {}", results.len());
-    eprintln!("Passed: {}", passed);
-    eprintln!("Failed: {}", failed);
-
-    if failed > 0 {
-        eprintln!("\nFailed scenarios:");
-        for result in results.iter().filter(|r| !r.passed) {
-            eprintln!(
-                "  - {}: expected {}, got {}",
-                result.scenario_name, result.expected_exit_code, result.actual_exit_code
-            );
-        }
-    }
-}

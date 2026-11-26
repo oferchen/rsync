@@ -223,13 +223,6 @@ impl<'a> ProtocolSetupConfig<'a> {
         self
     }
 
-    /// Sets [`Self::flag_string`].
-    #[must_use]
-    pub const fn with_flag_string(mut self, flag_string: Option<&'a str>) -> Self {
-        self.flag_string = flag_string;
-        self
-    }
-
     /// Sets [`Self::is_daemon_mode`].
     #[must_use]
     pub const fn with_daemon_mode(mut self, is_daemon: bool) -> Self {
@@ -276,13 +269,6 @@ impl<'a> ProtocolSetupConfig<'a> {
     #[must_use]
     pub const fn with_inc_recurse(mut self, allow: bool) -> Self {
         self.allow_inc_recurse = allow;
-        self
-    }
-
-    /// Sets [`Self::preserve_crtimes`].
-    #[must_use]
-    pub const fn with_crtimes(mut self, preserve: bool) -> Self {
-        self.preserve_crtimes = preserve;
         self
     }
 }

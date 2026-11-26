@@ -259,14 +259,6 @@ impl DeltaSignatureIndex {
         self.role
     }
 
-    /// Overrides the role used in subsequent HASH emissions.
-    ///
-    /// Useful for call sites that build the index in a generic helper
-    /// and only learn the actual `who_am_i()` value later.
-    pub fn set_role(&mut self, role: HashtableRole) {
-        self.role = role;
-    }
-
     /// Returns the canonical block length expressed in bytes.
     #[must_use]
     pub const fn block_length(&self) -> usize {

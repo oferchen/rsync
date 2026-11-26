@@ -240,7 +240,7 @@ pub use reader::BatchReader;
 /// file list, and delta operations captured during a transfer.
 pub use writer::BatchWriter;
 
-/// Delta operation type re-exported from protocol for [`BatchReader::read_all_delta_ops`].
+/// Delta operation type re-exported from protocol.
 ///
 /// Delta operations represent the instructions for reconstructing a file
 /// from a combination of existing data (copy operations) and new data

@@ -139,11 +139,6 @@ impl Entry {
     pub fn from_raw(id: u32, data: Vec<u8>) -> Self {
         Self { id, data }
     }
-
-    /// Returns the well-known [`EntryId`] for this entry, when applicable.
-    pub fn standard_id(&self) -> Option<EntryId> {
-        EntryId::from_u32(self.id)
-    }
 }
 
 /// A decoded AppleDouble v2 container.

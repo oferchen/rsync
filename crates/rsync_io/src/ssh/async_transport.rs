@@ -167,18 +167,6 @@ impl AsyncSshTransport {
         (stdout, stdin)
     }
 
-    /// Removes the async stdin half from the transport, leaving the rest
-    /// of the connection intact.
-    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.stdin.take()
-    }
-
-    /// Removes the async stdout half from the transport, leaving the rest
-    /// of the connection intact.
-    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
-        self.stdout.take()
-    }
-
     /// Waits for the spawned `ssh` child to exit and returns its exit
     /// status.
     ///

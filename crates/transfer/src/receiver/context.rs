@@ -1276,26 +1276,6 @@ impl ReceiverContext {
         self.config.connection.iconv.is_some()
     }
 
-    /// Translates a remote UID to a local UID using the received mappings.
-    ///
-    /// Returns the mapped local UID if a mapping exists, otherwise returns the
-    /// remote UID unchanged (falling back to numeric ID).
-    #[inline]
-    #[must_use]
-    pub fn match_uid(&self, remote_uid: u32) -> u32 {
-        self.uid_list.match_id(remote_uid)
-    }
-
-    /// Translates a remote GID to a local GID using the received mappings.
-    ///
-    /// Returns the mapped local GID if a mapping exists, otherwise returns the
-    /// remote GID unchanged (falling back to numeric ID).
-    #[inline]
-    #[must_use]
-    pub fn match_gid(&self, remote_gid: u32) -> u32 {
-        self.gid_list.match_id(remote_gid)
-    }
-
     /// Resolves the xattr list for a file entry from the cached `FileListReader`.
     ///
     /// Returns `None` if xattrs are not being preserved, if the file entry has no
@@ -1451,15 +1431,6 @@ impl ReceiverContext {
     #[must_use]
     pub fn filter_chain(&self) -> &FilterChain {
         &self.filter_chain
-    }
-
-    /// Sets the deletion-pass filter chain.
-    ///
-    /// Held separately from `filter_chain` so the `--delete` pass can reload
-    /// per-directory merge files without perturbing `--prune-empty-dirs`. In
-    /// production this is populated by `setup_transfer`; tests set it directly.
-    pub fn set_deletion_filter_chain(&mut self, chain: FilterChain) {
-        self.deletion_filter_chain = chain;
     }
 
     /// Returns the compiled daemon filter set, if any rules were configured.
