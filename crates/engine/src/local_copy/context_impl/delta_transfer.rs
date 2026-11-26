@@ -592,6 +592,15 @@ impl<'a> CopyContext<'a> {
                         &scratch[..block_len],
                         destination,
                     )?;
+                    // The skipped bytes are already correct here, but the sender still
+                    // sent this match, so the batch and the byte tally record it.
+                    // upstream: match.c:matched() sends every match token; the receiver's
+                    // skip_matched() (receiver.c:641) is local to the receiving side.
+                    self.write_batch_block_match_token(
+                        matched.descriptor().index() as u32,
+                        &scratch[..block_len],
+                        destination,
+                    )?;
                     output_position = output_position.saturating_add(block_len as u64);
                 } else if inplace_mode {
                     // Inplace + basis == destination: reading basis at a
@@ -892,6 +901,15 @@ impl<'a> CopyContext<'a> {
                     writer,
                     &mut sparse_state,
                     sparse,
+                    &scratch[..block_len],
+                    destination,
+                )?;
+                // The skipped bytes are already correct here, but the sender still
+                // sent this match, so the batch and the byte tally record it.
+                // upstream: match.c:matched() sends every match token; the receiver's
+                // skip_matched() (receiver.c:641) is local to the receiving side.
+                self.write_batch_block_match_token(
+                    matched.descriptor().index() as u32,
                     &scratch[..block_len],
                     destination,
                 )?;

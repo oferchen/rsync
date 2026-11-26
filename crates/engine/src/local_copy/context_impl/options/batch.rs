@@ -607,6 +607,68 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records the basis the current file's delta is built against when it is
+    /// not the destination itself.
+    ///
+    /// Sets `ITEM_BASIS_TYPE_FOLLOWS` in the reserved iflags word and writes the
+    /// type byte right after it; a fuzzy basis also sets `ITEM_XNAME_FOLLOWS`
+    /// and writes `xname` as a vstring. A reader resolves the basis from these
+    /// bytes, so without them a batch whose blocks come from a `--partial-dir`
+    /// file or a fuzzy match is replayed against the destination. Must run
+    /// before any token is written; the reserved sum_head moves past the
+    /// inserted bytes. A no-op when batch mode is inactive, the protocol
+    /// predates iflags, or `basis` is the destination.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2424-2429` - `ITEM_BASIS_TYPE_FOLLOWS` when
+    ///   `fnamecmp_type != FNAMECMP_FNAME`, `ITEM_XNAME_FOLLOWS` for
+    ///   `fnamecmp_type >= FNAMECMP_FUZZY` with the fuzzy file's basename.
+    /// - `sender.c:477-488 write_ndx_and_attrs()` - iflags, then the type byte,
+    ///   then the vstring xname, ahead of any xattr request; the batch records
+    ///   this stream as the receiver reads it (`io.c:2177-2178`).
+    pub(crate) fn record_batch_basis(
+        &mut self,
+        basis: protocol::FnameCmpType,
+        xname: &[u8],
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
+        const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
+        if basis == protocol::FnameCmpType::Fname {
+            return Ok(());
+        }
+        let Some(offset) = self.batch_delta_iflags_offset else {
+            return Ok(());
+        };
+        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
+            return Ok(());
+        };
+        let mut attrs = vec![basis.to_wire()];
+        let mut flags = ITEM_BASIS_TYPE_FOLLOWS;
+        if basis.is_fuzzy() {
+            flags |= ITEM_XNAME_FOLLOWS;
+            protocol::write_vstring(&mut attrs, xname).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch basis name",
+                    std::path::PathBuf::new(),
+                    e,
+                )
+            })?;
+        }
+        let buf = delta_file.get_mut();
+        let Some(slot) = buf.get_mut(offset..offset + 2) else {
+            return Ok(());
+        };
+        let iflags = u16::from_le_bytes([slot[0], slot[1]]) | flags;
+        slot.copy_from_slice(&iflags.to_le_bytes());
+        let at = offset + 2;
+        buf.splice(at..at, attrs.iter().copied());
+        self.batch_delta_sum_head_offset += attrs.len();
+        let end = delta_file.get_ref().len() as u64;
+        delta_file.set_position(end);
+        Ok(())
+    }
+
     /// Records an itemize-only `NDX` + iflags entry into the batch delta
     /// stream for a created directory, symlink, or special file
     /// (device/FIFO).

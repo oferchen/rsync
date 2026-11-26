@@ -1431,4 +1431,79 @@ mod tests {
         assert!(deletion.relative.is_none());
         assert!(deletion.keep.is_empty());
     }
+
+    /// A context recording a protocol-29 batch, positioned on its first file
+    /// with the iflags word and sum_head reserved.
+    fn batch_file_context(dir: &std::path::Path) -> CopyContext<'static> {
+        let config = crate::batch::BatchConfig::new(
+            crate::batch::BatchMode::Write,
+            dir.join("bf").to_string_lossy().into_owned(),
+            29,
+        );
+        let writer = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::batch::BatchWriter::new(config).expect("batch writer"),
+        ));
+        let mut context = CopyContext::new(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::new().batch_writer(Some(writer)),
+            None,
+            dir.join("dst"),
+        );
+        context.batch_flist_index = 1;
+        context.begin_batch_file_delta().expect("begin file delta");
+        context
+    }
+
+    fn batch_file_bytes(context: &CopyContext<'_>) -> Vec<u8> {
+        context
+            .batch_delta_buf
+            .as_ref()
+            .expect("batch delta buffer")
+            .get_ref()
+            .clone()
+    }
+
+    /// generator.c:2424-2429 / sender.c:477-488: a fuzzy basis sets
+    /// ITEM_BASIS_TYPE_FOLLOWS and ITEM_XNAME_FOLLOWS, then the type byte and
+    /// the vstring name sit between the iflags word and the sum_head.
+    #[test]
+    fn fuzzy_basis_follows_the_iflags_word() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let mut context = batch_file_context(temp.path());
+        context
+            .record_batch_basis(protocol::FnameCmpType::Fuzzy(0), b"f.old")
+            .expect("record basis");
+        let mut expected = (0x8000u16 | 1 << 11 | 1 << 12).to_le_bytes().to_vec();
+        expected.extend_from_slice(&[0x83, 5]);
+        expected.extend_from_slice(b"f.old");
+        expected.extend_from_slice(&protocol::wire::SumHead::WHOLE_FILE.encode());
+        assert_eq!(batch_file_bytes(&context), expected);
+        assert_eq!(context.batch_delta_sum_head_offset, 2 + 2 + 5);
+    }
+
+    /// A partial-dir basis carries the type byte but no name.
+    #[test]
+    fn partial_dir_basis_carries_only_the_type_byte() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let mut context = batch_file_context(temp.path());
+        context
+            .record_batch_basis(protocol::FnameCmpType::PartialDir, b"")
+            .expect("record basis");
+        let mut expected = (0x8000u16 | 1 << 11).to_le_bytes().to_vec();
+        expected.push(0x81);
+        expected.extend_from_slice(&protocol::wire::SumHead::WHOLE_FILE.encode());
+        assert_eq!(batch_file_bytes(&context), expected);
+    }
+
+    /// The destination itself is the default basis: nothing follows the word.
+    #[test]
+    fn destination_basis_leaves_the_row_unchanged() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let mut context = batch_file_context(temp.path());
+        let before = batch_file_bytes(&context);
+        context
+            .record_batch_basis(protocol::FnameCmpType::Fname, b"")
+            .expect("record basis");
+        assert_eq!(batch_file_bytes(&context), before);
+    }
 }
