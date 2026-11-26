@@ -128,7 +128,15 @@ mod protect_args_daemon_tests {
         request.path = "I".into();
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let args = build_full_daemon_args(&config, &request, protocol, true);
-        assert_eq!(args, ["--server", "--sender", "-e.LsfxCIvu", ".", "test/I"]);
+        // The capability letters are per platform (Windows advertises no
+        // `L`), so they come from the builder the argument list uses.
+        let capabilities = format!(
+            "-{}",
+            transfer::setup::build_capability_string_suffix(
+                crate::client::remote::pull_inc_recurse::advertise_inc_recurse(&config, false)
+            )
+        );
+        assert_eq!(args, ["--server", "--sender", &capabilities, ".", "test/I"]);
     }
 
     #[test]

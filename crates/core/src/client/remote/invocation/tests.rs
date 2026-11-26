@@ -5280,28 +5280,28 @@ mod multi_source_pull {
     fn same_host_daemon_sources_are_one_pull() {
         accepted(
             &[
-                "rsync://h:9/mod/I",
-                "rsync://h:9/mod/J",
-                "rsync://h:9/mod/K",
+                "rsync://host:9/mod/I",
+                "rsync://host:9/mod/J",
+                "rsync://host:9/mod/K",
             ],
             None,
         );
-        accepted(&["h::mod/I", "h::mod/J"], None);
+        accepted(&["host::mod/I", "host::mod/J"], None);
     }
 
     #[test]
     fn a_source_without_host_or_port_inherits_the_first_ones() {
         // main.c:1588 carries dummy_port, and an empty host matches any.
-        accepted(&["rsync://h:9/mod/I", "h::mod/J"], None);
-        accepted(&["rsync://h:9/mod/I", "rsync:///mod/J"], None);
-        accepted(&["rsync://h:9/mod/I", "::mod/J"], None);
-        accepted(&["h::mod/I", "rsync://h/mod/J"], Some(9));
+        accepted(&["rsync://host:9/mod/I", "host::mod/J"], None);
+        accepted(&["rsync://host:9/mod/I", "rsync:///mod/J"], None);
+        accepted(&["rsync://host:9/mod/I", "::mod/J"], None);
+        accepted(&["host::mod/I", "rsync://host/mod/J"], Some(9));
     }
 
     #[test]
     fn a_different_host_is_refused() {
         refused(
-            &["rsync://h:9/mod/I", "rsync://g:9/mod/J"],
+            &["rsync://host:9/mod/I", "rsync://other:9/mod/J"],
             None,
             "All source args must come from the same machine.",
         );
@@ -5310,13 +5310,13 @@ mod multi_source_pull {
     #[test]
     fn a_different_port_is_refused() {
         refused(
-            &["rsync://h:9/mod/I", "rsync://h:10/mod/J"],
+            &["rsync://host:9/mod/I", "rsync://host:10/mod/J"],
             None,
             "All source args must use the same port number.",
         );
         // --port sets rsync_port, so a URL naming another port differs.
         refused(
-            &["h::mod/I", "rsync://h:10/mod/J"],
+            &["host::mod/I", "rsync://host:10/mod/J"],
             Some(9),
             "All source args must use the same port number.",
         );
@@ -5325,7 +5325,7 @@ mod multi_source_pull {
     #[test]
     fn a_shell_source_after_a_daemon_source_is_refused() {
         refused(
-            &["h::mod/I", "h:/p/J"],
+            &["host::mod/I", "host:/p/J"],
             None,
             "All source args must use the same hostspec format.",
         );
@@ -5334,7 +5334,7 @@ mod multi_source_pull {
     #[test]
     fn a_local_source_after_a_remote_one_is_refused() {
         refused(
-            &["h::mod/I", "/abs/J"],
+            &["host::mod/I", "/abs/J"],
             None,
             "Unexpected local arg: /abs/J\nIf arg is a remote file/dir, prefix it with a colon (:).",
         );
@@ -5342,6 +5342,10 @@ mod multi_source_pull {
 
     #[test]
     fn a_remote_source_after_a_local_one_is_refused() {
-        refused(&["I", "h::mod/J"], None, "Unexpected remote arg: h::mod/J");
+        refused(
+            &["I", "host::mod/J"],
+            None,
+            "Unexpected remote arg: host::mod/J",
+        );
     }
 }
