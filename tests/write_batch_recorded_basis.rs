@@ -273,9 +273,8 @@ fn check(shape: &Shape) {
 }
 
 /// Records over a remote shell or a daemon with oc as both ends, checks the
-/// row, and replays the batch with 3.5.2 and with oc. The network sender's
-/// literal chunking differs from 3.5.2's (#8816), so the batch bytes are not
-/// compared here.
+/// row, replays the batch with 3.5.2 and with oc, and checks the batch matches
+/// the one 3.5.2 records for the same tree up to the stats trailer.
 fn check_over(shape: &Shape, link: Link) {
     let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
@@ -284,6 +283,11 @@ fn check_over(shape: &Shape, link: Link) {
     ours.assert_row(shape.row, link);
     ours.assert_replays("upstream", upstream.binary(), shape);
     ours.assert_replays("oc", &oc_rsync(), shape);
+    assert_same_rows(
+        &ours,
+        &shape.record(upstream.binary(), Link::Local),
+        &upstream,
+    );
 }
 
 fn assert_same_rows(ours: &Recording, theirs: &Recording, upstream: &UpstreamRsync) {
