@@ -130,6 +130,11 @@ impl Outcome {
 #[cfg_attr(not(unix), allow(dead_code))]
 const PANIC_EXIT_CODE: i32 = 101;
 
+/// What a forked server writes to its parent once it leads its own process
+/// group.
+#[cfg(unix)]
+const GROUP_LED: &str = "led";
+
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
@@ -181,14 +186,51 @@ impl ForkedServer {
     }
 
     fn fork<F: FnOnce() -> RunResult>(run: F, stderr: Option<std::io::PipeWriter>) -> Self {
+        Self::fork_leading(
+            || platform::session_fork::lead_process_group(0),
+            run,
+            stderr,
+        )
+    }
+
+    /// Forks the server, which leads a process group of its own before
+    /// anything else and reports that over a pipe the parent waits on.
+    ///
+    /// Only the child calls `setpgid()`. When the parent also called it for
+    /// the child, the two calls raced, and on macOS the child's call could
+    /// fail with `EPERM` while it did not yet lead a group. The server then
+    /// ended before serving, and a client already queued on its listener read
+    /// ECONNRESET at the greeting. Waiting for the child's report means the
+    /// group exists when the handle is returned, and a child that could not
+    /// lead one fails the spawn with its error.
+    fn fork_leading<L, F>(lead: L, run: F, stderr: Option<std::io::PipeWriter>) -> Self
+    where
+        L: FnOnce() -> io::Result<()>,
+        F: FnOnce() -> RunResult,
+    {
         use platform::session_fork::{
-            ForkSide, exit_child, fork_session, lead_process_group, redirect_stderr,
+            ForkSide, exit_child, fork_session, redirect_stderr, wait_for_child,
         };
+        use std::io::{Read as _, Write as _};
 
         let outcome_dir = tempfile::tempdir().expect("server outcome dir");
         let outcome_path = outcome_dir.path().join("outcome");
+        let (mut lead_reader, mut lead_writer) = std::io::pipe().expect("server group pipe");
         match fork_session().expect("fork the test server") {
             ForkSide::Child => {
+                drop(lead_reader);
+                let report = match lead() {
+                    Ok(()) => String::from(GROUP_LED),
+                    Err(error) => format!("could not lead a process group: {error}"),
+                };
+                let led = report == GROUP_LED;
+                let _ = lead_writer.write_all(report.as_bytes());
+                // Closed before `run`, so the parent's read ends here and no
+                // session the server forks inherits the write end.
+                drop(lead_writer);
+                if !led {
+                    exit_child(PANIC_EXIT_CODE);
+                }
                 let run = move || {
                     if let Some(writer) = stderr {
                         redirect_stderr(&writer).expect("route the server's stderr to its pipe");
@@ -204,7 +246,20 @@ impl ForkedServer {
                 // reader would never see EOF.
                 drop(run);
                 drop(stderr);
-                lead_process_group(child_pid).expect("put the test server in its own group");
+                drop(lead_writer);
+                let mut report = String::new();
+                let read = lead_reader.read_to_string(&mut report);
+                if read.is_err() || report != GROUP_LED {
+                    let _ = wait_for_child(child_pid);
+                    let cause = match read {
+                        Err(error) => format!("could not report its process group: {error}"),
+                        Ok(_) if report.is_empty() => {
+                            String::from("ended before leading a process group")
+                        }
+                        Ok(_) => report,
+                    };
+                    panic!("test server {child_pid} {cause}");
+                }
                 Self {
                     pid: child_pid,
                     outcome_dir,
@@ -328,12 +383,9 @@ fn run_in_child<F: FnOnce() -> RunResult>(run: F, outcome_path: &std::path::Path
     use std::io::Write as _;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
-    let outcome = match platform::session_fork::lead_process_group(0) {
-        Err(error) => Outcome::Panicked(format!("could not lead a process group: {error}")),
-        Ok(()) => match catch_unwind(AssertUnwindSafe(run)) {
-            Ok(result) => Outcome::Returned(result),
-            Err(payload) => Outcome::Panicked(panic_message(payload.as_ref())),
-        },
+    let outcome = match catch_unwind(AssertUnwindSafe(run)) {
+        Ok(result) => Outcome::Returned(result),
+        Err(payload) => Outcome::Panicked(panic_message(payload.as_ref())),
     };
     let recorded = std::fs::write(outcome_path, outcome.encode());
     // `exit_child` skips the flush a normal exit would run.
@@ -515,6 +567,27 @@ mod tests {
             .early_end_report(&ChildEnd::Exited(10))
             .expect("an early end is reported");
         assert!(report.contains("ended before accepting"), "{report}");
+    }
+
+    /// A server that cannot lead its own process group never runs: the spawn
+    /// fails with the reason, instead of handing out a server that has already
+    /// ended and leaves a queued client reading ECONNRESET.
+    #[cfg(unix)]
+    #[test]
+    fn a_server_that_cannot_lead_its_group_fails_the_spawn() {
+        let spawned = std::panic::catch_unwind(|| {
+            ForkedServer::fork_leading(
+                || Err(io::Error::from_raw_os_error(libc::EPERM)),
+                || Ok(()),
+                None,
+            )
+        });
+        let payload = spawned.expect_err("the spawn must fail");
+        let message = panic_message(payload.as_ref());
+        assert!(
+            message.contains("could not lead a process group"),
+            "{message}"
+        );
     }
 
     /// A server the handle had to stop ended by the handle's `SIGKILL`, which

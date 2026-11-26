@@ -111,9 +111,29 @@ impl InetdCommand {
 #[derive(Debug)]
 pub struct InetdServer {
     port: u16,
-    stopping: Arc<AtomicBool>,
     sessions: Arc<Mutex<Vec<Child>>>,
-    acceptor: Option<thread::JoinHandle<()>>,
+    acceptor: Option<Acceptor>,
+}
+
+/// The running accept thread, consumed by [`Acceptor::stop`] so it is woken
+/// and joined exactly once.
+#[derive(Debug)]
+struct Acceptor {
+    port: u16,
+    stopping: Arc<AtomicBool>,
+    thread: thread::JoinHandle<()>,
+}
+
+impl Acceptor {
+    /// Stops the accept thread. Every session it started is then recorded.
+    fn stop(self) {
+        self.stopping.store(true, Ordering::Release);
+        // Wakes the blocked accept so the thread sees the flag and drops the
+        // listener. Once that happens the port is free and may already serve
+        // another test, which is why nothing connects to it again.
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+        let _ = self.thread.join();
+    }
 }
 
 impl InetdServer {
@@ -126,7 +146,7 @@ impl InetdServer {
         let port = listener.local_addr()?.port();
         let stopping = Arc::new(AtomicBool::new(false));
         let sessions = Arc::new(Mutex::new(Vec::new()));
-        let acceptor = {
+        let thread = {
             let stopping = Arc::clone(&stopping);
             let sessions = Arc::clone(&sessions);
             thread::spawn(move || {
@@ -146,9 +166,12 @@ impl InetdServer {
         };
         Ok(Self {
             port,
-            stopping,
             sessions,
-            acceptor: Some(acceptor),
+            acceptor: Some(Acceptor {
+                port,
+                stopping,
+                thread,
+            }),
         })
     }
 
@@ -175,28 +198,21 @@ impl InetdServer {
     ///
     /// When waiting on a session fails.
     pub fn finish(mut self) -> io::Result<()> {
-        self.stop_accepting();
+        if let Some(acceptor) = self.acceptor.take() {
+            acceptor.stop();
+        }
         for mut child in lock(&self.sessions).drain(..) {
             child.wait()?;
         }
         Ok(())
     }
-
-    /// Stops the accept thread. Every session it started is then recorded.
-    fn stop_accepting(&mut self) {
-        self.stopping.store(true, Ordering::Release);
-        // Wakes the blocked accept so the thread sees the flag and drops the
-        // listener; a later connect is then refused.
-        let _ = TcpStream::connect(("127.0.0.1", self.port));
-        if let Some(acceptor) = self.acceptor.take() {
-            let _ = acceptor.join();
-        }
-    }
 }
 
 impl Drop for InetdServer {
     fn drop(&mut self) {
-        self.stop_accepting();
+        if let Some(acceptor) = self.acceptor.take() {
+            acceptor.stop();
+        }
         for mut child in lock(&self.sessions).drain(..) {
             let _ = child.kill();
             let _ = child.wait();
@@ -233,4 +249,34 @@ pub(crate) fn take_reserved(port: u16) -> io::Result<TcpListener> {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `finish` wakes the accept thread once. A second wake after the thread
+    /// dropped the listener connects to a port that may already serve another
+    /// test, and a `--once` daemon there serves that stray connection instead
+    /// of its own client, which then reads ECONNRESET at the greeting. A
+    /// duplicate of the listener keeps the socket open past the thread's drop,
+    /// so a second wake would land in its backlog.
+    #[cfg(unix)]
+    #[test]
+    fn finish_wakes_the_acceptor_exactly_once() {
+        let listener =
+            bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).expect("bind");
+        let observer = listener.try_clone().expect("duplicate the listener");
+        let command = InetdCommand::discarding_stderr("/bin/true").expect("command");
+        InetdServer::start(listener, command)
+            .expect("start")
+            .finish()
+            .expect("finish");
+
+        observer.set_nonblocking(true).expect("nonblocking");
+        match observer.accept() {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            other => panic!("a connection reached the port after finish: {other:?}"),
+        }
+    }
 }

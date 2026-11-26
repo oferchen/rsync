@@ -149,37 +149,15 @@ pub fn redirect_stderr(fd: impl std::os::fd::AsFd) -> io::Result<()> {
 /// whose id is its pid.
 ///
 /// A supervisor that must later stop a forked process together with every
-/// process it forks in turn calls this on both sides of the fork: the child
-/// for itself and the parent for the child. Whichever side runs first creates
-/// the group, so it exists before the parent can act on it. A child that has
-/// already exited cannot join a group and needs none, so `ESRCH` is success.
-///
-/// The parent's call can lose the race to the child (or vice versa). Once the
-/// child has exec'd, `setpgid()` answers `EACCES`; once it is exiting, has
-/// become a session leader or has left the caller's session, `EPERM` (POSIX
-/// `setpgid()`; xnu `bsd/kern/kern_prot.c` `setpgid()`). The other side's call
-/// may already have made the group, so either error is success when the target
-/// already leads a group of its own id, and is returned otherwise.
+/// process it forks in turn has the child call this for itself (`0`) before
+/// it starts anything the supervisor waits on, and learns the result from the
+/// child. Calling it from the parent as well races the child's own call: on
+/// xnu the losing `setpgid()` can answer `EPERM`, so the child can fail to
+/// lead a group the parent just made (POSIX `setpgid()`; xnu
+/// `bsd/kern/kern_prot.c` `setpgid()`). Every error is returned.
 pub fn lead_process_group(pid: i32) -> io::Result<()> {
     let target = nix::unistd::Pid::from_raw(pid);
-    match nix::unistd::setpgid(target, target) {
-        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
-        Err(errno @ (nix::errno::Errno::EPERM | nix::errno::Errno::EACCES)) => {
-            let actual = if pid == 0 {
-                nix::unistd::Pid::this()
-            } else {
-                target
-            };
-            match nix::unistd::getpgid(Some(actual)) {
-                Ok(pgid) if pgid == actual => Ok(()),
-                // Ended between the two calls: as `ESRCH` above.
-                Err(nix::errno::Errno::ESRCH) => Ok(()),
-                Ok(_) => Err(errno.into()),
-                Err(other) => Err(other.into()),
-            }
-        }
-        Err(errno) => Err(errno.into()),
-    }
+    nix::unistd::setpgid(target, target).map_err(io::Error::from)
 }
 
 /// Sends `SIGTERM` to process `pid`, asking it to shut down.
@@ -413,25 +391,6 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    /// A child that already leads its own group - here set before its exec,
-    /// so the parent's `setpgid()` answers `EACCES` - is the group the caller
-    /// asked for.
-    #[test]
-    fn lead_process_group_accepts_a_child_that_already_leads_its_group() {
-        use std::os::unix::process::CommandExt;
-
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .process_group(0)
-            .spawn()
-            .expect("spawn sleep");
-        let pid = child.id() as i32;
-        let joined = lead_process_group(pid);
-        child.kill().expect("kill sleep");
-        child.wait().expect("reap sleep");
-        joined.expect("the child already leads its own group");
-    }
-
     /// A child that exec'd inside the caller's group cannot be moved, and no
     /// group of its own exists, so the refusal is returned.
     #[test]
@@ -551,7 +510,8 @@ mod tests {
     /// The descendants hold the only write ends of `pipe`, so the parent's
     /// read reaching EOF proves both are gone - an event, not a timed wait.
     /// The grandchild writes a byte first, so it provably existed when the
-    /// group was killed. A second kill finds the group empty and succeeds.
+    /// group was killed, and so did the group: the leader forks it only after
+    /// leading. A second kill finds the group empty and succeeds.
     #[test]
     fn killing_a_process_group_stops_the_leader_and_its_children() {
         use std::io::Read as _;
@@ -581,7 +541,6 @@ mod tests {
             }
             ForkSide::Parent { child_pid } => {
                 drop(writer);
-                lead_process_group(child_pid).expect("lead the child's group");
                 let mut ready = [0u8; 1];
                 reader.read_exact(&mut ready).expect("grandchild started");
                 kill_process_group(child_pid).expect("kill the group");
