@@ -250,6 +250,42 @@ fn a_child_end_is_classified_by_how_the_process_ended() {
     ));
 }
 
+/// A forked TCP session whose client closes before sending a request line
+/// ends with the status upstream's child passes to `_exit()`: 255, from
+/// `start_daemon()` returning -1 (clientserver.c:206-210, :1546-1547;
+/// socket.c:770-773). The client half-closes before the session starts, so
+/// the daemon's greeting still has a reader and its next read is EOF.
+#[cfg(unix)]
+#[test]
+fn a_forked_session_ended_before_its_request_line_exits_255() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind tcp");
+    let addr = listener.local_addr().expect("local addr");
+    let client = TcpStream::connect(addr).expect("connect");
+    client
+        .shutdown(std::net::Shutdown::Write)
+        .expect("half-close the client");
+    let (server, peer) = listener.accept().expect("accept");
+    let context = ConnectionContext::new(
+        Arc::new(Vec::new()),
+        Arc::new(Vec::new()),
+        None,
+        Arc::from(""),
+        None,
+        false,
+        ProxyProtocolPolicy::Disabled,
+        None,
+    );
+
+    let status = serve_forked_session(&context, DaemonStream::plain(server), peer, peer);
+
+    assert_eq!(status, 255);
+    assert!(matches!(
+        SessionOutcome::from_child_end(platform::session_fork::ChildEnd::Exited(status)),
+        SessionOutcome::EndedWithStatus(255)
+    ));
+    drop(client);
+}
+
 /// Builds a worker for a session that has ALREADY ENDED, and does not return
 /// until that is true.
 ///

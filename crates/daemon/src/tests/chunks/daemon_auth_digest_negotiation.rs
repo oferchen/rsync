@@ -470,6 +470,20 @@ fn single_session_exit_prints_a_trailer_only_for_a_refusal() {
     assert_eq!(transferred.exit_code(), 23);
 }
 
+/// A session that ended before any transfer, as upstream's `start_daemon()`
+/// returning -1, exits 255 with nothing printed (main.c:1978,
+/// socket.c:770-773).
+#[test]
+fn single_session_exit_maps_an_aborted_session_to_a_silent_255() {
+    let aborted = single_session_exit(
+        Ok(Some(SessionExit::Aborted)),
+        "stdio daemon session failed",
+    )
+    .expect_err("an aborted session must not report success");
+    assert!(!aborted.prints_trailer());
+    assert_eq!(aborted.exit_code(), 255);
+}
+
 /// A refusal before the server arguments are parsed prints its FERROR cause
 /// line, then the trailer with who_am_i()'s pre-fork `Receiver` role.
 ///
