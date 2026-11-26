@@ -1018,6 +1018,7 @@ include!("delete_delay.rs");
 #[cfg(unix)]
 include!("execute_chown.rs");
 include!("execute_compare_dest.rs");
+include!("execute_alt_dest_basis.rs");
 include!("execute_delay_updates.rs");
 include!("execute_delay_updates_delete.rs");
 include!("execute_ignore_times.rs");

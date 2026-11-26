@@ -18,6 +18,26 @@ pub(crate) enum ReferenceDecision {
     Skip(PathBuf),
     Copy(PathBuf),
     Link(PathBuf),
+    /// No candidate matches the source, but a basis directory holds a regular
+    /// file at this name: it is the delta basis for the missing destination.
+    ///
+    /// upstream: generator.c:1119-1126 - the first dir whose entry is a regular
+    /// file is `best_match` at `match_level` 1; generator.c:1230 returns it as
+    /// `FNAMECMP_BASIS_DIR_LOW + j` and :2201-2205 makes it `fnamecmp`.
+    Basis(AltDestBasis),
+}
+
+/// A `--compare-dest` / `--copy-dest` / `--link-dest` file chosen as the delta
+/// basis for a destination that does not exist yet.
+#[derive(Clone, Debug)]
+pub(crate) struct AltDestBasis {
+    /// Position of the basis directory on the command line, recorded in a
+    /// batch as the basis type byte `FNAMECMP_BASIS_DIR_LOW + index`.
+    pub(crate) index: u8,
+    /// Path of the basis file.
+    pub(crate) path: PathBuf,
+    /// The `basis_stat` result that selected it.
+    pub(crate) metadata: fast_io::EntryMetadata,
 }
 
 /// Computes the full path for a reference directory candidate.
@@ -103,6 +123,12 @@ pub(crate) struct ReferenceQuery<'a> {
     /// Whether `-X` xattr preservation is active, so an xattr difference demotes
     /// a candidate from match_level 3 to match_level 2.
     pub(crate) preserve_xattrs: bool,
+    /// The destination does not exist and the caller builds a delta, so a
+    /// candidate that matches nothing but is a regular file is returned as
+    /// [`ReferenceDecision::Basis`]. An existing destination stays the basis:
+    /// generator.c:1195-1196 sends `find_exact_for_existing` to
+    /// `got_nothing_for_ya` below match_level 3.
+    pub(crate) delta_basis_wanted: bool,
 }
 
 /// Splits a `SystemTime` into the `(seconds, nanoseconds)` pair `same_time`
@@ -285,10 +311,12 @@ pub(crate) fn find_reference_action(
         checksum,
         metadata_options,
         preserve_xattrs,
+        delta_basis_wanted,
     } = query;
 
     let mut best: Option<(ReferenceDirectoryKind, PathBuf, u8)> = None;
-    for reference in context.reference_directories() {
+    let mut first_regular: Option<AltDestBasis> = None;
+    for (index, reference) in context.reference_directories().iter().enumerate() {
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
         // upstream: generator.c:1121 `if (basis_link_stat(cmpbuf, &sxp->st) < 0
         // || !S_ISREG(sxp->st.st_mode)) continue;` - and likewise at :1110,
@@ -303,6 +331,19 @@ pub(crate) fn find_reference_action(
 
         if !candidate_metadata.file_type().is_file() {
             continue;
+        }
+
+        // upstream: generator.c:1123-1126 - match_level 1 is taken by the first
+        // regular file only, and a later level-2 or level-3 candidate replaces it.
+        if delta_basis_wanted
+            && first_regular.is_none()
+            && let Ok(index) = u8::try_from(index)
+        {
+            first_regular = Some(AltDestBasis {
+                index,
+                path: candidate.clone(),
+                metadata: candidate_metadata.clone(),
+            });
         }
 
         if !should_skip_copy(CopyComparison {
@@ -348,7 +389,7 @@ pub(crate) fn find_reference_action(
     }
 
     let Some((kind, basis, level)) = best else {
-        return Ok(None);
+        return Ok(first_regular.map(ReferenceDecision::Basis));
     };
 
     let decision = match kind {
@@ -630,6 +671,7 @@ mod tests {
             checksum: true,
             metadata_options: &metadata_options,
             preserve_xattrs: false,
+            delta_basis_wanted: false,
         };
 
         assert_eq!(query.destination, Path::new("/dest"));

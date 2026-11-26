@@ -332,6 +332,46 @@ fn shifted_basis(src: &[u8]) -> &[u8] {
     &src[100..100 + BASIS_LEN]
 }
 
+/// Puts the shifted basis in `<root>/alt/f` beside the empty destination, for
+/// `--compare-dest=../alt`. Every destination of one recording shares it.
+fn alt_dest_layout(dest: &Path, src: &[u8]) {
+    let alt = dest.parent().expect("dest has a parent").join("alt");
+    fs::create_dir_all(&alt).expect("create alt");
+    fs::write(alt.join("f"), shifted_basis(src)).expect("write alt basis");
+    stamp(&alt.join("f"), OLD_MTIME);
+}
+
+/// `<root>/alt` is a symlink to `<root>/outside`, which holds the basis: the
+/// operator's own directory symlink, which upstream follows.
+fn alt_dest_dir_symlink_layout(dest: &Path, src: &[u8]) {
+    let root = dest.parent().expect("dest has a parent");
+    let outside = root.join("outside");
+    fs::create_dir_all(&outside).expect("create outside");
+    fs::write(outside.join("f"), shifted_basis(src)).expect("write outside basis");
+    stamp(&outside.join("f"), OLD_MTIME);
+    if fs::symlink_metadata(root.join("alt")).is_err() {
+        std::os::unix::fs::symlink("outside", root.join("alt")).expect("link alt");
+    }
+}
+
+/// `<root>/alt/f` is a symlink to a file outside the alt dir: not a regular
+/// file under lstat, so no basis (generator.c:1121).
+fn alt_dest_leaf_symlink_layout(dest: &Path, src: &[u8]) {
+    let root = dest.parent().expect("dest has a parent");
+    fs::write(root.join("outside-f"), shifted_basis(src)).expect("write outside file");
+    let alt = root.join("alt");
+    fs::create_dir_all(&alt).expect("create alt");
+    if fs::symlink_metadata(alt.join("f")).is_err() {
+        std::os::unix::fs::symlink("../outside-f", alt.join("f")).expect("link alt/f");
+    }
+}
+
+/// An existing destination beside a `--compare-dest` file.
+fn alt_dest_existing_layout(dest: &Path, src: &[u8]) {
+    inplace_layout(dest, src);
+    alt_dest_layout(dest, src);
+}
+
 fn inplace_backup_layout(dest: &Path, src: &[u8]) {
     fs::write(dest.join("f"), shifted_basis(src)).expect("write dest");
     stamp(&dest.join("f"), OLD_MTIME);
@@ -364,6 +404,41 @@ const INPLACE: Shape = Shape {
     row: Row::Destination,
 };
 
+/// FNAMECMP_BASIS_DIR_LOW: a `--compare-dest` file that differs from the source
+/// is the basis for the missing destination (generator.c:1230, :2201-2205).
+const ALT_DEST: Shape = Shape {
+    seed: 5,
+    lay_out: alt_dest_layout,
+    flags: &["--compare-dest=../alt"],
+    row: Row::Basis(0x00),
+};
+
+/// The same basis reached through a self-owned directory symlink.
+const ALT_DEST_DIR_SYMLINK: Shape = Shape {
+    seed: 6,
+    lay_out: alt_dest_dir_symlink_layout,
+    flags: &["--compare-dest=../alt"],
+    row: Row::Basis(0x00),
+};
+
+/// A leaf symlink at the basis name: the file goes out whole. The row check is
+/// not used (there is no sum head); see `alt_dest_leaf_symlink_is_not_a_basis`.
+const ALT_DEST_LEAF_SYMLINK: Shape = Shape {
+    seed: 7,
+    lay_out: alt_dest_leaf_symlink_layout,
+    flags: &["--compare-dest=../alt"],
+    row: Row::Destination,
+};
+
+/// An existing destination stays the basis: generator.c:2196 passes
+/// `find_exact_for_existing`, and :1195-1196 drops a level-1 alt file.
+const ALT_DEST_EXISTING: Shape = Shape {
+    seed: 8,
+    lay_out: alt_dest_existing_layout,
+    flags: &["--compare-dest=../alt"],
+    row: Row::Destination,
+};
+
 /// FNAMECMP_BACKUP under `--inplace --backup`: the delta is built against
 /// the backup copy (generator.c:2371-2399), so blocks that moved to a lower
 /// offset still match (sender.c:637-638 leaves `updating_basis_file` off).
@@ -387,6 +462,100 @@ fn fuzzy_row_names_its_basis() {
 #[test]
 fn inplace_row_carries_same_offset_matches() {
     check(&INPLACE);
+}
+
+#[test]
+fn alt_dest_row_names_its_basis() {
+    check_alt_dest(&ALT_DEST);
+}
+
+#[test]
+fn alt_dest_through_a_dir_symlink_row_names_its_basis() {
+    check_alt_dest(&ALT_DEST_DIR_SYMLINK);
+}
+
+/// [`check`] for an alt-dest basis, comparing the batch with 3.5.2's with the
+/// file's iflags word masked.
+///
+/// The word differs today: 3.5.2 itemizes the missing destination against the
+/// alt file's stat (generator.c:2204 `statret = 0`), so it reports size and time
+/// and sets no ITEM_IS_NEW, while oc still itemizes the file as new. That is a
+/// known itemize gap, not part of the basis choice. The fields the basis choice
+/// decides (ITEM_TRANSFER, ITEM_BASIS_TYPE_FOLLOWS, no xname) must match;
+/// everything else in the word is masked so the cell neither blesses oc's
+/// current value nor breaks when the itemize gap is fixed.
+fn check_alt_dest(shape: &Shape) {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let ours = shape.record(&oc_rsync(), Link::Local);
+    ours.assert_row(shape.row, Link::Local);
+    ours.assert_replays("upstream", upstream.binary(), shape);
+    ours.assert_replays("oc", &oc_rsync(), shape);
+    let theirs = shape.record(upstream.binary(), Link::Local);
+    let mut a = fs::read(&ours.batch).expect("read oc batch");
+    let mut b = fs::read(&theirs.batch).expect("read upstream batch");
+    assert_eq!(a.len(), b.len(), "batch length vs 3.5.2");
+    let at = basis_row_iflags_offset(&a);
+    assert_eq!(at, basis_row_iflags_offset(&b), "iflags offset vs 3.5.2");
+    let decided = ITEM_TRANSFER | ITEM_BASIS_TYPE_FOLLOWS | ITEM_XNAME_FOLLOWS;
+    for (who, batch) in [("oc", &a), ("3.5.2", &b)] {
+        let word = u16::from_le_bytes([batch[at], batch[at + 1]]);
+        assert_eq!(
+            word & decided,
+            ITEM_TRANSFER | ITEM_BASIS_TYPE_FOLLOWS,
+            "{who} iflags {word:#06x}"
+        );
+    }
+    a[at..at + 2].fill(0);
+    b[at..at + 2].fill(0);
+    if let Some(next) = a.iter().zip(&b).position(|(x, y)| x != y) {
+        assert!(
+            next + STATS_TRAILER_MAX >= a.len(),
+            "batch differs from 3.5.2's at byte {next} of {}",
+            a.len()
+        );
+    }
+}
+
+/// Offset of the iflags word of a row carrying one basis type byte: the word
+/// and the type byte sit right before the row's sum head (sender.c:477-488).
+fn basis_row_iflags_offset(batch: &[u8]) -> usize {
+    let head: Vec<u8> = SUM_HEAD.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let sum_head = batch
+        .windows(head.len())
+        .position(|w| w == head.as_slice())
+        .expect("row with the sum head");
+    sum_head - 3
+}
+
+#[test]
+fn alt_dest_beside_an_existing_destination_row_names_the_destination() {
+    check(&ALT_DEST_EXISTING);
+}
+
+/// A symlinked basis file is never read: oc's batch equals 3.5.2's, carries no
+/// delta row, and both replay it.
+#[test]
+fn alt_dest_leaf_symlink_is_not_a_basis() {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let shape = &ALT_DEST_LEAF_SYMLINK;
+    let ours = shape.record(&oc_rsync(), Link::Local);
+    let batch = fs::read(&ours.batch).expect("read batch");
+    let head: Vec<u8> = SUM_HEAD.iter().flat_map(|v| v.to_le_bytes()).collect();
+    assert!(
+        !batch.windows(head.len()).any(|w| w == head.as_slice()),
+        "the symlinked alt file must not be a delta basis"
+    );
+    ours.assert_replays("upstream", upstream.binary(), shape);
+    ours.assert_replays("oc", &oc_rsync(), shape);
+    assert_same_rows(
+        &ours,
+        &shape.record(upstream.binary(), Link::Local),
+        &upstream,
+    );
 }
 
 #[test]

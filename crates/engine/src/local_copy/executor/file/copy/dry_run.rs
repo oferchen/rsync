@@ -381,6 +381,7 @@ fn simulate_reference_match(
         checksum,
         metadata_options: &metadata_options,
         preserve_xattrs,
+        delta_basis_wanted: false,
     };
     let Some(decision) = find_reference_action(context, query)? else {
         return Ok(false);
@@ -391,6 +392,8 @@ fn simulate_reference_match(
         ReferenceDecision::Copy(path) => (LocalCopyAction::ReferenceCopied, path),
         // A degraded link-dest copy still itemizes as a local change.
         ReferenceDecision::Link(path) => (LocalCopyAction::ReferenceCopied, path),
+        // Not requested above: a dry run builds no delta.
+        ReferenceDecision::Basis(_) => return Ok(false),
     };
     context.summary_mut().record_regular_file_matched();
     // Itemize against the basis (compare/copy/link) so identical files stay

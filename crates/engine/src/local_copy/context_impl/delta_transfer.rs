@@ -12,6 +12,10 @@ pub(crate) enum DeltaBasis {
     /// backup copy made of it beforehand: `--inplace --backup`, upstream's
     /// `FNAMECMP_BACKUP`.
     BackupOfInPlace,
+    /// The writer builds a new file and the basis is a `--compare-dest`,
+    /// `--copy-dest` or `--link-dest` file: upstream's
+    /// `FNAMECMP_BASIS_DIR_LOW + j`.
+    AltDest,
 }
 
 impl DeltaBasis {
@@ -29,7 +33,22 @@ impl DeltaBasis {
     /// `updating_basis_or_equiv = one_inplace || (inplace && (fnamecmp == fname
     /// || fnamecmp_type == FNAMECMP_BACKUP))`.
     pub(crate) const fn writes_in_place(self) -> bool {
-        !matches!(self, Self::Separate)
+        matches!(self, Self::UpdatedInPlace | Self::BackupOfInPlace)
+    }
+
+    /// Opens the basis for reading.
+    ///
+    /// A basis in the destination tree is opened by its name below the pinned
+    /// destination (receiver.c:1086-1093). An alternate-basis file is an
+    /// operator path: its parents go through the ownership walk and its leaf is
+    /// never followed, the same rules `basis_stat` applied when it was chosen
+    /// (receiver.c:1094-1103, the "operator-supplied basis" arm).
+    pub(crate) fn open(self, path: &Path) -> io::Result<fs::File> {
+        match self {
+            #[cfg(unix)]
+            Self::AltDest => fast_io::operator_open_basis_read(path),
+            _ => fast_io::destination_at::open_read(path),
+        }
     }
 }
 
@@ -287,17 +306,13 @@ impl<'a> CopyContext<'a> {
         // the write cursor.
         let mut last_match = 0u64;
 
-        // upstream: receiver.c:1086-1093 - the basis opens by a name relative
-        // to the entered destination, so it resolves from the pinned root.
-        let mut destination_reader = Some(
-            fast_io::destination_at::open_read(destination).map_err(|error| {
-                LocalCopyError::io(
-                    "read existing destination",
-                    destination.to_path_buf(),
-                    error,
-                )
-            })?,
-        );
+        let mut destination_reader = Some(basis.open(destination).map_err(|error| {
+            LocalCopyError::io(
+                "read existing destination",
+                destination.to_path_buf(),
+                error,
+            )
+        })?);
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
