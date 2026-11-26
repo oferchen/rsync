@@ -777,3 +777,6 @@ mod tests {
         assert_eq!(escape_live_brackets(b"plain/name"), None);
     }
 }
+
+#[cfg(all(test, unix))]
+mod upstream_parity;

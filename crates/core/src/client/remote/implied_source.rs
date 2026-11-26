@@ -138,4 +138,15 @@ mod tests {
         assert!(files_from_entries(b"\0").is_empty());
         assert!(files_from_entries(b"").is_empty());
     }
+
+    #[test]
+    fn a_files_from_entry_longer_than_upstreams_join_bound_stays_one_arg() {
+        // upstream: exclude.c:451-460 and :484-489 join an entry split across
+        // reads and drop it at MAXPATHLEN (4096). oc stages the whole list
+        // before splitting, so an entry is never split and no length bound
+        // applies: a 5000-byte entry is recorded once, whole.
+        let long = vec![b'a'; 5000];
+        let bytes = [long.as_slice(), b"\0b\0\0"].concat();
+        assert_eq!(files_from_entries(&bytes), vec![long, b"b".to_vec()]);
+    }
 }
