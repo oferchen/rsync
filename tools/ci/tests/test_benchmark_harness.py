@@ -398,5 +398,43 @@ class ModuleEntryPoint(unittest.TestCase):
         self.assertIn("not found", proc.stderr)
 
 
+class CopyDestCellTests(unittest.TestCase):
+    """The --copy-dest cell must time copies from the alternate tree.
+
+    If a twin's mtime or bytes differed from its source, the quick check
+    would fail and every file would be sent from the source instead, so the
+    cell would silently measure an ordinary initial sync.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.src = os.path.join(self.tmp, "src")
+
+    def test_every_twin_matches_its_source_in_bytes_and_mtime(self):
+        size = bench.make_alt_dest_fixture(self.src, 5, 64)
+        self.assertEqual(size, 5 * 64)
+        names = sorted(os.listdir(self.src))
+        self.assertEqual(names, sorted(os.listdir(self.src + ".alt")))
+        self.assertEqual(len(names), 5)
+        for name in names:
+            a = os.path.join(self.src, name)
+            b = os.path.join(self.src + ".alt", name)
+            self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes())
+            self.assertEqual(os.stat(a).st_mtime_ns, os.stat(b).st_mtime_ns)
+
+    def test_the_cell_names_the_twin_tree_as_its_copy_dest(self):
+        cell = next(t for t in bench.TESTS if t["id"] == "local_copy_dest_initial")
+        self.assertEqual(cell["fixture"], "copy_dest")
+        self.assertTrue(cell["reset"])
+        bench.make_alt_dest_fixture(self.src, 1, 8)
+        args = cell["args"].format(src=self.src, dst="/d", port=0)
+        alt = next(
+            a.split("=", 1)[1] for a in args.split() if a.startswith("--copy-dest=")
+        )
+        self.assertTrue(os.path.isdir(alt))
+        self.assertNotEqual(os.path.realpath(alt), os.path.realpath(self.src))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
