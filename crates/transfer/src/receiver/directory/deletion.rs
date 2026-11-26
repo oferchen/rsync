@@ -359,15 +359,33 @@ fn order_deletions_upstream(entries: Vec<DeletedEntry>) -> Vec<DeletedEntry> {
 /// siblings are visited highest-first, matching `delete_in_dir()` iterating its
 /// sorted dirlist with `for (j = dirlist->used; j--; )`.
 fn sort_reverse_dirlist(idxs: &mut [usize], nodes: &[DeletedEntry]) {
-    idxs.sort_by(|&a, &b| {
-        f_name_cmp_full(
-            &nodes[a].rel,
-            nodes[a].is_dir,
-            &nodes[b].rel,
-            nodes[b].is_dir,
-        )
-    });
-    idxs.reverse();
+    let mut keyed: Vec<(FileEntry, usize)> = idxs
+        .iter()
+        .map(|&i| (make_entry(&nodes[i].rel, nodes[i].is_dir), i))
+        .collect();
+    keyed.sort_by(|a, b| compare_file_entries(&a.0, &b.0));
+    for (slot, (_, i)) in idxs.iter_mut().zip(keyed.into_iter().rev()) {
+        *slot = i;
+    }
+}
+
+/// Puts `items` in upstream's reverse-dirlist order: ascending `f_name_cmp`,
+/// then reversed, as `delete_in_dir()` walks its sorted dirlist from the end.
+///
+/// Each item's comparison entry is built once, not twice per comparison, so a
+/// large directory costs one allocation per entry rather than per comparison.
+///
+/// upstream: generator.c:364-368.
+fn sort_reverse_dirlist_by<T>(items: &mut Vec<T>, key: impl Fn(&T) -> (&Path, bool)) {
+    let mut keyed: Vec<(FileEntry, T)> = items
+        .drain(..)
+        .map(|item| {
+            let (path, is_dir) = key(&item);
+            (make_entry(path, is_dir), item)
+        })
+        .collect();
+    keyed.sort_by(|a, b| compare_file_entries(&a.0, &b.0));
+    items.extend(keyed.into_iter().rev().map(|(_, item)| item));
 }
 
 /// Appends one entry and its subtree in upstream emission order: a directory's
@@ -1611,10 +1629,7 @@ impl ReceiverContext {
                     // removal can change what a later one finds, as when a
                     // victim is backed up into a --backup-dir that is itself
                     // further down the list.
-                    listed.sort_by(|a, b| {
-                        f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1)
-                    });
-                    listed.reverse();
+                    sort_reverse_dirlist_by(&mut listed, |entry| (Path::new(&entry.0), entry.1));
 
                     for (name, is_dir, is_symlink) in listed {
                         let normalized = normalize_filename_for_compare(&name);
@@ -2209,8 +2224,7 @@ impl ReceiverContext {
             // Sort ascending with the full comparator (files before dirs at a
             // level) then reverse so the prefix deleted when the cap trips
             // matches upstream's traversal.
-            candidates.sort_by(|a, b| f_name_cmp_full(&a.rel, a.is_dir, &b.rel, b.is_dir));
-            candidates.reverse();
+            sort_reverse_dirlist_by(&mut candidates, |c| (c.rel.as_path(), c.is_dir));
 
             let mut remembered = Vec::new();
             for candidate in candidates {
@@ -2538,8 +2552,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 return Ok(false);
             }
         };
-        children.sort_by(|a, b| f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1));
-        children.reverse();
+        sort_reverse_dirlist_by(&mut children, |child| (Path::new(&child.0), child.1));
 
         let guard = filter.enter(path);
         let mut all_removed = true;
