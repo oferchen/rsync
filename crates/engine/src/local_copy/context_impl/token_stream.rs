@@ -48,6 +48,24 @@ thread_local! {
     /// seam the one-stream tests read.
     static TOKEN_STREAMS_BUILT: std::cell::RefCell<Vec<BuiltTokenStream>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Worker count the last zstd stream was built with.
+    static ZSTD_WORKERS_PASSED: std::cell::Cell<Option<std::num::NonZeroU8>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The worker count handed to the zstd encoder, recorded for the tests.
+#[cfg(test)]
+fn zstd_workers_passed(workers: Option<std::num::NonZeroU8>) -> Option<std::num::NonZeroU8> {
+    ZSTD_WORKERS_PASSED.with(|passed| passed.set(workers));
+    workers
+}
+
+#[cfg(not(test))]
+#[cfg(feature = "zstd")]
+const fn zstd_workers_passed(
+    workers: Option<std::num::NonZeroU8>,
+) -> Option<std::num::NonZeroU8> {
+    workers
 }
 
 /// What a test sees of one stream the engine built.
@@ -68,25 +86,16 @@ impl TokenStream {
         if !options.compress_enabled() {
             return None;
         }
-        #[cfg(test)]
-        let mut workers = None;
         let encoder = match algorithm {
             CompressionAlgorithm::Zlib => {
                 protocol::wire::CompressedTokenEncoder::new(options.compression_level(), protocol)
             }
             #[cfg(feature = "zstd")]
-            CompressionAlgorithm::Zstd => {
-                let threads = options.compression_threads();
-                #[cfg(test)]
-                {
-                    workers = threads;
-                }
-                protocol::wire::CompressedTokenEncoder::new_zstd(
-                    zstd_level(options.compression_level()),
-                    threads,
-                )
-                .ok()?
-            }
+            CompressionAlgorithm::Zstd => protocol::wire::CompressedTokenEncoder::new_zstd(
+                zstd_level(options.compression_level()),
+                zstd_workers_passed(options.compression_threads()),
+            )
+            .ok()?,
             #[cfg(feature = "lz4")]
             CompressionAlgorithm::Lz4 => protocol::wire::CompressedTokenEncoder::new_lz4(),
             // A codec this build lacks (feature unification through another
@@ -95,7 +104,11 @@ impl TokenStream {
             _ => return None,
         };
         #[cfg(test)]
-        TOKEN_STREAMS_BUILT.with(|built| built.borrow_mut().push((algorithm, workers)));
+        TOKEN_STREAMS_BUILT.with(|built| {
+            built
+                .borrow_mut()
+                .push((algorithm, ZSTD_WORKERS_PASSED.with(std::cell::Cell::take)));
+        });
         Some(Self {
             encoder,
             file_bytes: 0,
