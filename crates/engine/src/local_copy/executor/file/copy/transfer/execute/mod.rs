@@ -507,6 +507,20 @@ pub(in crate::local_copy) fn execute_transfer_once(
     } else {
         delta_signature
     };
+    // A batch reader resolves the basis from the recorded type, so a delta
+    // built against the partial-dir leaf or a fuzzy match must say so, or the
+    // replay applies its blocks to the destination.
+    // upstream: generator.c:2424-2429, sender.c:477-488.
+    if delta_signature.is_some() {
+        if partial_dir_basis.is_some() {
+            context.record_batch_basis(protocol::FnameCmpType::PartialDir, &[])?;
+        } else if existing_metadata.is_none_or(|existing| !existing.is_file())
+            && let Some((path, _)) = fuzzy_basis.as_ref()
+        {
+            let xname = path.file_name().unwrap_or_default().as_encoded_bytes();
+            context.record_batch_basis(protocol::FnameCmpType::Fuzzy(0), xname)?;
+        }
+    }
 
     let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
         // The override is an ALT-BASE candidate (`--copy-dest` / `--link-dest`
