@@ -5,15 +5,19 @@
 //! (generator.c:2424-2429, sender.c:477-488), and carries a token for every
 //! block the sender matched (match.c:128-140). A reader opens the named basis
 //! and copies those blocks from it, so a row that omits either replays the
-//! delta against the wrong file. Each cell records with oc, then replays the
-//! batch with rsync 3.5.2 and with oc; every child runs under the harness
-//! timeout, so a replay that hangs fails the cell instead of the run.
+//! delta against the wrong file. Each cell records with oc - as a local copy,
+//! or as the client of a remote-shell or daemon push or pull - checks the
+//! recorded row, then replays the batch with rsync 3.5.2 and with oc. Every
+//! child runs under the harness timeout, so a replay that hangs fails the cell
+//! instead of the run.
 #![cfg(unix)]
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
+use test_support::oc_daemon::OcDaemon;
 use test_support::{OcRsyncCliRunner, UpstreamRsync, UpstreamVersion, require_upstream_rsync};
 
 const SRC_MTIME: i64 = 1_600_000_000;
@@ -23,6 +27,15 @@ const BASIS_LEN: usize = 200_000;
 /// main.c:381-386 ends a batch with the run's stats; oc's `total_read`
 /// differs there on every local batch, so byte comparisons stop before it.
 const STATS_TRAILER_MAX: usize = 16;
+
+/// rsync.h ITEM_* bits a transfer row carries.
+const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
+const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
+const ITEM_TRANSFER: u16 = 1 << 15;
+
+/// The sum head every cell's single row carries: a 200,000-byte basis in
+/// 700-byte blocks (286 of them, the last 500 bytes) with 2-byte strong sums.
+const SUM_HEAD: [i32; 4] = [286, 700, 2, 500];
 
 fn oc_rsync() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -47,12 +60,34 @@ fn stamp(path: &Path, secs: i64) {
         .expect("stamp");
 }
 
-/// One basis shape: how the destination looks before the transfer and the
-/// options that make the generator choose that basis.
+/// The basis a shape's row must name.
+#[derive(Clone, Copy)]
+enum Row {
+    /// FNAMECMP_FNAME: no basis type follows the iflags word.
+    Destination,
+    /// A non-fuzzy `fnamecmp_type` byte.
+    Basis(u8),
+    /// FNAMECMP_FUZZY with the fuzzy file's basename as the xname.
+    Fuzzy(&'static [u8]),
+}
+
+/// One basis shape: how the destination looks before the transfer, the
+/// options that make the generator choose that basis, and the row it yields.
 struct Shape {
     seed: u64,
     lay_out: fn(&Path, &[u8]),
     flags: &'static [&'static str],
+    row: Row,
+}
+
+/// Where the recording client's peer runs.
+#[derive(Clone, Copy, Debug)]
+enum Link {
+    Local,
+    RemoteShellPush,
+    RemoteShellPull,
+    DaemonPush,
+    DaemonPull,
 }
 
 struct Recording {
@@ -61,9 +96,19 @@ struct Recording {
     batch: PathBuf,
 }
 
+/// A remote shell that runs the server command on this host.
+fn write_rsh(root: &Path) -> PathBuf {
+    let rsh = root.join("rsh");
+    fs::write(&rsh, "#!/bin/sh\nshift\nexec sh -c \"$*\"\n").expect("write rsh");
+    fs::set_permissions(&rsh, fs::Permissions::from_mode(0o755)).expect("chmod rsh");
+    rsh
+}
+
 impl Shape {
-    /// Records the shape with `recorder` into a fresh tree.
-    fn record(&self, recorder: &Path) -> Recording {
+    /// Records the shape with `recorder` over `link` into a fresh tree. The
+    /// source is `<root>/src` and the destination `<root>/recorded`, whichever
+    /// side of the link each is on.
+    fn record(&self, recorder: &Path, link: Link) -> Recording {
         let root = tempfile::TempDir::new().expect("temp dir");
         let src = noise(self.seed, SRC_LEN);
         let src_dir = root.path().join("src");
@@ -77,19 +122,57 @@ impl Shape {
             src,
         };
         let dest = recording.dest("recorded", self);
-        let out = OcRsyncCliRunner::new()
+        let root = recording.root.path();
+        let mut runner = OcRsyncCliRunner::new()
             .binary(recorder)
+            .env("OC_RSYNC_FALLBACK", "0")
             .args(["-a", "--no-whole-file", "--checksum-seed=1"])
             .args(self.flags)
-            .arg(format!("--write-batch={}", recording.batch.display()))
-            .arg(format!("{}/", src_dir.display()))
-            .arg(format!("{}/", dest.display()))
-            .run()
-            .expect("recorder completes");
+            .arg(format!("--write-batch={}", recording.batch.display()));
+        let mut _daemon = None;
+        let (from, to) = match link {
+            Link::Local => (
+                format!("{}/", src_dir.display()),
+                format!("{}/", dest.display()),
+            ),
+            Link::RemoteShellPush | Link::RemoteShellPull => {
+                runner = runner
+                    .arg(format!("--rsh={}", write_rsh(root).display()))
+                    .arg(format!("--rsync-path={}", recorder.display()));
+                let src = format!("{}/", src_dir.display());
+                let dest = format!("{}/", dest.display());
+                match link {
+                    Link::RemoteShellPush => (src, format!("localhost:{dest}")),
+                    _ => (format!("localhost:{src}"), dest),
+                }
+            }
+            Link::DaemonPush | Link::DaemonPull => {
+                let config = root.join("rsyncd.conf");
+                fs::write(
+                    &config,
+                    format!(
+                        "[m]\n    path = {}\n    use chroot = false\n    read only = false\n",
+                        root.display()
+                    ),
+                )
+                .expect("write rsyncd.conf");
+                let daemon = OcDaemon::builder(&config).spawn().expect("spawn daemon");
+                let module = format!("rsync://127.0.0.1:{}/m", daemon.port());
+                _daemon = Some(daemon);
+                match link {
+                    Link::DaemonPush => (
+                        format!("{}/", src_dir.display()),
+                        format!("{module}/recorded/"),
+                    ),
+                    _ => (format!("{module}/src/"), format!("{}/", dest.display())),
+                }
+            }
+        };
+        let out = runner.arg(from).arg(to).run().expect("recorder completes");
         assert_eq!(
             out.status,
             Some(0),
-            "record failed: {}",
+            "record over {link:?} failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
         recording
@@ -128,18 +211,79 @@ impl Recording {
             "{who} replay did not rebuild f"
         );
     }
+
+    /// Checks the iflags word, the basis type byte and the xname that precede
+    /// the row's sum head (sender.c:477-488 writes them in that order).
+    fn assert_row(&self, row: Row, link: Link) {
+        let batch = fs::read(&self.batch).expect("read batch");
+        let head: Vec<u8> = SUM_HEAD.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let at = batch
+            .windows(head.len())
+            .position(|w| w == head.as_slice())
+            .unwrap_or_else(|| panic!("{link:?}: no row with sum head {SUM_HEAD:?}"));
+        let attrs = &batch[..at];
+        let iflags_at = |end: usize| u16::from_le_bytes([attrs[end - 2], attrs[end - 1]]);
+        let iflags = match row {
+            Row::Destination => iflags_at(attrs.len()),
+            Row::Basis(kind) => {
+                assert_eq!(attrs[attrs.len() - 1], kind, "{link:?}: basis type byte");
+                iflags_at(attrs.len() - 1)
+            }
+            Row::Fuzzy(name) => {
+                let start = attrs.len() - name.len();
+                assert_eq!(&attrs[start..], name, "{link:?}: xname");
+                assert_eq!(
+                    usize::from(attrs[start - 1]),
+                    name.len(),
+                    "{link:?}: xname length"
+                );
+                assert_eq!(attrs[start - 2], 0x83, "{link:?}: basis type byte");
+                iflags_at(start - 2)
+            }
+        };
+        let expected = match row {
+            Row::Destination => 0,
+            Row::Basis(_) => ITEM_BASIS_TYPE_FOLLOWS,
+            Row::Fuzzy(_) => ITEM_BASIS_TYPE_FOLLOWS | ITEM_XNAME_FOLLOWS,
+        };
+        assert_eq!(
+            iflags & (ITEM_TRANSFER | ITEM_BASIS_TYPE_FOLLOWS | ITEM_XNAME_FOLLOWS),
+            ITEM_TRANSFER | expected,
+            "{link:?}: iflags {iflags:#06x}"
+        );
+    }
 }
 
-/// Records with oc, replays with 3.5.2 and with oc, and checks the batch
-/// matches the one 3.5.2 records for the same tree up to the stats trailer.
+/// Records a local copy with oc, checks its row, replays it with 3.5.2 and
+/// with oc, and checks the batch matches the one 3.5.2 records for the same
+/// tree up to the stats trailer.
 fn check(shape: &Shape) {
     let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
-    let ours = shape.record(&oc_rsync());
+    let ours = shape.record(&oc_rsync(), Link::Local);
+    ours.assert_row(shape.row, Link::Local);
     ours.assert_replays("upstream", upstream.binary(), shape);
     ours.assert_replays("oc", &oc_rsync(), shape);
-    assert_same_rows(&ours, &shape.record(upstream.binary()), &upstream);
+    assert_same_rows(
+        &ours,
+        &shape.record(upstream.binary(), Link::Local),
+        &upstream,
+    );
+}
+
+/// Records over a remote shell or a daemon with oc as both ends, checks the
+/// row, and replays the batch with 3.5.2 and with oc. The network sender's
+/// literal chunking differs from 3.5.2's (#8816), so the batch bytes are not
+/// compared here.
+fn check_over(shape: &Shape, link: Link) {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let ours = shape.record(&oc_rsync(), link);
+    ours.assert_row(shape.row, link);
+    ours.assert_replays("upstream", upstream.binary(), shape);
+    ours.assert_replays("oc", &oc_rsync(), shape);
 }
 
 fn assert_same_rows(ours: &Recording, theirs: &Recording, upstream: &UpstreamRsync) {
@@ -161,48 +305,120 @@ fn basis_prefix(src: &[u8]) -> &[u8] {
     &src[..BASIS_LEN]
 }
 
+fn partial_dir_layout(dest: &Path, src: &[u8]) {
+    fs::create_dir_all(dest.join(".p")).expect("create .p");
+    fs::write(dest.join(".p/f"), basis_prefix(src)).expect("write partial");
+    stamp(&dest.join(".p/f"), OLD_MTIME);
+}
+
+fn fuzzy_layout(dest: &Path, src: &[u8]) {
+    fs::write(dest.join("f.old"), basis_prefix(src)).expect("write fuzzy basis");
+    stamp(&dest.join("f.old"), OLD_MTIME);
+}
+
+fn inplace_layout(dest: &Path, src: &[u8]) {
+    fs::write(dest.join("f"), basis_prefix(src)).expect("write dest");
+    stamp(&dest.join("f"), OLD_MTIME);
+}
+
 /// FNAMECMP_PARTIAL_DIR: the delta resumes from `.p/f`; the row must name
 /// that basis and carry the matches the in-place rewrite of `.p/f` skips.
-#[test]
-fn partial_dir_row_names_its_basis() {
-    fn lay_out(dest: &Path, src: &[u8]) {
-        fs::create_dir_all(dest.join(".p")).expect("create .p");
-        fs::write(dest.join(".p/f"), basis_prefix(src)).expect("write partial");
-        stamp(&dest.join(".p/f"), OLD_MTIME);
-    }
-    check(&Shape {
-        seed: 1,
-        lay_out,
-        flags: &["--partial-dir=.p"],
-    });
-}
+const PARTIAL_DIR: Shape = Shape {
+    seed: 1,
+    lay_out: partial_dir_layout,
+    flags: &["--partial-dir=.p"],
+    row: Row::Basis(0x81),
+};
 
 /// FNAMECMP_FUZZY: no `f` exists, the delta is built against `f.old`; the
 /// row must name the fuzzy type and carry `f.old` as its xname.
-#[test]
-fn fuzzy_row_names_its_basis() {
-    fn lay_out(dest: &Path, src: &[u8]) {
-        fs::write(dest.join("f.old"), basis_prefix(src)).expect("write fuzzy basis");
-        stamp(&dest.join("f.old"), OLD_MTIME);
-    }
-    check(&Shape {
-        seed: 2,
-        lay_out,
-        flags: &["--fuzzy"],
-    });
-}
+const FUZZY: Shape = Shape {
+    seed: 2,
+    lay_out: fuzzy_layout,
+    flags: &["--fuzzy"],
+    row: Row::Fuzzy(b"f.old"),
+};
 
 /// FNAMECMP_FNAME under `--inplace`: blocks already at their own offset are
 /// skipped by the writer but still sent, so the row must carry them.
+const INPLACE: Shape = Shape {
+    seed: 3,
+    lay_out: inplace_layout,
+    flags: &["--inplace"],
+    row: Row::Destination,
+};
+
+#[test]
+fn partial_dir_row_names_its_basis() {
+    check(&PARTIAL_DIR);
+}
+
+#[test]
+fn fuzzy_row_names_its_basis() {
+    check(&FUZZY);
+}
+
 #[test]
 fn inplace_row_carries_same_offset_matches() {
-    fn lay_out(dest: &Path, src: &[u8]) {
-        fs::write(dest.join("f"), basis_prefix(src)).expect("write dest");
-        stamp(&dest.join("f"), OLD_MTIME);
-    }
-    check(&Shape {
-        seed: 3,
-        lay_out,
-        flags: &["--inplace"],
-    });
+    check(&INPLACE);
+}
+
+#[test]
+fn partial_dir_row_over_a_remote_shell_push() {
+    check_over(&PARTIAL_DIR, Link::RemoteShellPush);
+}
+
+#[test]
+fn partial_dir_row_over_a_remote_shell_pull() {
+    check_over(&PARTIAL_DIR, Link::RemoteShellPull);
+}
+
+#[test]
+fn partial_dir_row_over_a_daemon_push() {
+    check_over(&PARTIAL_DIR, Link::DaemonPush);
+}
+
+#[test]
+fn partial_dir_row_over_a_daemon_pull() {
+    check_over(&PARTIAL_DIR, Link::DaemonPull);
+}
+
+#[test]
+fn fuzzy_row_over_a_remote_shell_push() {
+    check_over(&FUZZY, Link::RemoteShellPush);
+}
+
+#[test]
+fn fuzzy_row_over_a_remote_shell_pull() {
+    check_over(&FUZZY, Link::RemoteShellPull);
+}
+
+#[test]
+fn fuzzy_row_over_a_daemon_push() {
+    check_over(&FUZZY, Link::DaemonPush);
+}
+
+#[test]
+fn fuzzy_row_over_a_daemon_pull() {
+    check_over(&FUZZY, Link::DaemonPull);
+}
+
+#[test]
+fn inplace_row_over_a_remote_shell_push() {
+    check_over(&INPLACE, Link::RemoteShellPush);
+}
+
+#[test]
+fn inplace_row_over_a_remote_shell_pull() {
+    check_over(&INPLACE, Link::RemoteShellPull);
+}
+
+#[test]
+fn inplace_row_over_a_daemon_push() {
+    check_over(&INPLACE, Link::DaemonPush);
+}
+
+#[test]
+fn inplace_row_over_a_daemon_pull() {
+    check_over(&INPLACE, Link::DaemonPull);
 }
