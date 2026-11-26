@@ -264,7 +264,14 @@ impl CompiledRule {
         // on single-path/deletion queries; a negated WILD3 rule has no subtree
         // to prune (its action fires on NON-match), so consult it unconditionally
         // to mirror upstream's full match.
-        let check_descendants = check_descendants || self.wild3_suffix;
+        //
+        // upstream: exclude.c:1037-1038 - a rule written with a trailing slash
+        // (`FILTRULE_DIRECTORY`) returns no match for a non-directory before
+        // any wildmatch, so the `/***` reach of `dir/***/` never covers a
+        // file. Only the caller's own pruning emulation may still consult the
+        // descendant set for one.
+        let wild3_reach = self.wild3_suffix && (is_dir || !self.trailing_slash);
+        let check_descendants = check_descendants || wild3_reach;
         for matcher in &self.direct_matchers {
             if matcher.is_match(path) && (!self.directory_only || is_dir) {
                 debug_log!(Filter, 2, "direct pattern matched: {:?}", path);

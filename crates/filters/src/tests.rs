@@ -36,6 +36,33 @@ fn include_before_exclude_reinstates_path() {
     assert!(set.allows_deletion(Path::new("foo/bar.txt"), false));
 }
 
+/// A rule written with a trailing slash never matches a file, even when its
+/// `/***` suffix reaches everything: `- **/***/` excludes every directory and
+/// no file. Found by the differential filter fuzzer, which saw the top-level
+/// file `I` excluded where rsync 3.5.2 transfers it.
+///
+/// upstream: exclude.c:1037-1038 rule_matches() returns no match for a
+/// non-directory on a `FILTRULE_DIRECTORY` rule before any wildmatch.
+#[test]
+fn trailing_slash_wild3_rule_never_matches_a_file() {
+    let every_dir = FilterSet::from_rules([FilterRule::exclude("**/***/")]).expect("compiled");
+    assert!(every_dir.allows(Path::new("I"), false));
+    assert!(every_dir.allows_during_traversal(Path::new("I"), false));
+    assert!(every_dir.allows_during_traversal(Path::new("d/f"), false));
+    assert!(every_dir.allows_deletion_during_traversal(Path::new("X"), false));
+    assert!(!every_dir.allows_during_traversal(Path::new("d"), true));
+    assert!(!every_dir.allows_during_traversal(Path::new("d/sub"), true));
+
+    let one_dir = FilterSet::from_rules([FilterRule::exclude("d/***/")]).expect("compiled");
+    assert!(one_dir.allows_during_traversal(Path::new("d/f"), false));
+    assert!(!one_dir.allows_during_traversal(Path::new("d"), true));
+
+    // Without the trailing slash the same suffix covers files too.
+    let contents = FilterSet::from_rules([FilterRule::exclude("d/***")]).expect("compiled");
+    assert!(!contents.allows_during_traversal(Path::new("d/f"), false));
+    assert!(!contents.allows_during_traversal(Path::new("d"), true));
+}
+
 /// Regression (filter differential fuzzer, `filter_rules_vs_upstream`): a
 /// directory-only exclude must not prune the descendants of a directory that an
 /// earlier include kept. `+ m` keeps every directory named `m` under
