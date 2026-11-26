@@ -11,7 +11,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use std::sync::Arc;
 
-use super::ActiveCompressor;
 use super::WireTally;
 use super::buffer_pool::{BufferPool, global_buffer_pool};
 use super::deferred_sync::{DeferredSync, SyncStrategy};
@@ -58,7 +57,6 @@ use ::metadata::ModifyWindow;
 use bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
-use compress::strategy::adaptive_level::AdaptiveLevelController;
 use compress::zlib::CompressionLevel;
 use filters::FilterRule;
 use logging::{info_log, info_log_bytes};
@@ -528,13 +526,9 @@ pub(crate) struct CopyContext<'a> {
     batch_ndx_codec: Option<protocol::codec::NdxCodecEnum>,
     /// Compressed-token encoder for the batch delta stream.
     ///
-    /// `Some` exactly when `--write-batch` is combined with an active `-z`,
-    /// which is the same condition that sets stream-flag bit 8
-    /// (upstream: `batch.c:68 &do_compression`). The batch file is a tee of
-    /// the wire stream, so its tokens must carry the framing
-    /// `token.c:send_token()` would have produced. `None` keeps the plain
-    /// `token.c:simple_send_token()` framing byte-for-byte.
-    batch_token_encoder: Option<protocol::wire::CompressedTokenEncoder>,
+    /// The run's one `-z` token stream; `None` without `-z`, which keeps the
+    /// plain `token.c:simple_send_token()` framing byte-for-byte.
+    token_stream: Option<TokenStream>,
     /// Wire model for the `sent`/`received` totals, built only when the run
     /// prints them.
     wire_tally: Option<WireTally>,
@@ -544,9 +538,6 @@ pub(crate) struct CopyContext<'a> {
     /// allocation for the intermediate `(OsString, PathBuf)` collection per
     /// directory during recursive traversal.
     readdir_buf: Vec<(OsString, PathBuf)>,
-    /// Adaptive compression level controller that adjusts compression level
-    /// between files based on observed compression ratios.
-    adaptive_level: Option<AdaptiveLevelController>,
 }
 
 /// Path and type context for metadata finalization.
@@ -692,6 +683,12 @@ impl FileCopyOutcome {
     /// never for seeked sparse holes or in-place matched blocks.
     pub(crate) const fn with_touched_blocks(mut self, touched_blocks: u64) -> Self {
         self.touched_blocks = touched_blocks;
+        self
+    }
+
+    /// Sets the file's compressed size, known once its token stream is ended.
+    pub(crate) const fn with_compressed_bytes(mut self, compressed_bytes: Option<u64>) -> Self {
+        self.compressed_bytes = compressed_bytes;
         self
     }
 
@@ -930,6 +927,7 @@ pub(crate) enum BackupStrategy {
 
 include!("context_impl/state.rs");
 include!("context_impl/batch_setup.rs");
+include!("context_impl/token_stream.rs");
 include!("context_impl/link_dest.rs");
 include!("context_impl/backup.rs");
 include!("context_impl/source_attrs.rs");
@@ -1519,6 +1517,103 @@ mod tests {
         md4.update(&content);
         let (_, entry) = context.batch_delta_entries.last().expect("file entry");
         assert_eq!(entry[entry.len() - 16..], md4.finalize());
+    }
+
+    /// Runs a local copy of a three-file tree and returns how many `-z` token
+    /// streams it built.
+    fn token_streams_built(compress: bool, batch: bool, wire_totals: bool) -> usize {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("src");
+        std::fs::create_dir_all(&source).expect("source dir");
+        let noise: Vec<u8> = (0..100_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        std::fs::write(source.join("a"), &noise).expect("write a");
+        std::fs::write(source.join("b"), "line\n".repeat(20_000)).expect("write b");
+        std::fs::write(source.join("c"), b"short").expect("write c");
+
+        let mut options = LocalCopyOptions::new().recursive(true).compress(compress);
+        if batch {
+            let config = crate::batch::BatchConfig::new(
+                crate::batch::BatchMode::Write,
+                dir.path().join("bf").to_string_lossy().into_owned(),
+                32,
+            );
+            let mut writer = crate::batch::BatchWriter::new(config).expect("batch writer");
+            writer
+                .write_header(crate::batch::BatchFlags {
+                    recurse: true,
+                    do_compression: compress,
+                    ..Default::default()
+                })
+                .expect("batch header");
+            options =
+                options.batch_writer(Some(std::sync::Arc::new(std::sync::Mutex::new(writer))));
+        }
+        if wire_totals {
+            options = options.wire_totals(Some(crate::local_copy::WireTotals::new(
+                protocol::ProtocolVersion::NEWEST,
+                protocol::CompatibilityFlags::SAFE_FILE_LIST,
+            )));
+        }
+        let mut src = source.into_os_string();
+        src.push("/");
+        let operands = vec![src, dir.path().join("dst").into_os_string()];
+        let before = TokenStream::built_on_this_thread();
+        crate::local_copy::LocalCopyPlan::from_operands(&operands)
+            .expect("plan")
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+        TokenStream::built_on_this_thread() - before
+    }
+
+    /// One `-z` token stream serves every consumer of the compressed size -
+    /// the batch file, the `--stats` wire total, the bandwidth limiter and
+    /// the per-file count - so the literal data is compressed once per run
+    /// whichever of them are active, and a run without `-z` builds none.
+    /// upstream: token.c:370 `send_deflated_token()` is the sender's only
+    /// encoder; the batch is a tee of its output and `total_written` counts
+    /// the same bytes.
+    #[test]
+    fn a_run_compresses_through_one_token_stream() {
+        for (batch, wire_totals) in [(true, false), (true, true), (false, true), (false, false)] {
+            assert_eq!(
+                token_streams_built(true, batch, wire_totals),
+                1,
+                "batch={batch} wire_totals={wire_totals}"
+            );
+        }
+        assert_eq!(token_streams_built(false, true, true), 0);
+    }
+
+    /// The local copy builds compressed-token encoders in one place, so a new
+    /// consumer of the compressed size has to read the run's one stream rather
+    /// than compress the data again.
+    #[test]
+    fn only_the_token_stream_builds_a_token_encoder() {
+        fn visit(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("read source dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    visit(&path, found);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("read source");
+                    for ctor in ["::new(", "::new_zstd(", "::new_lz4("] {
+                        if text.contains(&format!("CompressedTokenEncoder{ctor}")) {
+                            found.push(format!("{} {ctor}", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/local_copy");
+        let mut found = Vec::new();
+        visit(&root, &mut found);
+        found.retain(|site| !site.contains("context_impl/token_stream.rs"));
+        assert!(
+            found.is_empty(),
+            "token encoders built outside TokenStream: {found:?}"
+        );
     }
 
     fn batch_file_bytes(context: &CopyContext<'_>) -> Vec<u8> {

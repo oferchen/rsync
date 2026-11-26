@@ -18,49 +18,6 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    fn start_compressor(
-        &self,
-        compress: bool,
-        source: &Path,
-    ) -> Result<Option<ActiveCompressor>, LocalCopyError> {
-        if !compress {
-            return Ok(None);
-        }
-
-        let level = if let Some(ctrl) = &self.adaptive_level {
-            // Convert the adaptive strategy's recommended i32 level to a
-            // CompressionLevel. The controller clamps to codec-valid bounds.
-            let recommended = ctrl.current_level();
-            if recommended == 0 {
-                CompressionLevel::None
-            } else if let Some(nz) = std::num::NonZeroU8::new(recommended as u8) {
-                CompressionLevel::Precise(nz)
-            } else {
-                self.compression_level()
-            }
-        } else {
-            self.compression_level()
-        };
-
-        ActiveCompressor::new_with_workers(
-            self.compression_algorithm(),
-            level,
-            self.compression_threads(),
-        )
-        .map(Some)
-        .map_err(|error| LocalCopyError::io("initialise compression", source, error))
-    }
-
-    /// Feeds compression ratio feedback to the adaptive level controller
-    /// after a file finishes compressing.
-    fn record_adaptive_compression(&mut self, input_bytes: u64, compressed_bytes: u64) {
-        if let Some(ctrl) = &mut self.adaptive_level {
-            ctrl.record_input_bytes(input_bytes);
-            ctrl.record_output_bytes(compressed_bytes);
-            ctrl.record_file_complete();
-        }
-    }
-
     fn register_limiter_bytes(&mut self, bytes: u64) {
         if bytes == 0 {
             return;
@@ -694,7 +651,6 @@ impl<'a> CopyContext<'a> {
                 writer,
                 buffer,
                 sparse,
-                compress,
                 source,
                 destination,
                 relative,
@@ -784,7 +740,6 @@ impl<'a> CopyContext<'a> {
                 reader,
                 writer,
                 buffer,
-                compress,
                 source,
                 destination,
                 relative,
@@ -799,8 +754,6 @@ impl<'a> CopyContext<'a> {
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
         let mut batch_run = Vec::new();
-        let mut compressor = self.start_compressor(compress, source)?;
-        let mut compressed_progress: u64 = 0;
         // 1MB interval amortizes clock_gettime syscalls across the copy loop.
         const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
         let mut bytes_since_timeout_check: u64 = 0;
@@ -847,24 +800,9 @@ impl<'a> CopyContext<'a> {
             })?;
 
             self.register_progress();
-            self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
-
-            let mut compressed_delta = None;
-            if let Some(encoder) = compressor.as_mut() {
-                encoder
-                    .write(&buffer[..read])
-                    .map_err(|error| LocalCopyError::io("compress file", source, error))?;
-                let total = encoder.bytes_written();
-                let delta = total.saturating_sub(compressed_progress);
-                compressed_progress = total;
-                compressed_delta = Some(delta);
-            }
-
-            if let Some(delta) = compressed_delta {
-                self.register_limiter_bytes(delta);
-            } else {
-                self.register_limiter_bytes(read as u64);
-            }
+            let wire_bytes =
+                self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
+            self.register_limiter_bytes(wire_bytes);
 
             total_bytes = total_bytes.saturating_add(read as u64);
             bytes_since_timeout_check = bytes_since_timeout_check.saturating_add(read as u64);
@@ -878,21 +816,15 @@ impl<'a> CopyContext<'a> {
 
         // `read == 0` breaks out of the loop above; arriving here with fewer
         // bytes than the transfer was sized for means the source shrank.
-        self.flush_whole_file_run(&mut batch_run, source)?;
+        let tail = self.flush_whole_file_run(&mut batch_run, source)?;
+        self.register_limiter_bytes(tail);
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
-        let outcome = if let Some(encoder) = compressor {
-            let compressed_total = encoder
-                .finish()
-                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
-            self.register_progress();
-            let delta = compressed_total.saturating_sub(compressed_progress);
-            self.register_limiter_bytes(delta);
-            self.record_adaptive_compression(literal_bytes, compressed_total);
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, Some(compressed_total))
-        } else {
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None)
-        };
+        let outcome = FileCopyOutcome::new(
+            literal_bytes,
+            MATCHED_NONE,
+            None,
+        );
 
         // The dense loop writes one contiguous run starting at the append
         // offset. upstream: fileio.c:251-252 credits each write_file() call.
@@ -917,7 +849,6 @@ impl<'a> CopyContext<'a> {
         reader: &mut fs::File,
         writer: &mut fs::File,
         buffer: &mut [u8],
-        compress: bool,
         source: &Path,
         destination: &Path,
         relative: &Path,
@@ -938,8 +869,6 @@ impl<'a> CopyContext<'a> {
         let mut sparse_state = SparseWriteState::default();
         sparse_state.set_preallocated_len(preallocated_len);
         sparse_state.set_start_offset(initial_bytes);
-        let mut compressor = self.start_compressor(compress, source)?;
-        let mut compressed_progress: u64 = 0;
         const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
         let mut bytes_since_timeout_check: u64 = 0;
 
@@ -978,24 +907,9 @@ impl<'a> CopyContext<'a> {
             write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?;
 
             self.register_progress();
-            self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
-
-            let mut compressed_delta = None;
-            if let Some(encoder) = compressor.as_mut() {
-                encoder
-                    .write(&buffer[..read])
-                    .map_err(|error| LocalCopyError::io("compress file", source, error))?;
-                let total = encoder.bytes_written();
-                let delta = total.saturating_sub(compressed_progress);
-                compressed_progress = total;
-                compressed_delta = Some(delta);
-            }
-
-            if let Some(delta) = compressed_delta {
-                self.register_limiter_bytes(delta);
-            } else {
-                self.register_limiter_bytes(read as u64);
-            }
+            let wire_bytes =
+                self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
+            self.register_limiter_bytes(wire_bytes);
 
             total_bytes = total_bytes.saturating_add(read as u64);
             bytes_since_timeout_check = bytes_since_timeout_check.saturating_add(read as u64);
@@ -1018,21 +932,15 @@ impl<'a> CopyContext<'a> {
 
         // `read == 0` breaks out of the loop above; arriving here with fewer
         // bytes than the transfer was sized for means the source shrank.
-        self.flush_whole_file_run(&mut batch_run, source)?;
+        let tail = self.flush_whole_file_run(&mut batch_run, source)?;
+        self.register_limiter_bytes(tail);
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
-        let outcome = if let Some(encoder) = compressor {
-            let compressed_total = encoder
-                .finish()
-                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
-            self.register_progress();
-            let delta = compressed_total.saturating_sub(compressed_progress);
-            self.register_limiter_bytes(delta);
-            self.record_adaptive_compression(literal_bytes, compressed_total);
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, Some(compressed_total))
-        } else {
-            FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None)
-        };
+        let outcome = FileCopyOutcome::new(
+            literal_bytes,
+            MATCHED_NONE,
+            None,
+        );
 
         Ok(outcome.with_touched_blocks(sparse_state.touched_blocks()))
     }

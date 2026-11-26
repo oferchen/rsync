@@ -51,7 +51,6 @@
 
 pub mod buffer_pool;
 pub mod clonefile;
-mod compressor;
 mod context;
 #[cfg(test)]
 mod debug_del;
@@ -112,7 +111,6 @@ pub use skip_compress::{SkipCompressList, SkipCompressParseError};
 pub(crate) use wire_tally::WireTally;
 pub use wire_tally::WireTotals;
 
-pub(crate) use compressor::ActiveCompressor;
 pub(crate) use context::DataMover;
 pub(crate) use context::{
     CopyContext, CopyOutcome, CreatedEntryKind, DeferredUpdate, DeltaBasis, FinalizeMetadataParams,

@@ -234,7 +234,6 @@ impl<'a> CopyContext<'a> {
         writer: &mut fs::File,
         buffer: &mut [u8],
         sparse: bool,
-        compress: bool,
         source: &Path,
         destination: &Path,
         relative: &Path,
@@ -313,8 +312,6 @@ impl<'a> CopyContext<'a> {
                 error,
             )
         })?);
-        let mut compressor = self.start_compressor(compress, source)?;
-        let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
         // upstream: match.c:431 match_sums() zeroes the per-file counters
@@ -565,9 +562,6 @@ impl<'a> CopyContext<'a> {
                         pending_literals.as_slice(),
                         sparse,
                         &mut sparse_state,
-                        compressor.as_mut(),
-                        &mut compressed_progress,
-                        source,
                         destination,
                         total_bytes,
                     )?;
@@ -896,9 +890,6 @@ impl<'a> CopyContext<'a> {
                     pending_literals.as_slice(),
                     sparse,
                     &mut sparse_state,
-                    compressor.as_mut(),
-                    &mut compressed_progress,
-                    source,
                     destination,
                     total_bytes,
                 )?;
@@ -1023,9 +1014,6 @@ impl<'a> CopyContext<'a> {
                 pending_literals.as_slice(),
                 sparse,
                 &mut sparse_state,
-                compressor.as_mut(),
-                &mut compressed_progress,
-                source,
                 destination,
                 total_bytes,
             )?;
@@ -1118,17 +1106,11 @@ impl<'a> CopyContext<'a> {
         // `-vv` `total:` line reports cumulative figures.
         self.summary.record_delta_probe(file_matches, probe);
 
-        let outcome = if let Some(encoder) = compressor {
-            let compressed_total = encoder
-                .finish()
-                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
-            let delta = compressed_total.saturating_sub(compressed_progress);
-            self.register_limiter_bytes(delta);
-            self.record_adaptive_compression(literal_bytes, compressed_total);
-            FileCopyOutcome::new(literal_bytes, matched_bytes, Some(compressed_total))
-        } else {
-            FileCopyOutcome::new(literal_bytes, matched_bytes, None)
-        };
+        let outcome = FileCopyOutcome::new(
+            literal_bytes,
+            matched_bytes,
+            None,
+        );
         let touched_blocks = if sparse {
             sparse_state.touched_blocks()
         } else {
@@ -1153,9 +1135,6 @@ impl<'a> CopyContext<'a> {
         chunk: &[u8],
         sparse: bool,
         state: &mut SparseWriteState,
-        compressor: Option<&mut ActiveCompressor>,
-        compressed_progress: &mut u64,
-        source: &Path,
         destination: &Path,
         output_offset: u64,
     ) -> Result<usize, LocalCopyError> {
@@ -1175,7 +1154,7 @@ impl<'a> CopyContext<'a> {
         // upstream: token.c:simple_send_token() - literals are written as
         // write_int(length) + raw bytes, chunked to CHUNK_SIZE (32KB); under
         // -z the batch tee records send_deflated_token()'s framing instead.
-        self.write_batch_literal_token(chunk, destination)?;
+        let wire_bytes = self.write_batch_literal_token(chunk, destination)?;
 
         let written = if sparse {
             write_sparse_chunk(writer, state, chunk, destination)?
@@ -1186,17 +1165,7 @@ impl<'a> CopyContext<'a> {
             chunk.len()
         };
 
-        if let Some(encoder) = compressor {
-            encoder
-                .write(chunk)
-                .map_err(|error| LocalCopyError::io("compress file", source, error))?;
-            let total = encoder.bytes_written();
-            let delta = total.saturating_sub(*compressed_progress);
-            *compressed_progress = total;
-            self.register_limiter_bytes(delta);
-        } else {
-            self.register_limiter_bytes(chunk.len() as u64);
-        }
+        self.register_limiter_bytes(wire_bytes);
 
         Ok(written)
     }
@@ -1216,10 +1185,7 @@ impl<'a> CopyContext<'a> {
     ) -> Result<(), LocalCopyError> {
         let block_index = matched.descriptor().index() as u32;
         if self.batch_delta_buf.is_none() {
-            if let Some(tally) = self.wire_tally.as_mut() {
-                tally.block_match(block_index, None);
-            }
-            return Ok(());
+            return self.emit_block_match_token(block_index, None, destination);
         }
 
         // The token references a basis block by index, so the sum_head this
@@ -1228,7 +1194,7 @@ impl<'a> CopyContext<'a> {
         self.check_batch_block_index(block_index)?;
 
         let mut see_data = Vec::new();
-        if self.batch_token_encoder.is_some() {
+        if self.token_stream.is_some() {
             see_data.resize(matched.descriptor().len(), 0);
             let basis_err = |e: io::Error| {
                 LocalCopyError::io(
