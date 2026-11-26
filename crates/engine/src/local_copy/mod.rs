@@ -113,6 +113,7 @@ pub(crate) use wire_tally::WireTally;
 pub use wire_tally::WireTotals;
 
 pub(crate) use compressor::ActiveCompressor;
+pub(crate) use context::DataMover;
 pub(crate) use context::{
     CopyContext, CopyOutcome, CreatedEntryKind, DeferredUpdate, DeltaBasis, FinalizeMetadataParams,
     InplaceBackup, MATCHED_NONE, MetadataPathContext, OwnedPathContext, SourceAttrs,

@@ -883,7 +883,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             // capture ops inline in flush_literal_chunk/copy_matched_block.
             // upstream: match.c:match_sums() - whole-file path writes literals.
             if delta_signature.is_none() {
-                context.capture_batch_whole_file(source, file_size)?;
+                context.finish_read_loop_whole_file(source, file_size, append_offset)?;
             }
 
             // Write the token end marker to the batch file for this file.

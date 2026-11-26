@@ -104,6 +104,7 @@ impl<'a> CopyContext<'a> {
             batch_delta_sum_head_offset: 0,
             batch_delta_iflags_offset: None,
             batch_report_slot: None,
+            batch_whole_file_sum: None,
             batch_owner_ids: [Vec::new(), Vec::new()],
             batch_listing_dir: PathBuf::from("."),
             batch_flist_error_dirs: Vec::new(),

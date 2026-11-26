@@ -367,6 +367,9 @@ impl<'a> CopyContext<'a> {
         let Some(delta_file) = self.batch_delta_buf.as_mut() else {
             return Ok(());
         };
+        if let Some(sum) = self.batch_whole_file_sum.as_mut() {
+            sum.update(chunk);
+        }
         match self.batch_token_encoder.as_mut() {
             Some(encoder) => encoder.send_literal(delta_file, chunk),
             None => protocol::wire::delta::write_token_literal(delta_file, chunk),
@@ -478,6 +481,7 @@ impl<'a> CopyContext<'a> {
         delta_file.get_mut().clear();
         delta_file.set_position(0);
         self.batch_report_slot = None;
+        self.batch_whole_file_sum = None;
 
         // upstream: token.c:390 - send_deflated_token() reinitialises the
         // deflate context at the start of every file, so the batch's per-file
@@ -768,6 +772,27 @@ impl<'a> CopyContext<'a> {
             })
     }
 
+    /// A fresh file checksum for the batch's protocol: MD5 from protocol 30,
+    /// seeded MD4 below it.
+    ///
+    /// upstream: checksum.c:142-144 (`CSUM_MD4_OLD`), :622-628 `sum_init()`.
+    fn new_batch_file_sum(&self) -> FileSum {
+        let writer = self
+            .options
+            .get_batch_writer()
+            .expect("batch writer set on the write-batch path")
+            .lock()
+            .expect("batch writer mutex poisoned");
+        let config = writer.config();
+        if config.protocol_version < 30 {
+            let mut md4 = checksums::strong::Md4::new();
+            md4.update(&config.checksum_seed.to_le_bytes());
+            FileSum::Md4(md4)
+        } else {
+            FileSum::Md5(checksums::strong::Md5::new())
+        }
+    }
+
     /// Writes a token-format end marker and file checksum to the batch delta
     /// buffer for the current file, then moves the completed per-file data
     /// to `batch_delta_entries`.
@@ -799,20 +824,11 @@ impl<'a> CopyContext<'a> {
 
         self.write_batch_token_end(source)?;
 
-        let (proto, seed) = {
-            let writer = self
-                .options
-                .get_batch_writer()
-                .expect("batch writer set on the write-batch path")
-                .lock()
-                .expect("batch writer mutex poisoned");
-            (
-                writer.config().protocol_version,
-                writer.config().checksum_seed,
-            )
-        };
-        // upstream: match.c:439-488 - sum the source file content.
-        let file_sum = {
+        // upstream: match.c:439-488 - sum the source file content. A
+        // whole-file run was summed as it was recorded; a delta reads it here.
+        let file_sum = if let Some(sum) = self.batch_whole_file_sum.take() {
+            sum.finalize()
+        } else {
             let mut reader = std::fs::File::open(source).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
                     "open source for batch checksum",
@@ -820,13 +836,7 @@ impl<'a> CopyContext<'a> {
                     e,
                 )
             })?;
-            let mut hasher = if proto < 30 {
-                let mut md4 = checksums::strong::Md4::new();
-                md4.update(&seed.to_le_bytes());
-                FileSum::Md4(md4)
-            } else {
-                FileSum::Md5(checksums::strong::Md5::new())
-            };
+            let mut hasher = self.new_batch_file_sum();
             let mut chunk = [0u8; 32 * 1024];
             loop {
                 let n = reader.read(&mut chunk).map_err(|e| {
@@ -927,10 +937,9 @@ impl<'a> CopyContext<'a> {
         source: &std::path::Path,
         file_size: u64,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
-        if let Some(tally) = self.wire_tally.as_mut() {
-            tally.literal(file_size);
-        }
         if self.batch_delta_buf.is_none() {
+            // The literal tokens tally the bytes when a batch is recorded.
+            self.tally_whole_file_literal(file_size);
             return Ok(());
         }
 
@@ -941,8 +950,9 @@ impl<'a> CopyContext<'a> {
                 e,
             )
         })?;
+        self.batch_whole_file_sum = Some(self.new_batch_file_sum());
 
-        let mut buf = vec![0u8; 32 * 1024]; // CHUNK_SIZE
+        let mut buf = vec![0u8; BATCH_LITERAL_CHUNK];
         let mut remaining = file_size;
 
         while remaining > 0 {
@@ -964,6 +974,91 @@ impl<'a> CopyContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Accounts one chunk the whole-file read loop has just copied.
+    ///
+    /// While a batch is recorded the chunk joins `run`, and every full
+    /// [`BATCH_LITERAL_CHUNK`] of it becomes a literal token, which also feeds
+    /// the wire tally, so the file is not read again after the copy. The
+    /// copy buffer's size varies with the file, so the run, not the read,
+    /// sets the token boundaries. Otherwise only the `-z` tally sees the
+    /// bytes. An append resumes mid-file and keeps the capture after the
+    /// copy, which records the file from its start.
+    ///
+    /// upstream: match.c:480-486 `match_sums()` hands the whole file to
+    /// `matched()` with no block sums; token.c:317-327 `simple_send_token()`
+    /// sends it in `CHUNK_SIZE` pieces.
+    pub(super) fn record_whole_file_chunk(
+        &mut self,
+        run: &mut Vec<u8>,
+        data: &[u8],
+        initial_bytes: u64,
+        source: &std::path::Path,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        if self.batch_delta_buf.is_none() || initial_bytes > 0 {
+            self.tally_whole_file_data(data);
+            return Ok(());
+        }
+        if self.batch_whole_file_sum.is_none() {
+            self.batch_whole_file_sum = Some(self.new_batch_file_sum());
+        }
+        let mut data = data;
+        if run.is_empty() {
+            while data.len() >= BATCH_LITERAL_CHUNK {
+                let (token, rest) = data.split_at(BATCH_LITERAL_CHUNK);
+                self.write_batch_literal_token(token, source)?;
+                data = rest;
+            }
+        }
+        while !data.is_empty() {
+            let take = (BATCH_LITERAL_CHUNK - run.len()).min(data.len());
+            run.extend_from_slice(&data[..take]);
+            data = &data[take..];
+            if run.len() == BATCH_LITERAL_CHUNK {
+                self.write_batch_literal_token(run, source)?;
+                run.clear();
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes the tail of a whole-file literal run as its last token.
+    pub(super) fn flush_whole_file_run(
+        &mut self,
+        run: &mut Vec<u8>,
+        source: &std::path::Path,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        if !run.is_empty() {
+            self.write_batch_literal_token(run, source)?;
+            run.clear();
+        }
+        Ok(())
+    }
+
+    /// Completes a whole-file copy the read loop performed: under a batch the
+    /// loop already wrote the tokens, except for an append, whose capture
+    /// reads the file from its start; with no batch only the tally is left.
+    pub(crate) fn finish_read_loop_whole_file(
+        &mut self,
+        source: &std::path::Path,
+        file_size: u64,
+        append_offset: u64,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        if self.batch_delta_buf.is_none() {
+            self.tally_whole_file_literal(file_size);
+            Ok(())
+        } else if append_offset > 0 {
+            self.capture_batch_whole_file(source, file_size)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn tally_whole_file_literal(&mut self, len: u64) {
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.literal(len);
+        }
     }
 
     /// Flushes all per-file delta entries to the batch writer with

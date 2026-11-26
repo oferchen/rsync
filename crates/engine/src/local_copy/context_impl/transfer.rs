@@ -740,6 +740,7 @@ impl<'a> CopyContext<'a> {
         // in the read loop below.
         if whole_file_enabled
             && self.options.kernel_content_copy_allowed()
+            && self.mover_allowed(DataMover::Kernel)
             && !sparse
             && !compress
             && self.limiter.is_none()
@@ -797,6 +798,7 @@ impl<'a> CopyContext<'a> {
 
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
+        let mut batch_run = Vec::new();
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
         // 1MB interval amortizes clock_gettime syscalls across the copy loop.
@@ -845,7 +847,7 @@ impl<'a> CopyContext<'a> {
             })?;
 
             self.register_progress();
-            self.tally_whole_file_data(&buffer[..read]);
+            self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
@@ -876,6 +878,7 @@ impl<'a> CopyContext<'a> {
 
         // `read == 0` breaks out of the loop above; arriving here with fewer
         // bytes than the transfer was sized for means the source shrank.
+        self.flush_whole_file_run(&mut batch_run, source)?;
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
         let outcome = if let Some(encoder) = compressor {
@@ -926,6 +929,7 @@ impl<'a> CopyContext<'a> {
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
+        let mut batch_run = Vec::new();
         // On NTFS, seek-past-zero + set_len only yields a sparse file when the
         // handle is first flagged sparse via FSCTL_SET_SPARSE. Elsewhere this
         // is a no-op (holes are implicit). Best-effort: a non-NTFS volume or a
@@ -974,7 +978,7 @@ impl<'a> CopyContext<'a> {
             write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?;
 
             self.register_progress();
-            self.tally_whole_file_data(&buffer[..read]);
+            self.record_whole_file_chunk(&mut batch_run, &buffer[..read], initial_bytes, source)?;
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
@@ -1014,6 +1018,7 @@ impl<'a> CopyContext<'a> {
 
         // `read == 0` breaks out of the loop above; arriving here with fewer
         // bytes than the transfer was sized for means the source shrank.
+        self.flush_whole_file_run(&mut batch_run, source)?;
         self.note_short_source_read(source, total_bytes, expected_remaining);
 
         let outcome = if let Some(encoder) = compressor {

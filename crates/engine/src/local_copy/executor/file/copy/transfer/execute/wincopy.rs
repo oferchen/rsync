@@ -60,6 +60,7 @@ pub(super) fn eligible(
         && !context.has_bandwidth_limiter()
         && !context.delay_updates_enabled()
         && context.temp_directory_path().is_none()
+        && context.mover_allowed(crate::local_copy::DataMover::Kernel)
 }
 
 /// Attempts the Windows-optimized copy; returns `true` on success.
