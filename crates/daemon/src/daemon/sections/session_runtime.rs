@@ -316,6 +316,15 @@ pub(crate) enum SessionExit {
     RefusedWithCause { exit: ExitCode, cause: String },
     /// The transfer ran and finished with this status.
     Transferred(ExitCode),
+    /// The session ended before any transfer the way upstream's
+    /// `start_daemon()` does when it returns -1. `main()` returns that value,
+    /// or a TCP child passes it to `_exit()`, so the process exits 255 and
+    /// prints nothing.
+    ///
+    /// upstream: clientserver.c:206-210, :1546-1547 (read_line_old() EOF),
+    /// main.c:1978 `return start_daemon(...)`, clientserver.c:1823 (inetd),
+    /// socket.c:770-773 `_exit(ret)`.
+    Aborted,
 }
 
 impl SessionExit {
@@ -325,6 +334,7 @@ impl SessionExit {
             Self::Refused(code)
             | Self::RefusedWithCause { exit: code, .. }
             | Self::Transferred(code) => *code,
+            Self::Aborted => ExitCode::from_raw(MODULE_ABORT_EXIT_CODE),
         }
     }
 }
@@ -357,6 +367,7 @@ pub(crate) fn single_session_exit(
             .with_preamble(cause))
         }
         Ok(Some(SessionExit::Transferred(exit))) => Err(DaemonError::exit_status(exit)),
+        Ok(Some(aborted @ SessionExit::Aborted)) => Err(DaemonError::exit_status(aborted.code())),
         Err(error) => Err(DaemonError::new(
             SOCKET_IO_EXIT_CODE,
             rsync_error!(SOCKET_IO_EXIT_CODE, format!("{context}: {error}"))
@@ -654,12 +665,13 @@ fn handle_legacy_session(
         let _ = socket.set_read_timeout(None);
     }
 
-    // upstream: clientserver.c:1548-1549 - a failed `read_line_old()` (EOF, or
-    // a line that overflows the buffer) returns -1 before any reply, so a
-    // session that never produced a request line gets no listing.
+    // upstream: clientserver.c:206-210, :1546-1547 - a failed `read_line_old()`
+    // (EOF, or a line that overflows the buffer) before the greeting or the
+    // request line returns -1 before any reply, so a session that never
+    // produced a request line gets no listing and exits 255.
     let Some(request) = request else {
         // FSM: -> Closing without a request line.
-        return Ok(end_session(conn_state, None));
+        return Ok(end_session(conn_state, Some(SessionExit::Aborted)));
     };
 
     if request.is_empty() || request == "#list" {
