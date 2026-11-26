@@ -12,8 +12,11 @@
 
 use std::ffi::OsString;
 
-use super::super::super::error::{ClientError, invalid_argument_error};
-use super::{RemoteOperandParsed, RemoteOperands, TransferSpec};
+use super::super::super::error::{ClientError, cause_line_error, invalid_argument_error};
+use super::super::hostspec::{check_for_hostspec, operand_bytes};
+use super::{RemoteOperands, TransferSpec};
+use crate::exit_code::ExitCode;
+use crate::message::Role;
 
 /// Checks if an operand represents a remote path.
 ///
@@ -24,176 +27,142 @@ use super::{RemoteOperandParsed, RemoteOperands, TransferSpec};
 /// module; a divergent verdict would ship the wrong operand to the remote server.
 pub use engine::operand::operand_is_remote;
 
-/// Parses a remote operand string into its components for validation.
+/// Checks every further source of a remote pull against the first, as
+/// upstream does before connecting.
 ///
-/// Handles formats like:
-/// - `host:path`
-/// - `user@host:path`
-/// - `user@host.example.com:path`
-/// - `user@[::1]:path` (IPv6)
+/// `option_port` is the `--port` value (0 when unset): upstream's `rsync_port`
+/// starts there, so a daemon spelling without its own port keeps it.
 ///
-/// This is a simplified parser focused on extracting host/user for validation.
-/// Full operand parsing happens in the SSH transport layer. The host ends at
-/// the LAST `:`, unlike upstream `options.c:parse_hostspec()`, which stops at
-/// the first `:` outside an IPv6 bracket.
-fn parse_remote_operand(operand: &str) -> Result<RemoteOperandParsed, ClientError> {
-    let operand_str = operand.to_owned();
-
-    let colon_pos = operand.rfind(':').ok_or_else(|| {
-        invalid_argument_error(
-            &format!("invalid remote operand: missing ':' in {operand}"),
-            1,
-        )
-    })?;
-
-    let host_part = &operand[..colon_pos];
-
-    let (user, host_with_port) = if let Some(at_pos) = host_part.find('@') {
-        let user = host_part[..at_pos].to_string();
-        let host = &host_part[at_pos + 1..];
-        (Some(user), host)
-    } else {
-        (None, host_part)
+/// upstream: main.c:1480 parses the first source into `shell_machine` and
+/// `rsync_port`, and main.c:1586-1610 requires each later one to be a hostspec
+/// (`Unexpected local arg`), to name the same host or none, and to use the
+/// same hostspec format and port. `dummy_port` is carried from one source to
+/// the next, so a source without an explicit port inherits the previous one.
+fn validate_remote_sources(sources: &[OsString], option_port: i32) -> Result<(), ClientError> {
+    let mut rsync_port = option_port;
+    let first = operand_bytes(&sources[0]);
+    let Some(first) = check_for_hostspec(first, Some(&mut rsync_port)) else {
+        return Err(unexpected_local_arg(&sources[0]));
     };
-
-    let host = host_with_port.to_owned();
-    let port = None;
-
-    Ok(RemoteOperandParsed {
-        operand: operand_str,
-        host,
-        user,
-        port,
-    })
+    let mut dummy_port = rsync_port;
+    for source in &sources[1..] {
+        let Some(spec) = check_for_hostspec(operand_bytes(source), Some(&mut dummy_port)) else {
+            return Err(unexpected_local_arg(source));
+        };
+        if !spec.host.is_empty() && spec.host != first.host {
+            return Err(syntax_refusal(
+                "All source args must come from the same machine.",
+                Role::PreForkReceiver,
+            ));
+        }
+        if rsync_port != dummy_port {
+            let message = if rsync_port == 0 || dummy_port == 0 {
+                "All source args must use the same hostspec format."
+            } else {
+                "All source args must use the same port number."
+            };
+            return Err(syntax_refusal(message, Role::PreForkReceiver));
+        }
+    }
+    Ok(())
 }
 
-/// Validates that all remote operands are from the same host with consistent credentials.
-///
-/// # Errors
-///
-/// Returns error if:
-/// - Different hosts are specified
-/// - Different usernames are specified (or mixed explicit/implicit)
-/// - Different ports are specified
-fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientError> {
-    if operands.is_empty() {
-        return Ok(());
-    }
+/// upstream: main.c:1592-1593.
+fn unexpected_local_arg(source: &OsString) -> ClientError {
+    syntax_refusal(
+        &format!(
+            "Unexpected local arg: {}\nIf arg is a remote file/dir, prefix it with a colon (:).",
+            source.to_string_lossy()
+        ),
+        Role::PreForkReceiver,
+    )
+}
 
-    let first = &operands[0];
-
-    for operand in &operands[1..] {
-        if operand.host != first.host {
-            return Err(invalid_argument_error(
-                &format!(
-                    "all remote sources must be from the same host (found '{}' and '{}')",
-                    first.host, operand.host
-                ),
-                1,
-            ));
-        }
-
-        match (&operand.user, &first.user) {
-            (Some(u1), Some(u2)) if u1 != u2 => {
-                return Err(invalid_argument_error(
-                    &format!("remote sources must use the same username (found '{u2}' and '{u1}')"),
-                    1,
-                ));
-            }
-            (Some(u), None) | (None, Some(u)) => {
-                return Err(invalid_argument_error(
-                    &format!("cannot mix explicit username ('{u}') with implicit username"),
-                    1,
-                ));
-            }
-            _ => {}
-        }
-
-        if operand.port != first.port {
-            return Err(invalid_argument_error(
-                "remote sources must use the same port",
-                1,
-            ));
-        }
-    }
-
-    Ok(())
+/// A source-list refusal as upstream prints it: the `rprintf(FERROR, ...)`
+/// text on its own lines, then `exit_cleanup(RERR_SYNTAX)`'s trailer tagged
+/// with `who_am_i()` - `Receiver` before a pull forks, `sender` for a push.
+fn syntax_refusal(text: &str, role: Role) -> ClientError {
+    cause_line_error(text.to_owned(), ExitCode::Syntax, role)
 }
 
 /// Determines the transfer type and role from source and destination operands.
 ///
 /// Analyzes the operands to determine whether this is a push (local -> remote)
-/// or pull (remote -> local) transfer.
-///
-/// # Arguments
-///
-/// * `sources` - Source operand(s)
-/// * `destination` - Destination operand
-///
-/// # Returns
-///
-/// A `TransferSpec` describing the transfer type with all relevant operands.
+/// or pull (remote -> local) transfer. A pull's sources are checked with no
+/// `--port` value; `determine_transfer_role_with_port` takes one.
 ///
 /// # Errors
 ///
 /// Returns error if:
 /// - Neither source nor destination is remote (should use local copy)
 /// - Both a source and the destination are remote
-/// - Multiple sources with different remote/local mix
-/// - Multiple remote sources from different hosts, users, or ports
+/// - A local source follows a remote one, or a remote one follows a local one
+/// - Remote sources name different hosts, hostspec formats, or ports
 pub fn determine_transfer_role(
     sources: &[OsString],
     destination: &OsString,
 ) -> Result<TransferSpec, ClientError> {
+    determine_transfer_role_with_port(sources, destination, None)
+}
+
+/// [`determine_transfer_role`] with the `--port` value a pull's sources are
+/// checked against.
+///
+/// upstream: main.c:1474-1610 - the first source decides the direction. A
+/// remote first source makes a pull, and every later source must match it
+/// ([`validate_remote_sources`]); a local first source makes a push (or a
+/// local copy), and every later source must be local (main.c:1569-1578).
+///
+/// # Errors
+///
+/// As [`determine_transfer_role`].
+pub(crate) fn determine_transfer_role_with_port(
+    sources: &[OsString],
+    destination: &OsString,
+    option_port: Option<u16>,
+) -> Result<TransferSpec, ClientError> {
     let dest_is_remote = operand_is_remote(destination);
 
-    let remote_sources: Vec<_> = sources.iter().filter(|s| operand_is_remote(s)).collect();
-
-    let has_remote_source = !remote_sources.is_empty();
-    let all_sources_remote = remote_sources.len() == sources.len();
-
-    match (has_remote_source, dest_is_remote) {
-        // upstream: main.c:1490-1493 refuses before any connection is made.
-        (true, true) => Err(invalid_argument_error(
-            "The source and destination cannot both be remote.",
-            1,
-        )),
-        (false, false) => Err(invalid_argument_error("no remote operand found", 1)),
-        (true, false) => {
-            if !all_sources_remote {
-                return Err(invalid_argument_error(
-                    "mixing remote and local sources is not supported",
-                    1,
-                ));
-            }
-
-            let parsed_sources: Result<Vec<_>, _> = sources
-                .iter()
-                .map(|s| parse_remote_operand(&s.to_string_lossy()))
-                .collect();
-            let parsed_sources = parsed_sources?;
-
-            validate_same_host(&parsed_sources)?;
-
-            let local_dest = destination.clone();
-
-            // Preserve the operand bytes verbatim (a non-UTF-8 remote path is a
-            // legal Unix filename); host/user validation above already ran on a
-            // lossy copy, which is fine because those components are ASCII.
-            let remote_sources = if sources.len() > 1 {
-                RemoteOperands::Multiple(sources.to_vec())
-            } else {
-                RemoteOperands::Single(sources[0].clone())
-            };
-
-            Ok(TransferSpec::Pull {
-                remote_sources,
-                local_dest,
-            })
+    if !sources
+        .first()
+        .is_some_and(|first| operand_is_remote(first))
+    {
+        if let Some(remote) = sources.iter().skip(1).find(|s| operand_is_remote(s)) {
+            // upstream: main.c:1575-1577.
+            return Err(syntax_refusal(
+                &format!("Unexpected remote arg: {}", remote.to_string_lossy()),
+                Role::Sender,
+            ));
         }
-        (false, true) => Ok(TransferSpec::Push {
+        if !dest_is_remote {
+            return Err(invalid_argument_error("no remote operand found", 1));
+        }
+        return Ok(TransferSpec::Push {
             local_sources: sources.to_vec(),
             remote_dest: destination.clone(),
-        }),
+        });
     }
+
+    // upstream: main.c:1490-1493 refuses before any connection is made.
+    if dest_is_remote {
+        return Err(invalid_argument_error(
+            "The source and destination cannot both be remote.",
+            1,
+        ));
+    }
+
+    validate_remote_sources(sources, option_port.map_or(0, i32::from))?;
+
+    // Preserve the operand bytes verbatim (a non-UTF-8 remote path is a legal
+    // Unix filename).
+    let remote_sources = if sources.len() > 1 {
+        RemoteOperands::Multiple(sources.to_vec())
+    } else {
+        RemoteOperands::Single(sources[0].clone())
+    };
+
+    Ok(TransferSpec::Pull {
+        remote_sources,
+        local_dest: destination.clone(),
+    })
 }

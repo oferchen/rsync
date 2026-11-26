@@ -554,10 +554,13 @@ fn test_multiple_sources_different_hosts_error() {
     let result = determine_transfer_role(&sources, &destination);
     assert!(result.is_err(), "Should reject different hosts");
 
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("same host") || err_msg.contains("host1") && err_msg.contains("host2"),
-        "Error should mention host mismatch: {err_msg}"
+    let err = result.unwrap_err();
+    // upstream: main.c:1596-1597 compares the whole `user@host`.
+    assert_eq!(err.exit_code(), 1, "{err}");
+    assert_eq!(
+        err.cause_line(),
+        Some("All source args must come from the same machine."),
+        "{err}"
     );
 }
 
@@ -575,10 +578,13 @@ fn test_multiple_sources_user_mismatch_error() {
     let result = determine_transfer_role(&sources, &destination);
     assert!(result.is_err(), "Should reject different usernames");
 
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("username") || err_msg.contains("alice") && err_msg.contains("bob"),
-        "Error should mention username mismatch: {err_msg}"
+    let err = result.unwrap_err();
+    // upstream: main.c:1596-1597 compares the whole `user@host`.
+    assert_eq!(err.exit_code(), 1, "{err}");
+    assert_eq!(
+        err.cause_line(),
+        Some("All source args must come from the same machine."),
+        "{err}"
     );
 }
 
@@ -599,13 +605,53 @@ fn test_multiple_sources_mixed_explicit_implicit_user_error() {
         "Should reject mixed explicit/implicit username"
     );
 
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("username")
-            || err_msg.contains("explicit")
-            || err_msg.contains("implicit"),
-        "Error should mention username mixing: {err_msg}"
+    let err = result.unwrap_err();
+    // upstream: main.c:1596-1597 compares the whole `user@host`.
+    assert_eq!(err.exit_code(), 1, "{err}");
+    assert_eq!(
+        err.cause_line(),
+        Some("All source args must come from the same machine."),
+        "{err}"
     );
+}
+
+/// Runs `binary` on a pull whose later source has no hostspec and returns
+/// its exit code and the stderr lines before the trailer.
+fn local_arg_refusal(binary: &std::path::Path) -> (Option<i32>, Vec<String>) {
+    let dir = TempDir::new().expect("tempdir");
+    let output = std::process::Command::new(binary)
+        .current_dir(dir.path())
+        .args(["-e", "false", "host:/a", "/local/b", "dst"])
+        .output()
+        .expect("run binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines = stderr
+        .lines()
+        .take_while(|line| !line.contains("error: syntax or usage error"))
+        .map(str::to_owned)
+        .collect();
+    (output.status.code(), lines)
+}
+
+/// A later pull source without a hostspec is refused before any connection,
+/// with upstream's two lines and exit 1 (main.c:1588-1593, RERR_SYNTAX).
+#[test]
+fn a_later_source_without_a_hostspec_is_refused_like_upstream() {
+    let expected = vec![
+        "Unexpected local arg: /local/b".to_owned(),
+        "If arg is a remote file/dir, prefix it with a colon (:).".to_owned(),
+    ];
+    assert_eq!(
+        local_arg_refusal(&oc_rsync_binary()),
+        (Some(1), expected.clone())
+    );
+
+    let Some(upstream) =
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
+        return;
+    };
+    assert_eq!(local_arg_refusal(upstream.binary()), (Some(1), expected));
 }
 
 #[test]
