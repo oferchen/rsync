@@ -7,7 +7,9 @@ use compress::algorithm::CompressionAlgorithm;
 use transfer::setup::build_capability_string_suffix;
 
 use super::builder::RemoteInvocationBuilder;
-use super::transfer_role::{determine_transfer_role, operand_is_remote};
+use super::transfer_role::{
+    determine_transfer_role, determine_transfer_role_with_port, operand_is_remote,
+};
 use super::{RemoteOperands, RemoteRole, TransferSpec};
 use crate::client::config::{ClientConfig, IconvSetting, TransferTimeout};
 
@@ -5238,5 +5240,108 @@ mod oc_flag_forwarding {
                 "no QUIC token may leak into the --server argv ({role:?}): {args:?}"
             );
         }
+    }
+}
+
+/// Every later source of a pull is checked against the first, with
+/// upstream's own refusal text and RERR_SYNTAX (main.c:1588-1610).
+mod multi_source_pull {
+    use super::*;
+
+    fn role(sources: &[&str], port: Option<u16>) -> Result<TransferSpec, String> {
+        let sources: Vec<OsString> = sources.iter().map(OsString::from).collect();
+        determine_transfer_role_with_port(&sources, &OsString::from("dst/"), port).map_err(|e| {
+            assert_eq!(e.exit_code(), 1, "{e}");
+            assert!(
+                e.to_string()
+                    .starts_with("rsync error: syntax or usage error (code 1) at "),
+                "{e}"
+            );
+            e.cause_line().unwrap_or_default().to_owned()
+        })
+    }
+
+    fn refused(sources: &[&str], port: Option<u16>, message: &str) {
+        let err = role(sources, port).expect_err("must be refused");
+        assert_eq!(err, message);
+    }
+
+    fn accepted(sources: &[&str], port: Option<u16>) {
+        match role(sources, port).expect("must be accepted") {
+            TransferSpec::Pull {
+                remote_sources: RemoteOperands::Multiple(all),
+                ..
+            } => assert_eq!(all.len(), sources.len()),
+            other => panic!("expected a multi-source pull, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn same_host_daemon_sources_are_one_pull() {
+        accepted(
+            &[
+                "rsync://h:9/mod/I",
+                "rsync://h:9/mod/J",
+                "rsync://h:9/mod/K",
+            ],
+            None,
+        );
+        accepted(&["h::mod/I", "h::mod/J"], None);
+    }
+
+    #[test]
+    fn a_source_without_host_or_port_inherits_the_first_ones() {
+        // main.c:1588 carries dummy_port, and an empty host matches any.
+        accepted(&["rsync://h:9/mod/I", "h::mod/J"], None);
+        accepted(&["rsync://h:9/mod/I", "rsync:///mod/J"], None);
+        accepted(&["rsync://h:9/mod/I", "::mod/J"], None);
+        accepted(&["h::mod/I", "rsync://h/mod/J"], Some(9));
+    }
+
+    #[test]
+    fn a_different_host_is_refused() {
+        refused(
+            &["rsync://h:9/mod/I", "rsync://g:9/mod/J"],
+            None,
+            "All source args must come from the same machine.",
+        );
+    }
+
+    #[test]
+    fn a_different_port_is_refused() {
+        refused(
+            &["rsync://h:9/mod/I", "rsync://h:10/mod/J"],
+            None,
+            "All source args must use the same port number.",
+        );
+        // --port sets rsync_port, so a URL naming another port differs.
+        refused(
+            &["h::mod/I", "rsync://h:10/mod/J"],
+            Some(9),
+            "All source args must use the same port number.",
+        );
+    }
+
+    #[test]
+    fn a_shell_source_after_a_daemon_source_is_refused() {
+        refused(
+            &["h::mod/I", "h:/p/J"],
+            None,
+            "All source args must use the same hostspec format.",
+        );
+    }
+
+    #[test]
+    fn a_local_source_after_a_remote_one_is_refused() {
+        refused(
+            &["h::mod/I", "/abs/J"],
+            None,
+            "Unexpected local arg: /abs/J\nIf arg is a remote file/dir, prefix it with a colon (:).",
+        );
+    }
+
+    #[test]
+    fn a_remote_source_after_a_local_one_is_refused() {
+        refused(&["I", "h::mod/J"], None, "Unexpected remote arg: h::mod/J");
     }
 }

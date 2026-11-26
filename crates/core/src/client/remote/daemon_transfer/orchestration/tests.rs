@@ -37,6 +37,7 @@ mod protect_args_daemon_tests {
             module: "test".to_owned(),
             path: std::ffi::OsString::new(),
             username: None,
+            extra_paths: Vec::new(),
         }
     }
 
@@ -112,6 +113,35 @@ mod protect_args_daemon_tests {
         assert!(args.contains(&".".to_owned()));
         let last = args.last().unwrap();
         assert!(last.starts_with(&request.module));
+    }
+
+    /// upstream: clientserver.c:354-392 sends every pull source after `.`,
+    /// in operand order, and the first operand's bare module name as
+    /// `modname/` (:360-361).
+    /// A single-source pull sends exactly the argument list it sent before
+    /// later sources were supported: the extra-operand step adds nothing
+    /// (pinned byte for byte; the CLI capture against a master build agrees).
+    #[test]
+    fn build_full_args_for_one_source_are_unchanged() {
+        let config = ClientConfig::default();
+        let mut request = test_daemon_request();
+        request.path = "I".into();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, true);
+        assert_eq!(args, ["--server", "--sender", "-e.LsfxCIvu", ".", "test/I"]);
+    }
+
+    #[test]
+    fn build_full_args_sends_every_pull_source_in_order() {
+        let config = ClientConfig::default();
+        let mut request = test_daemon_request();
+        request.path = "I".into();
+        request.extra_paths = vec!["test/J".into(), "test".into(), "other/K".into()];
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, true);
+
+        let dot = args.iter().rposition(|a| a == ".").unwrap();
+        assert_eq!(args[dot + 1..], ["test/I", "test/J", "test/", "other/K"]);
     }
 
     #[test]
@@ -1785,6 +1815,7 @@ mod files_from_daemon_args_tests {
             module: "test".to_owned(),
             path: std::ffi::OsString::new(),
             username: None,
+            extra_paths: Vec::new(),
         }
     }
 

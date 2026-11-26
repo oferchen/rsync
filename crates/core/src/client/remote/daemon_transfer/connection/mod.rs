@@ -36,6 +36,12 @@ pub(crate) struct DaemonTransferRequest {
     /// `char*` end-to-end (clientserver.c).
     pub(crate) path: OsString,
     pub(crate) username: Option<String>,
+    /// The paths of every later source of a pull, each with its hostspec
+    /// stripped, in operand order.
+    ///
+    /// upstream: main.c:1606-1608 keeps `remote_argv[i] = arg` for each one
+    /// and clientserver.c:354-392 sends them all after the first operand.
+    pub(crate) extra_paths: Vec<OsString>,
 }
 
 impl DaemonTransferRequest {
@@ -111,6 +117,7 @@ impl DaemonTransferRequest {
             module,
             path,
             username: target.username,
+            extra_paths: Vec::new(),
         })
     }
 
@@ -155,6 +162,7 @@ impl DaemonTransferRequest {
             module,
             path,
             username: target.username,
+            extra_paths: Vec::new(),
         })
     }
 }

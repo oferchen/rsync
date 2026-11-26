@@ -812,7 +812,27 @@ pub(super) fn build_full_daemon_args(
     // handling (invocation/builder.rs).
     let mut os_args: Vec<OsString> = args.into_iter().map(OsString::from).collect();
     os_args.push(build_module_operand(request));
+    os_args.extend(
+        request
+            .extra_paths
+            .iter()
+            .map(|path| extra_operand(request, path)),
+    );
     os_args
+}
+
+/// A later pull operand as `start_inband_exchange()` sends it.
+///
+/// upstream: clientserver.c:360-361 - an operand that is exactly the first
+/// operand's module name goes out as `modname/`; any other goes out as given.
+fn extra_operand(request: &DaemonTransferRequest, path: &OsStr) -> OsString {
+    if path == OsStr::new(&request.module) {
+        let mut operand = OsString::from(&request.module);
+        operand.push("/");
+        operand
+    } else {
+        path.to_owned()
+    }
 }
 
 /// Builds the `module/path` operand as a byte-preserving `OsString`.

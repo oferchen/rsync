@@ -29,6 +29,7 @@ pub mod daemon_transfer;
 pub mod embedded_ssh_transfer;
 pub(crate) mod files_from_forwarding;
 pub(crate) mod flags;
+pub(crate) mod hostspec;
 /// Implied-include source-arg computation for pull-side flist validation.
 pub(crate) mod implied_source;
 /// Remote rsync `--server` invocation argument builder.

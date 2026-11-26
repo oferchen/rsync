@@ -123,6 +123,7 @@ fn scripted_daemon_handshake(daemon_side: &str) -> (Result<ProtocolVersion, Clie
         module: "mod".to_owned(),
         path: std::ffi::OsString::new(),
         username: None,
+        extra_paths: Vec::new(),
     };
     let mut reader = BufReader::new(Cursor::new(daemon_side.as_bytes().to_vec()));
     let mut writer: Vec<u8> = Vec::new();
@@ -213,6 +214,7 @@ fn daemon_auth_default_digest_is_keyed_on_the_lower_protocol() {
         module: "mod".to_owned(),
         path: std::ffi::OsString::new(),
         username: Some("user".to_owned()),
+        extra_paths: Vec::new(),
     };
     let challenge = "Q2hhbGxlbmdl";
     let daemon_side = format!("@RSYNCD: 31.0\n@RSYNCD: AUTHREQD {challenge}\n@RSYNCD: OK\n");
@@ -375,6 +377,7 @@ mod early_input_roundtrip_tests {
             module: "test".to_owned(),
             path: std::ffi::OsString::new(),
             username: None,
+            extra_paths: Vec::new(),
         }
     }
 
@@ -666,6 +669,7 @@ mod handle_at_error_tests {
             module: "mod".to_owned(),
             path: std::ffi::OsString::new(),
             username: None,
+            extra_paths: Vec::new(),
         };
 
         // Valid greeting (subprotocol + digest list, as a real protocol-32
@@ -695,6 +699,7 @@ mod handle_at_error_tests {
             module: "mod".to_owned(),
             path: std::ffi::OsString::new(),
             username: None,
+            extra_paths: Vec::new(),
         };
         let mut reader = BufReader::new(Cursor::new(greeting.to_vec()));
         let mut writer: Vec<u8> = Vec::new();

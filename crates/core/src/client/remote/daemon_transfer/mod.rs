@@ -47,7 +47,8 @@ use super::super::module_list::{
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::build_batch_context;
-use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
+use super::hostspec::source_path;
+use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role_with_port};
 use super::operand_split::split_transfer_operands;
 use super::ssh_transfer::finished_remote_shell_exit;
 use crate::message::Role;
@@ -108,6 +109,44 @@ fn parse_daemon_operand(
     DaemonTransferRequest::parse_double_colon(daemon_operand, default_port)
 }
 
+/// The hostspec-stripped paths of a pull's second and later sources.
+///
+/// upstream: main.c:1588-1610 walks `remote_argv` from index 1 and keeps
+/// each source's path (`remote_argv[i] = arg`); a push has one remote operand.
+fn later_source_paths(
+    spec: &TransferSpec,
+    sources: &[std::ffi::OsString],
+) -> Vec<std::ffi::OsString> {
+    match spec {
+        TransferSpec::Pull { .. } => sources
+            .iter()
+            .skip(1)
+            .filter_map(|source| source_path(source))
+            .collect(),
+        TransferSpec::Push { .. } => Vec::new(),
+    }
+}
+
+/// One implied include per requested source, in operand order.
+///
+/// upstream: main.c:1585 `add_implied_include(remote_argv[0])` and :1609
+/// `add_implied_include(arg)` for each later source (CVE-2022-29154); the
+/// receiver strips the module name (`is_daemon_connection`).
+fn implied_source_args(request: &DaemonTransferRequest) -> Vec<String> {
+    std::iter::once(format!(
+        "{}/{}",
+        request.module,
+        request.path.to_string_lossy()
+    ))
+    .chain(
+        request
+            .extra_paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned()),
+    )
+    .collect()
+}
+
 /// Executes a transfer over daemon protocol (rsync://).
 ///
 /// Entry point for daemon-based remote transfers, mirroring upstream
@@ -138,7 +177,8 @@ pub fn run_daemon_transfer(
     let fallback_dest = std::ffi::OsString::from(".");
     let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
 
-    let transfer_spec = determine_transfer_role(sources, destination)?;
+    let transfer_spec =
+        determine_transfer_role_with_port(sources, destination, config.daemon_port())?;
     let role = transfer_spec.role();
     // Carry local operands as `OsString` so a non-UTF-8 local dest/source path
     // (e.g. a 0xFF-named directory) round-trips byte-faithfully; upstream
@@ -150,6 +190,7 @@ pub fn run_daemon_transfer(
 
     #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
     let mut request = parse_daemon_operand(config, false)?;
+    request.extra_paths = later_source_paths(&transfer_spec, sources);
 
     // The `--quic` modifier upgrades an ordinary `rsync://` / `host::` target to
     // QUIC; a `quic://` target already carries the transport, so this is
@@ -286,11 +327,7 @@ pub fn run_daemon_transfer(
     // The implied-include filter (CVE-2022-29154) is a `String`-typed
     // subsystem, so take an explicit lossy view of the byte-preserving operand
     // path here.
-    let implied_source_args = [format!(
-        "{}/{}",
-        request.module,
-        request.path.to_string_lossy()
-    )];
+    let implied_source_args = implied_source_args(&request);
     let outcome = match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
@@ -388,7 +425,8 @@ pub fn run_daemon_over_remote_shell(
     let fallback_dest = std::ffi::OsString::from(".");
     let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
 
-    let transfer_spec = determine_transfer_role(sources, destination)?;
+    let transfer_spec =
+        determine_transfer_role_with_port(sources, destination, config.daemon_port())?;
     let role = transfer_spec.role();
     // Carry local operands as `OsString` so a non-UTF-8 local dest/source path
     // (e.g. a 0xFF-named directory) round-trips byte-faithfully; upstream
@@ -400,7 +438,8 @@ pub fn run_daemon_over_remote_shell(
 
     // upstream: main.c:1654 - a daemon-over-remote-shell connection carries the
     // port to the child as RSYNC_PORT rather than dialling it.
-    let request = parse_daemon_operand(config, true)?;
+    let mut request = parse_daemon_operand(config, true)?;
+    request.extra_paths = later_source_paths(&transfer_spec, sources);
 
     // upstream: main.c:620-628 - when daemon_connection > 0, the remote
     // command is `rsync_path --server --daemon .` with no server_options().
@@ -486,11 +525,7 @@ pub fn run_daemon_over_remote_shell(
     // The implied-include filter (CVE-2022-29154) is a `String`-typed
     // subsystem, so take an explicit lossy view of the byte-preserving operand
     // path here.
-    let implied_source_args = [format!(
-        "{}/{}",
-        request.module,
-        request.path.to_string_lossy()
-    )];
+    let implied_source_args = implied_source_args(&request);
     let outcome = match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
@@ -516,4 +551,57 @@ pub fn run_daemon_over_remote_shell(
     };
     let wait = close_then_reap(reader_half, writer_half, guard);
     fold_remote_shell_exit(outcome?, wait, role)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    use filters::{ImpliedIncludeOptions, ImpliedIncludes};
+
+    use super::super::implied_source::implied_source_args_for_pull;
+    use super::super::invocation::determine_transfer_role_with_port;
+    use super::{DaemonTransferRequest, implied_source_args, later_source_paths};
+    use crate::client::config::ClientConfig;
+    use crate::client::module_list::DaemonAddress;
+
+    /// The implied includes a pull of `sources` records, built the way the
+    /// daemon pull builds them, and the receiver's verdict for a name.
+    ///
+    /// upstream: main.c:1585 and :1609 `add_implied_include(arg,
+    /// daemon_connection)` once per source; flist.c:1366-1373 rejects any
+    /// received name none of them covers (CVE-2022-29154).
+    fn implied_for(sources: &[&str]) -> ImpliedIncludes {
+        let sources: Vec<OsString> = sources.iter().map(OsString::from).collect();
+        let spec = determine_transfer_role_with_port(&sources, &OsString::from("dst/"), None)
+            .expect("one pull");
+        let request = DaemonTransferRequest {
+            address: DaemonAddress::new("h".to_owned(), 873),
+            module: "mod".to_owned(),
+            path: "I".into(),
+            username: None,
+            extra_paths: later_source_paths(&spec, &sources),
+        };
+        let recorded = implied_source_args_for_pull(
+            &ClientConfig::default(),
+            &implied_source_args(&request),
+            None,
+        );
+        assert_eq!(recorded, [b"mod/I".to_vec(), b"mod/J".to_vec()]);
+        let opts = ImpliedIncludeOptions {
+            skip_daemon_module: true,
+            ..Default::default()
+        };
+        ImpliedIncludes::from_args(opts, recorded).expect("compile implied includes")
+    }
+
+    #[test]
+    fn a_name_no_source_named_is_still_rejected() {
+        let implied = implied_for(&["rsync://h/mod/I", "rsync://h/mod/J"]);
+        assert!(implied.covers(Path::new("I"), false));
+        assert!(implied.covers(Path::new("J"), false));
+        assert!(!implied.covers(Path::new("K"), false));
+        assert!(!implied.covers(Path::new("d/K"), false));
+    }
 }

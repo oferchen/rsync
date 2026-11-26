@@ -27,6 +27,7 @@ mod transfer_role;
 use std::ffi::OsString;
 
 pub use builder::RemoteInvocationBuilder;
+pub(crate) use transfer_role::determine_transfer_role_with_port;
 pub use transfer_role::{determine_transfer_role, operand_is_remote};
 
 /// Role of the local rsync process in an SSH transfer.
@@ -41,22 +42,6 @@ pub enum RemoteRole {
     ///
     /// Used for pull operations: `oc-rsync user@host:remote.txt local.txt`
     Receiver,
-}
-
-/// Parsed components of a remote operand for validation.
-///
-/// Used internally to ensure multiple remote sources are from the same host.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RemoteOperandParsed {
-    /// Full operand string (e.g., "user@host:/path").
-    pub(super) operand: String,
-    /// Host portion (e.g., "host" or "192.168.1.1" or "\[::1\]").
-    pub(super) host: String,
-    /// Optional user portion (e.g., "user").
-    pub(super) user: Option<String>,
-    /// Optional port. Always `None` today: `parse_remote_operand` does not
-    /// extract a port from the host portion.
-    pub(super) port: Option<u16>,
 }
 
 /// Represents one or more remote operands in a transfer.
