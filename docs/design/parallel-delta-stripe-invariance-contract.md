@@ -109,9 +109,9 @@ The strongest form: the bytes written to the socket are identical with
 the flag on and off.
 
 Level 2 follows from Level 1 only if literal framing is also identical,
-because the sequential scan splits a long literal run into
-`literal_flush_cadence(block_len)`-sized tokens as it goes, while the
-merge emits one `Literal` per gap. `resegment_literals`
+because the sequential scan splits a long literal run into whole
+`CHUNK_SIZE` tokens as it goes, while the merge emits one `Literal` per
+gap. `resegment_literals`
 (`crates/matching/src/generator.rs:113-138`) exists precisely to restore
 that framing, and its own doc claims the framing "matches" and that both
 paths frame literals "identically by construction rather than by
@@ -331,22 +331,24 @@ and will pass vacuously.
 ### Row H - literal framing
 
 The contested one, per section 2. `resegment_literals` coalesces adjacent
-literals and re-splits at exact `literal_flush_cadence` boundaries from
-the run start; the sequential scan flushes when its pending accumulator
-crosses the same threshold. The fixture that decides it is a literal gap
-strictly longer than `block_len + CHUNK_SIZE` that spans a stripe edge,
+literals and re-splits at exact `CHUNK_SIZE` boundaries from the run
+start; the sequential scan flushes its whole chunks as each one completes.
+The fixture that decides it is a literal gap strictly longer than
+`CHUNK_SIZE` that spans a stripe edge,
 compared token-for-token including token lengths, not just concatenated
 bytes.
 
 Two observations that the PDS-2b author should carry, both unmeasured:
 
-- Upstream's flush at `match.c:408` has a second conjunct,
-  `end-offset > CHUNK_SIZE`, which suppresses the early flush near EOF.
-  oc's `literal_flush_cadence` models only the first conjunct. This is a
-  question about oc's sequential path versus upstream, not about
-  striping, so it does not affect Levels 0 and 1 as defined here. It does
-  bear on task 942's upstream-reconstruct cell, and it should be measured
-  there rather than assumed either way.
+- Upstream's flush at `match.c:408` sends exactly one chunk, up to
+  `offset - blength`, and its second conjunct, `end-offset > CHUNK_SIZE`,
+  suppresses it near EOF. Neither changes the pieces on the wire: a
+  suppressed flush leaves the run to the next `matched()` call, which
+  `simple_send_token()` cuts at the same `CHUNK_SIZE` boundaries from
+  `last_match` (token.c:316-330). oc flushes whole chunks as they
+  complete, so both send `min(CHUNK_SIZE, remaining)` pieces from the
+  previous match; `literal_pieces_follow_upstream_chunk_grid` checks the
+  sequential and striped scans against that model.
 - oc's citation for the cadence
   (`crates/matching/src/generator.rs:96`, "match.c:354-355") has drifted
   at the 3.5.0 pin. The construct is at `match.c:408`. Reported, not
