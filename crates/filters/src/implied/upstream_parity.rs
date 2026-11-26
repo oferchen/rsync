@@ -403,8 +403,8 @@ fn assert_parity_with_probes(args: &[&[u8]], extra: &[Vec<u8>]) {
         for arg in args {
             model_add(&mut model, arg, opts);
         }
-        let implied = ImpliedIncludes::from_args(opts, args.iter().copied())
-            .expect("implied rules compile");
+        let implied =
+            ImpliedIncludes::from_args(opts, args.iter().copied()).expect("implied rules compile");
         assert_eq!(
             implied.is_empty(),
             model.is_empty(),
@@ -414,7 +414,9 @@ fn assert_parity_with_probes(args: &[&[u8]], extra: &[Vec<u8>]) {
             oc_rule_set(&implied),
             model_rule_set(&model),
             "rule set differs for {:?} under {opts:?}",
-            args.iter().map(|a| String::from_utf8_lossy(a)).collect::<Vec<_>>(),
+            args.iter()
+                .map(|a| String::from_utf8_lossy(a))
+                .collect::<Vec<_>>(),
         );
         for name in &names {
             for is_dir in [false, true] {
@@ -424,7 +426,9 @@ fn assert_parity_with_probes(args: &[&[u8]], extra: &[Vec<u8>]) {
                     "verdict differs for name {:?} (dir={is_dir}) from args {:?} under {opts:?}; \
                      upstream rules {model:?}",
                     String::from_utf8_lossy(name),
-                    args.iter().map(|a| String::from_utf8_lossy(a)).collect::<Vec<_>>(),
+                    args.iter()
+                        .map(|a| String::from_utf8_lossy(a))
+                        .collect::<Vec<_>>(),
                 );
             }
         }
@@ -580,7 +584,14 @@ fn testsuite_trailing_backslash_entry_is_requested_exactly() {
     let implied = ImpliedIncludes::from_args(opts, [&b"a\\b\\"[..]]).unwrap();
     assert!(oc_covers(&implied, b"a\\b\\", true));
     assert!(oc_covers(&implied, b"a\\b\\/f", false));
-    for bait in [&b"a\\b"[..], b"ab", b"a\\b\\\\", b"a\\\\b\\", b"a\\b/f", b"ab/f"] {
+    for bait in [
+        &b"a\\b"[..],
+        b"ab",
+        b"a\\b\\\\",
+        b"a\\\\b\\",
+        b"a\\b/f",
+        b"ab/f",
+    ] {
         assert!(
             !oc_covers(&implied, bait, true) && !oc_covers(&implied, bait, false),
             "{:?} must be refused",

@@ -70,6 +70,8 @@ pub(crate) fn run_pull_transfer(
     // upstream: main.c:1432-1435 - when pulling with --files-from pointing to a
     // local file or stdin, the client reads the file list locally and forwards
     // it to the daemon's generator over the protocol stream.
+    // Unconverted names when --iconv changed the forwarded list.
+    let mut local_files_from = None;
     if config
         .files_from()
         .resolve_for(false, config.from0())
@@ -79,7 +81,8 @@ pub(crate) fn run_pull_transfer(
             crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding(
                 config,
             )?;
-        server_config.connection.files_from_data = Some(data);
+        server_config.connection.files_from_data = Some(data.wire);
+        local_files_from = data.local;
     }
 
     // upstream: main.c:1585 / io.c:512,549 / flist.c:1372 - the requested daemon
@@ -90,7 +93,9 @@ pub(crate) fn run_pull_transfer(
     server_config.connection.implied_source_args = implied_source_args_for_pull(
         config,
         implied_source_args,
-        server_config.connection.files_from_data.as_deref(),
+        local_files_from
+            .as_deref()
+            .or(server_config.connection.files_from_data.as_deref()),
     );
     // upstream: exclude.c:476-494 / main.c:1585 - only a raw daemon module/path
     // operand is recorded with skip_daemon_module=1; forwarded --files-from

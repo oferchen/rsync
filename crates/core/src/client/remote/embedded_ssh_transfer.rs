@@ -168,6 +168,8 @@ fn run_embedded_pull(
 
     // upstream: main.c:1432-1435 - pull with a local --files-from forwards the
     // file's bytes back to the remote sender via the protocol stream.
+    // Unconverted names when --iconv changed the forwarded list.
+    let mut local_files_from = None;
     if config
         .files_from()
         .resolve_for(false, config.from0())
@@ -177,7 +179,8 @@ fn run_embedded_pull(
             crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding(
                 config,
             )?;
-        server_config.connection.files_from_data = Some(data);
+        server_config.connection.files_from_data = Some(data.wire);
+        local_files_from = data.local;
     }
 
     // upstream: main.c:1585,1605 / io.c:512,549 / flist.c:1372 - record each
@@ -186,7 +189,9 @@ fn run_embedded_pull(
     server_config.connection.implied_source_args = implied_source_args_for_pull(
         config,
         &paths,
-        server_config.connection.files_from_data.as_deref(),
+        local_files_from
+            .as_deref()
+            .or(server_config.connection.files_from_data.as_deref()),
     );
 
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));

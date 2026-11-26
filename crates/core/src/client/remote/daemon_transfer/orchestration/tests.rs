@@ -2010,7 +2010,7 @@ mod files_from_forwarding_tests {
             .files_from(FilesFromSource::LocalFile(list_file))
             .build();
 
-        let data = read_files_from_for_forwarding(&config).unwrap();
+        let data = read_files_from_for_forwarding(&config).unwrap().wire;
 
         let mut reader = Cursor::new(&data);
         let filenames = protocol::read_files_from_stream(&mut reader, None).unwrap();
@@ -2035,7 +2035,7 @@ mod files_from_forwarding_tests {
             .from0(true)
             .build();
 
-        let data = read_files_from_for_forwarding(&config).unwrap();
+        let data = read_files_from_for_forwarding(&config).unwrap().wire;
 
         let mut reader = Cursor::new(&data);
         let filenames = protocol::read_files_from_stream(&mut reader, None).unwrap();
@@ -2058,7 +2058,7 @@ mod files_from_forwarding_tests {
     fn no_forwarding_for_none() {
         let config = test_builder().build();
 
-        let data = read_files_from_for_forwarding(&config).unwrap();
+        let data = read_files_from_for_forwarding(&config).unwrap().wire;
         assert!(data.is_empty());
     }
 
@@ -2068,7 +2068,7 @@ mod files_from_forwarding_tests {
             .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
             .build();
 
-        let data = read_files_from_for_forwarding(&config).unwrap();
+        let data = read_files_from_for_forwarding(&config).unwrap().wire;
         assert!(data.is_empty());
     }
 
@@ -2082,7 +2082,7 @@ mod files_from_forwarding_tests {
             .files_from(FilesFromSource::LocalFile(list_file))
             .build();
 
-        let data = read_files_from_for_forwarding(&config).unwrap();
+        let data = read_files_from_for_forwarding(&config).unwrap().wire;
 
         assert_eq!(data, b"\0\0");
 
@@ -2101,7 +2101,7 @@ mod files_from_forwarding_tests {
             .files_from(FilesFromSource::LocalFile(list_file))
             .build();
 
-        let data = read_files_from_for_forwarding(&config).unwrap();
+        let data = read_files_from_for_forwarding(&config).unwrap().wire;
 
         let mut reader = Cursor::new(&data);
         let filenames = protocol::read_files_from_stream(&mut reader, None).unwrap();
