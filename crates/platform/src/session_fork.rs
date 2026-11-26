@@ -395,10 +395,22 @@ mod tests {
     /// group of its own exists, so the refusal is returned.
     #[test]
     fn lead_process_group_refuses_a_child_left_in_the_callers_group() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
+        // `spawn()` can return before the kernel marks the child as having
+        // exec'd (a vfork-style spawn releases the parent first), and until
+        // then `setpgid()` on it still succeeds. The shell's own `echo` proves
+        // the new program is running; `exec` keeps the pid.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "echo ready; exec sleep 30"])
+            .stdout(std::process::Stdio::piped())
             .spawn()
-            .expect("spawn sleep");
+            .expect("spawn sh");
+        let mut ready = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(child.stdout.take().expect("piped stdout")),
+            &mut ready,
+        )
+        .expect("read the ready line");
+        assert_eq!(ready, "ready\n", "the child announces that it has exec'd");
         let pid = child.id() as i32;
         let joined = lead_process_group(pid);
         child.kill().expect("kill sleep");
