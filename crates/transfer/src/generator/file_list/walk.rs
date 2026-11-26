@@ -533,6 +533,17 @@ impl GeneratorContext {
                         return Ok(true);
                     }
                 }
+                // upstream: flist.c:2969-2972 - an excluded operand is skipped
+                // before send_implied_dirs() and send_file_name(), so it
+                // contributes neither its implied parents nor itself.
+                let relative = path.strip_prefix(base).unwrap_or(path);
+                if engine::local_copy::excluded_operand_is_skipped(
+                    is_dotdir || relative.as_os_str().is_empty(),
+                    true,
+                    !self.filter_chain.allows(relative, metadata.is_dir()),
+                ) {
+                    return Ok(false);
+                }
                 // Path exists - pass pre-resolved metadata directly.
                 self.walk_path_with_metadata(base, path.to_path_buf(), metadata, true)?;
                 Ok(true)

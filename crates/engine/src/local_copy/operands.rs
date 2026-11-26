@@ -576,6 +576,23 @@ pub(crate) fn operand_is_dot_dir(path: &OsStr) -> bool {
     }
 }
 
+/// Whether a source operand is dropped before anything is sent for it: not its
+/// implied parent directories, not the operand itself.
+///
+/// An operand that exists and that the filters exclude contributes nothing to
+/// the file list. A dot-dir operand (`dir/`, `dir/.`, `.`) is never excluded,
+/// and a missing operand is not filtered at all. Every sender asks this one
+/// question, so the network sender and the local copy cannot disagree about
+/// which parents a `--relative` or `--files-from` name implies.
+///
+/// upstream: flist.c:2969-2972 - `if (name_type != DOTDIR_NAME && st.st_mode
+/// != 0 && is_excluded(fbuf, S_ISDIR(st.st_mode) != 0, ALL_FILTERS))
+/// continue;`, ahead of `send_implied_dirs()` at flist.c:2982-2997.
+#[must_use]
+pub const fn excluded_operand_is_skipped(is_dotdir: bool, exists: bool, excluded: bool) -> bool {
+    !is_dotdir && exists && excluded
+}
+
 /// Reports the directory upstream's sender cannot `chdir` into for a
 /// non-`--relative` DOTDIR operand (`dir/`, `dir/.`, `dir/..`), with the error.
 ///
@@ -948,5 +965,20 @@ mod tests {
     fn source_spec_dot_dir_anchor_none_when_no_marker() {
         let spec = SourceSpec::from_operand(&OsString::from("/src/a/b"), false).unwrap();
         assert_eq!(spec.dot_dir_anchor(), None);
+    }
+}
+
+#[cfg(test)]
+mod excluded_operand_tests {
+    use super::excluded_operand_is_skipped;
+
+    /// upstream: flist.c:2969-2972 - only an existing, non-dot-dir operand that
+    /// the filters exclude is skipped.
+    #[test]
+    fn only_an_existing_excluded_plain_operand_is_skipped() {
+        assert!(excluded_operand_is_skipped(false, true, true));
+        assert!(!excluded_operand_is_skipped(false, true, false));
+        assert!(!excluded_operand_is_skipped(true, true, true));
+        assert!(!excluded_operand_is_skipped(false, false, true));
     }
 }

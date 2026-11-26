@@ -1143,14 +1143,23 @@ fn process_single_source(
     // itself, so the implied parent directories precede the operand's row in the
     // itemize / verbose / stats stream. Surface those ancestor rows here, ahead
     // of the leaf's own record, mirroring that ordering.
-    emit_relative_implied_parents(
-        context,
-        source,
-        source_path,
-        destination_path,
-        relative_root.as_deref(),
-        destination_root_created,
-    )?;
+    //
+    // upstream: flist.c:2969-2972 - an excluded operand is skipped before
+    // send_implied_dirs(), so it implies no parents.
+    let operand_is_dotdir = file_type.is_dir() && source.copy_contents();
+    let operand_excluded = relative_root
+        .as_deref()
+        .is_some_and(|relative| !context.allows(relative, file_type.is_dir()));
+    if !crate::local_copy::excluded_operand_is_skipped(operand_is_dotdir, true, operand_excluded) {
+        emit_relative_implied_parents(
+            context,
+            source,
+            source_path,
+            destination_path,
+            relative_root.as_deref(),
+            destination_root_created,
+        )?;
+    }
 
     // Record this operand's SOURCE path as a covering root once we know it is a
     // directory being walked recursively: its full subtree enters the flist
