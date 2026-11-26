@@ -23,6 +23,7 @@ use metadata::MetadataOptions;
 use protocol::flist::{FileEntry, compare_file_entries};
 use protocol::stats::DeleteStats;
 
+use super::delete_failure::{DeleteFailure, DeleteStep, DeleteVerdict, classify};
 use super::normalize_filename_for_compare;
 use crate::receiver::ReceiverContext;
 
@@ -172,9 +173,61 @@ pub(in crate::receiver) struct DeletedEntry {
     is_symlink: bool,
     /// The entry's `st_mode` as the daemon log renders it (see [`victim_mode`]).
     mode: u32,
+    /// What became of the entry. Only a removed entry is itemized and counted;
+    /// the others are reported in its place, in the same order.
+    removal: Removal,
+}
+
+/// What became of one delete victim.
+#[derive(Debug)]
+enum Removal {
+    /// Removed, or recorded for a later `--delete-delay` removal.
+    Removed,
+    /// A directory kept because something inside it could not be removed.
+    NotEmpty,
+    /// The removal failed; reported as `delete_item()` reports it.
+    Failed(DeleteFailure),
+}
+
+impl Removal {
+    /// Maps a removal result onto upstream's `delete_item()` outcome, or
+    /// `None` for a victim that was already gone: upstream counts `ENOENT` as
+    /// success but neither logs nor counts the entry (delete.c:241, :268-269).
+    fn of(result: Result<(), DeleteFailure>) -> Option<Self> {
+        let Err(failure) = result else {
+            return Some(Self::Removed);
+        };
+        match classify(&failure) {
+            DeleteVerdict::Vanished => None,
+            DeleteVerdict::NotEmpty => Some(Self::NotEmpty),
+            DeleteVerdict::Failed => Some(Self::Failed(failure)),
+        }
+    }
+
+    const fn is_removed(&self) -> bool {
+        matches!(self, Self::Removed)
+    }
+}
+
+/// Adds one removed entry to the per-type deletion counters.
+///
+/// upstream: delete.c:243-255 - `stats.deleted_*` per removed type.
+fn count_deletion(stats: &mut DeleteStats, is_dir: bool, is_symlink: bool) {
+    if is_dir {
+        stats.dirs += 1;
+    } else if is_symlink {
+        stats.symlinks += 1;
+    } else {
+        stats.files += 1;
+    }
 }
 
 impl DeletedEntry {
+    /// Whether the entry was removed rather than kept or failed.
+    pub(in crate::receiver) const fn is_removed(&self) -> bool {
+        self.removal.is_removed()
+    }
+
     /// Deletion-root-relative path of the entry.
     pub(in crate::receiver) fn rel(&self) -> &Path {
         &self.rel
@@ -306,15 +359,33 @@ fn order_deletions_upstream(entries: Vec<DeletedEntry>) -> Vec<DeletedEntry> {
 /// siblings are visited highest-first, matching `delete_in_dir()` iterating its
 /// sorted dirlist with `for (j = dirlist->used; j--; )`.
 fn sort_reverse_dirlist(idxs: &mut [usize], nodes: &[DeletedEntry]) {
-    idxs.sort_by(|&a, &b| {
-        f_name_cmp_full(
-            &nodes[a].rel,
-            nodes[a].is_dir,
-            &nodes[b].rel,
-            nodes[b].is_dir,
-        )
-    });
-    idxs.reverse();
+    let mut keyed: Vec<(FileEntry, usize)> = idxs
+        .iter()
+        .map(|&i| (make_entry(&nodes[i].rel, nodes[i].is_dir), i))
+        .collect();
+    keyed.sort_by(|a, b| compare_file_entries(&a.0, &b.0));
+    for (slot, (_, i)) in idxs.iter_mut().zip(keyed.into_iter().rev()) {
+        *slot = i;
+    }
+}
+
+/// Puts `items` in upstream's reverse-dirlist order: ascending `f_name_cmp`,
+/// then reversed, as `delete_in_dir()` walks its sorted dirlist from the end.
+///
+/// Each item's comparison entry is built once, not twice per comparison, so a
+/// large directory costs one allocation per entry rather than per comparison.
+///
+/// upstream: generator.c:364-368.
+fn sort_reverse_dirlist_by<T>(items: &mut Vec<T>, key: impl Fn(&T) -> (&Path, bool)) {
+    let mut keyed: Vec<(FileEntry, T)> = items
+        .drain(..)
+        .map(|item| {
+            let (path, is_dir) = key(&item);
+            (make_entry(path, is_dir), item)
+        })
+        .collect();
+    keyed.sort_by(|a, b| compare_file_entries(&a.0, &b.0));
+    items.extend(keyed.into_iter().rev().map(|(_, item)| item));
 }
 
 /// Appends one entry and its subtree in upstream emission order: a directory's
@@ -421,6 +492,7 @@ fn record_doomed_dir_descendants(
             is_dir,
             is_symlink,
             mode,
+            removal: Removal::Removed,
         });
     }
     filter.leave(guard);
@@ -462,11 +534,6 @@ impl DeletionFilter<'_> {
     }
 }
 
-/// Removes the recorded victims of a directory a protected descendant keeps,
-/// deepest first, and leaves in `victims` only those actually removed.
-///
-/// upstream: delete.c:141-164 delete_dir_contents() deletes each listed child
-/// and leaves the directory itself when anything stayed.
 /// Backup policy passed to victim-removal helpers so doomed-directory
 /// descendants are preserved under `--backup` before unlinking.
 struct VictimBackupPolicy<'a> {
@@ -482,79 +549,148 @@ fn remove_single_dir(
     dest_dir: &Path,
     rel: &Path,
     path: &Path,
-) -> io::Result<()> {
+) -> Result<(), DeleteFailure> {
     #[cfg(unix)]
-    {
-        fast_io::unlink_via_sandbox_or_fallback(
-            sandbox,
-            dest_dir,
-            rel,
-            path,
-            fast_io::UnlinkFlags::Dir,
-        )
-    }
+    let result = fast_io::unlink_via_sandbox_or_fallback(
+        sandbox,
+        dest_dir,
+        rel,
+        path,
+        fast_io::UnlinkFlags::Dir,
+    );
     #[cfg(not(unix))]
-    {
+    let result = {
         let _ = (dest_dir, rel);
         std::fs::remove_dir(path)
-    }
+    };
+    result.map_err(|error| DeleteFailure::new(DeleteStep::Rmdir, error))
 }
 
+/// Removes recorded victims deepest first, recording on each what became of
+/// it, and drops the ones that were already gone.
+///
+/// A victim that could not be removed keeps every directory above it: those
+/// are not attempted and come out as [`Removal::NotEmpty`], each named once,
+/// as `delete_dir_contents()` names them. A failure never stops the walk.
+///
+/// `already_attempted` marks a second pass after a wholesale removal failed
+/// part way: a victim missing by then was removed by that first attempt, so
+/// it is recorded as removed instead of dropped.
+///
+/// upstream: delete.c:141-180 delete_dir_contents() deletes each listed child
+/// through delete_item() and leaves (and names) a directory when anything in
+/// it stayed.
 fn remove_recorded_victims(
     #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     dest_dir: &Path,
     victims: &mut Vec<DeletedEntry>,
     backup: &VictimBackupPolicy<'_>,
-) -> io::Result<()> {
-    for victim in order_deletions_upstream(std::mem::take(victims)) {
-        let path = dest_dir.join(&victim.rel);
-        let result = if victim.is_dir {
-            remove_single_dir(
-                #[cfg(unix)]
-                sandbox,
-                dest_dir,
-                &victim.rel,
-                &path,
-            )
+    already_attempted: bool,
+) {
+    let mut kept: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for mut victim in order_deletions_upstream(std::mem::take(victims)) {
+        let removal = if victim.is_dir && kept.contains(&victim.rel) {
+            Some(Removal::NotEmpty)
         } else {
-            #[cfg(unix)]
-            {
-                super::backup::remove_file_victim(
-                    backup.enabled,
-                    backup.backup_dir,
-                    backup.suffix,
-                    &path,
-                    &victim.rel,
-                    dest_dir,
+            let path = dest_dir.join(&victim.rel);
+            let result = if victim.is_dir {
+                remove_single_dir(
+                    #[cfg(unix)]
                     sandbox,
-                    backup.metadata_opts,
-                    backup.backup_dir_cache,
-                )
-            }
-            #[cfg(not(unix))]
-            {
-                super::backup::remove_file_victim(
-                    backup.enabled,
-                    backup.backup_dir,
-                    backup.suffix,
-                    &path,
                     dest_dir,
-                    backup.metadata_opts,
-                    backup.backup_dir_cache,
+                    &victim.rel,
+                    &path,
                 )
-            }
-        };
-        match result {
-            Ok(()) => victims.push(victim),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                if let Some(error) = fail_loud_unlink_error(error) {
-                    return Err(error);
+            } else {
+                #[cfg(unix)]
+                {
+                    super::backup::remove_file_victim(
+                        backup.enabled,
+                        backup.backup_dir,
+                        backup.suffix,
+                        &path,
+                        &victim.rel,
+                        dest_dir,
+                        sandbox,
+                        backup.metadata_opts,
+                        backup.backup_dir_cache,
+                    )
                 }
-            }
+                #[cfg(not(unix))]
+                {
+                    super::backup::remove_file_victim(
+                        backup.enabled,
+                        backup.backup_dir,
+                        backup.suffix,
+                        &path,
+                        dest_dir,
+                        backup.metadata_opts,
+                        backup.backup_dir_cache,
+                    )
+                }
+            };
+            Removal::of(result).or(already_attempted.then_some(Removal::Removed))
+        };
+        let Some(removal) = removal else {
+            continue;
+        };
+        if !removal.is_removed() {
+            kept.extend(victim.rel.ancestors().skip(1).map(Path::to_path_buf));
         }
+        victim.removal = removal;
+        victims.push(victim);
     }
-    Ok(())
+}
+
+/// Removes a doomed directory whose recorded descendants are all victims,
+/// and returns what became of the directory itself (`None` if it was already
+/// gone).
+///
+/// Without `--backup` the subtree goes in one anchored recursive removal. If
+/// that fails, the victims are walked one by one so each failure is reported
+/// on the entry that caused it.
+///
+/// upstream: delete.c:198-209 - delete_item() empties the directory through
+/// delete_dir_contents() and removes it only when that left it empty.
+fn remove_doomed_dir(
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    rel: &Path,
+    path: &Path,
+    subtree: &mut Vec<DeletedEntry>,
+    backup: &VictimBackupPolicy<'_>,
+) -> Option<Removal> {
+    let already_attempted = !backup.enabled && {
+        // SEC-1.q2 audit row #6
+        #[cfg(unix)]
+        let wholesale =
+            fast_io::recursive_unlinkat_via_sandbox_or_fallback(sandbox, dest_dir, rel, path);
+        #[cfg(not(unix))]
+        let wholesale = std::fs::remove_dir_all(path);
+        match wholesale {
+            Ok(()) => return Some(Removal::Removed),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+            Err(_) => true,
+        }
+    };
+    remove_recorded_victims(
+        #[cfg(unix)]
+        sandbox,
+        dest_dir,
+        subtree,
+        backup,
+        already_attempted,
+    );
+    if subtree.iter().any(|victim| !victim.is_removed()) {
+        return Some(Removal::NotEmpty);
+    }
+    Removal::of(remove_single_dir(
+        #[cfg(unix)]
+        sandbox,
+        dest_dir,
+        rel,
+        path,
+    ))
 }
 
 /// Lists the immediate children of a directory as `(name, is_dir, is_symlink)`,
@@ -683,6 +819,25 @@ fn parent_dir(relative: &Path) -> PathBuf {
 }
 
 impl ReceiverContext {
+    /// Reports a victim that was not removed: a kept directory is named, a
+    /// failed removal gets `delete_item()`'s line.
+    ///
+    /// upstream: delete.c:178-180 and :260-267.
+    fn report_removal<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        rel: &Path,
+        removal: &Removal,
+    ) {
+        match removal {
+            Removal::Removed => {}
+            Removal::NotEmpty => self.report_non_empty_dir(writer, rel),
+            Removal::Failed(failure) => {
+                self.report_delete_failure(writer, rel, failure);
+            }
+        }
+    }
+
     /// Deletes extraneous destination entries immediately: scan, unlink, and emit
     /// the `deleting`/`*deleting` lines in one pass. Used by `--delete-before`,
     /// `--delete-during`, and `--delete-after`.
@@ -804,7 +959,6 @@ impl ReceiverContext {
         let sandbox_ref = sandbox.map(|arc| arc.as_ref());
         let mut stats = DeleteStats::new();
         let mut removed = Vec::new();
-        let mut io_bits: i32 = 0;
         let emit_itemize = self.should_emit_itemize();
         let server_mode = !self.config.connection.client_mode;
         let protocol = self.protocol.as_u8();
@@ -818,8 +972,8 @@ impl ReceiverContext {
             // upstream: syscall.c:848-850 do_unlink() and syscall.c:1598-1600
             // do_rmdir() return 0 under dry_run, so delete_item() logs and
             // counts the victim without removing it.
-            let result = if self.config.flags.dry_run {
-                Ok(())
+            let removal = if self.config.flags.dry_run {
+                Some(Removal::Removed)
             } else if entry.is_dir && self.config.flags.backup {
                 let mut subtree = Vec::new();
                 let mut kept = Vec::new();
@@ -848,94 +1002,87 @@ impl ReceiverContext {
                     dest_dir,
                     &mut subtree,
                     &backup,
-                )?;
-                if emptied {
-                    remove_single_dir(
+                    false,
+                );
+                let mut child_kept = false;
+                for victim in subtree.iter().filter(|victim| !victim.is_removed()) {
+                    child_kept = true;
+                    self.report_removal(writer, &victim.rel, &victim.removal);
+                }
+                if child_kept {
+                    Some(Removal::NotEmpty)
+                } else if emptied {
+                    Removal::of(remove_single_dir(
                         #[cfg(unix)]
                         sandbox_ref,
                         dest_dir,
                         &entry.rel,
                         &path,
-                    )
+                    ))
                 } else {
-                    Ok(())
+                    Some(Removal::Removed)
                 }
             } else if entry.is_dir {
                 // upstream: delete.c:delete_item() -> delete_dir_contents() for a
                 // directory victim; recursive removal mirrors the immediate pass.
                 #[cfg(unix)]
-                {
-                    fast_io::recursive_unlinkat_via_sandbox_or_fallback(
-                        sandbox_ref,
-                        dest_dir,
-                        &entry.rel,
-                        &path,
-                    )
-                }
+                let result = fast_io::recursive_unlinkat_via_sandbox_or_fallback(
+                    sandbox_ref,
+                    dest_dir,
+                    &entry.rel,
+                    &path,
+                );
                 #[cfg(not(unix))]
-                {
-                    std::fs::remove_dir_all(&path)
-                }
+                let result = std::fs::remove_dir_all(&path);
+                Removal::of(result.map_err(|error| DeleteFailure::new(DeleteStep::Rmdir, error)))
             } else {
-                // upstream: delete.c:165-174 - back up the victim (when
+                // upstream: delete.c:228-237 - back up the victim (when
                 // --backup) before unlinking; a preserved victim is already
                 // gone, so the direct unlink is skipped.
                 #[cfg(unix)]
-                {
-                    super::backup::remove_file_victim(
-                        self.config.flags.backup,
-                        self.config.backup_dir.as_deref().map(Path::new),
-                        self.config.effective_backup_suffix(),
-                        &path,
-                        &entry.rel,
-                        dest_dir,
-                        sandbox_ref,
-                        &metadata_opts,
-                        &self.backup_dir_cache,
-                    )
-                }
+                let result = super::backup::remove_file_victim(
+                    self.config.flags.backup,
+                    self.config.backup_dir.as_deref().map(Path::new),
+                    self.config.effective_backup_suffix(),
+                    &path,
+                    &entry.rel,
+                    dest_dir,
+                    sandbox_ref,
+                    &metadata_opts,
+                    &self.backup_dir_cache,
+                );
                 #[cfg(not(unix))]
-                {
-                    super::backup::remove_file_victim(
-                        self.config.flags.backup,
-                        self.config.backup_dir.as_deref().map(Path::new),
-                        self.config.effective_backup_suffix(),
-                        &path,
-                        dest_dir,
-                        &metadata_opts,
-                        &self.backup_dir_cache,
-                    )
-                }
+                let result = super::backup::remove_file_victim(
+                    self.config.flags.backup,
+                    self.config.backup_dir.as_deref().map(Path::new),
+                    self.config.effective_backup_suffix(),
+                    &path,
+                    dest_dir,
+                    &metadata_opts,
+                    &self.backup_dir_cache,
+                );
+                Removal::of(result)
             };
-            match result {
-                Ok(()) => {
-                    if entry.is_dir {
-                        stats.dirs += 1;
-                    } else if entry.is_symlink {
-                        stats.symlinks += 1;
-                    } else {
-                        stats.files += 1;
-                    }
-                    msg_budget.emit(
-                        writer,
-                        &entry.rel,
-                        entry.is_dir,
-                        server_mode,
-                        protocol,
-                        emit_itemize,
-                        suppress_msg_deleted,
-                    )?;
-                    removed.push(entry);
-                }
-                Err(e) => {
-                    debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
-                    if fail_loud_unlink_error(e).is_some() {
-                        io_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
-                    }
-                }
+            let Some(removal) = removal else {
+                continue;
+            };
+            if removal.is_removed() {
+                count_deletion(&mut stats, entry.is_dir, entry.is_symlink);
+                msg_budget.emit(
+                    writer,
+                    &entry.rel,
+                    entry.is_dir,
+                    server_mode,
+                    protocol,
+                    emit_itemize,
+                    suppress_msg_deleted,
+                )?;
+                removed.push(entry);
+            } else {
+                self.report_removal(writer, &entry.rel, &removal);
             }
         }
-        Ok((stats, io_bits, removed))
+        Ok((stats, 0, removed))
     }
 
     /// Replays the candidates a `--delete-delay` run remembered through the
@@ -1453,31 +1600,38 @@ impl ReceiverContext {
                     // contents are scanned for deletion.
                     debug_log!(Del, 2, "delete_in_dir({})", dest_path.display());
 
-                    for entry in read_dir_iter {
-                        #[cfg(unix)]
-                        let (name, kind) = match entry {
-                            Ok(view) => (view.file_name().to_os_string(), view.file_type()),
-                            Err(_) => continue,
-                        };
-                        #[cfg(unix)]
-                        let is_dir = kind.is_some_and(fast_io::EntryKind::is_dir);
-                        #[cfg(unix)]
-                        let is_symlink = kind.is_some_and(fast_io::EntryKind::is_symlink);
+                    #[cfg(unix)]
+                    let mut listed: Vec<(std::ffi::OsString, bool, bool)> = read_dir_iter
+                        .filter_map(Result::ok)
+                        .map(|view| {
+                            let kind = view.file_type();
+                            (
+                                view.file_name().to_os_string(),
+                                kind.is_some_and(fast_io::EntryKind::is_dir),
+                                kind.is_some_and(fast_io::EntryKind::is_symlink),
+                            )
+                        })
+                        .collect();
+                    #[cfg(not(unix))]
+                    let mut listed: Vec<(std::ffi::OsString, bool, bool)> = read_dir_iter
+                        .filter_map(Result::ok)
+                        .map(|entry| {
+                            let file_type = entry.file_type().ok();
+                            (
+                                entry.file_name(),
+                                file_type.as_ref().is_some_and(|ft| ft.is_dir()),
+                                file_type.as_ref().is_some_and(|ft| ft.is_symlink()),
+                            )
+                        })
+                        .collect();
+                    // upstream: generator.c:364-368 - the dirlist is sorted and
+                    // walked from the end. The visit order is observable: a
+                    // removal can change what a later one finds, as when a
+                    // victim is backed up into a --backup-dir that is itself
+                    // further down the list.
+                    sort_reverse_dirlist_by(&mut listed, |entry| (Path::new(&entry.0), entry.1));
 
-                        #[cfg(not(unix))]
-                        let entry = match entry {
-                            Ok(e) => e,
-                            Err(_) => continue,
-                        };
-                        #[cfg(not(unix))]
-                        let name = entry.file_name();
-                        #[cfg(not(unix))]
-                        let file_type = entry.file_type().ok();
-                        #[cfg(not(unix))]
-                        let is_dir = file_type.as_ref().is_some_and(|ft| ft.is_dir());
-                        #[cfg(not(unix))]
-                        let is_symlink = file_type.as_ref().is_some_and(|ft| ft.is_symlink());
-
+                    for (name, is_dir, is_symlink) in listed {
                         let normalized = normalize_filename_for_compare(&name);
                         if keep.contains(&normalized) {
                             continue;
@@ -1608,132 +1762,94 @@ impl ReceiverContext {
                             metadata_opts: &metadata_opts_owned,
                             backup_dir_cache: &backup_dir_cache,
                         };
-                        let result = if collect_only || dry_run {
-                            Ok(())
-                        } else if !emptied {
-                            remove_recorded_victims(
-                                #[cfg(unix)]
-                                sandbox_ref,
-                                &dest_dir_owned,
-                                &mut subtree,
-                                &backup_policy,
-                            )
-                        } else if is_dir && backup_enabled {
-                            remove_recorded_victims(
-                                #[cfg(unix)]
-                                sandbox_ref,
-                                &dest_dir_owned,
-                                &mut subtree,
-                                &backup_policy,
-                            )
-                            .and_then(|()| {
-                                remove_single_dir(
-                                    #[cfg(unix)]
-                                    sandbox_ref,
-                                    &dest_dir_owned,
-                                    &entry_rel,
-                                    &path,
-                                )
-                            })
-                        } else if is_dir {
-                            // SEC-1.q2 audit row #6
-                            #[cfg(unix)]
-                            {
-                                fast_io::recursive_unlinkat_via_sandbox_or_fallback(
-                                    sandbox_ref,
-                                    &dest_dir_owned,
-                                    &entry_rel,
-                                    &path,
-                                )
+                        if collect_only || dry_run {
+                            for recorded in &subtree {
+                                count_deletion(&mut stats, recorded.is_dir, recorded.is_symlink);
                             }
-                            #[cfg(not(unix))]
-                            {
-                                std::fs::remove_dir_all(&path)
-                            }
-                        } else {
-                            // upstream: delete.c:165-174 - back up the file
-                            // victim (when --backup) before unlinking it.
-                            // SEC-1.q2 audit row #7: the fallback unlink still
-                            // routes through the sandbox dirfd.
-                            #[cfg(unix)]
-                            {
-                                super::backup::remove_file_victim(
-                                    backup_enabled,
-                                    backup_dir_owned.as_deref(),
-                                    &backup_suffix,
-                                    &path,
-                                    &entry_rel,
-                                    &dest_dir_owned,
-                                    sandbox_ref,
-                                    &metadata_opts_owned,
-                                    &backup_dir_cache,
-                                )
-                            }
-                            #[cfg(not(unix))]
-                            {
-                                super::backup::remove_file_victim(
-                                    backup_enabled,
-                                    backup_dir_owned.as_deref(),
-                                    &backup_suffix,
-                                    &path,
-                                    &dest_dir_owned,
-                                    &metadata_opts_owned,
-                                    &backup_dir_cache,
-                                )
-                            }
-                        };
-
-                        match result {
-                            Ok(()) => {
-                                // Count and record every enumerated descendant
-                                // (empty unless this entry is a doomed dir),
-                                // then the entry itself. upstream: delete_item()
-                                // bumps stats.deleted_* once per removed entry.
-                                for descendant in &subtree {
-                                    if descendant.is_dir {
-                                        stats.dirs += 1;
-                                    } else if descendant.is_symlink {
-                                        stats.symlinks += 1;
-                                    } else {
-                                        stats.files += 1;
-                                    }
-                                }
-                                deleted_paths.extend(subtree);
-                                if !emptied {
-                                    continue;
-                                }
-                                if is_dir {
-                                    stats.dirs += 1;
-                                } else if is_symlink {
-                                    stats.symlinks += 1;
-                                } else {
-                                    stats.files += 1;
-                                }
-                                // The `deleting`/`*deleting` lines are emitted
-                                // after the parallel pass in the deterministic
-                                // upstream sorted order (see
-                                // `order_deletions_upstream`); workers only
-                                // record what was deleted so the unlinks stay
-                                // parallel.
+                            deleted_paths.extend(subtree);
+                            if emptied {
+                                count_deletion(&mut stats, is_dir, is_symlink);
                                 deleted_paths.push(DeletedEntry {
                                     rel: entry_rel,
                                     is_dir,
                                     is_symlink,
                                     mode,
+                                    removal: Removal::Removed,
                                 });
                             }
-                            Err(e) => {
-                                debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
-                                // EDG-SANDBOX.B: same discriminator as the
-                                // scan-error helper. EACCES / NotFound are
-                                // upstream-parity non-fatal classes; every
-                                // other class (ELOOP/EOPNOTSUPP/ENOTDIR/EPERM)
-                                // is a security boundary the worker must
-                                // surface so the outer caller's `Err`
-                                // propagation produces a non-zero exit.
-                                if let Some(err) = fail_loud_unlink_error(e) {
-                                    return (stats, deleted_paths, Some(err));
+                        } else {
+                            let removal = if !emptied {
+                                // The directory a protected descendant keeps
+                                // stays; only its recorded victims go.
+                                remove_recorded_victims(
+                                    #[cfg(unix)]
+                                    sandbox_ref,
+                                    &dest_dir_owned,
+                                    &mut subtree,
+                                    &backup_policy,
+                                    false,
+                                );
+                                None
+                            } else if is_dir && !is_symlink {
+                                remove_doomed_dir(
+                                    #[cfg(unix)]
+                                    sandbox_ref,
+                                    &dest_dir_owned,
+                                    &entry_rel,
+                                    &path,
+                                    &mut subtree,
+                                    &backup_policy,
+                                )
+                            } else {
+                                // upstream: delete.c:228-237 - back up the
+                                // file victim (when --backup) before unlinking
+                                // it. SEC-1.q2 audit row #7: the fallback
+                                // unlink still routes through the sandbox dirfd.
+                                #[cfg(unix)]
+                                let result = super::backup::remove_file_victim(
+                                    backup_enabled,
+                                    backup_dir_owned.as_deref(),
+                                    &backup_suffix,
+                                    &path,
+                                    &entry_rel,
+                                    &dest_dir_owned,
+                                    sandbox_ref,
+                                    &metadata_opts_owned,
+                                    &backup_dir_cache,
+                                );
+                                #[cfg(not(unix))]
+                                let result = super::backup::remove_file_victim(
+                                    backup_enabled,
+                                    backup_dir_owned.as_deref(),
+                                    &backup_suffix,
+                                    &path,
+                                    &dest_dir_owned,
+                                    &metadata_opts_owned,
+                                    &backup_dir_cache,
+                                );
+                                Removal::of(result)
+                            };
+                            // upstream: delete_item() bumps stats.deleted_*
+                            // once per removed entry.
+                            for removed in subtree.iter().filter(|v| v.is_removed()) {
+                                count_deletion(&mut stats, removed.is_dir, removed.is_symlink);
+                            }
+                            deleted_paths.extend(subtree);
+                            if let Some(removal) = removal {
+                                if removal.is_removed() {
+                                    count_deletion(&mut stats, is_dir, is_symlink);
                                 }
+                                // Lines are emitted after the parallel pass,
+                                // in upstream's order (see
+                                // `order_deletions_upstream`), so the unlinks
+                                // stay parallel.
+                                deleted_paths.push(DeletedEntry {
+                                    rel: entry_rel,
+                                    is_dir,
+                                    is_symlink,
+                                    mode,
+                                    removal,
+                                });
                             }
                         }
                     }
@@ -1748,11 +1864,10 @@ impl ReceiverContext {
         writer.maybe_send_keepalive_once_written()?;
 
         let mut combined = DeleteStats::new();
-        // UTS-16.b: any worker that hit a fail-loud sandbox class (ELOOP /
-        // EOPNOTSUPP / ENOTDIR / EPERM) surfaces IOERR_GENERAL here so the
-        // receiver's overall io_error bit drives a non-zero exit (RERR_PARTIAL=23)
-        // instead of either silently skipping or aborting the whole receiver
-        // pass.
+        // UTS-16.b: a directory whose listing hit a fail-loud sandbox class
+        // (ELOOP / EOPNOTSUPP / ENOTDIR / EPERM) surfaces IOERR_GENERAL here so
+        // the run exits RERR_PARTIAL (23). A failed removal is reported per
+        // entry in the emission loop below instead.
         let mut io_err_bits: i32 = 0;
         let mut all_deleted: Vec<DeletedEntry> = Vec::new();
         // (populated below; reordered post-loop by order_deletions_upstream)
@@ -1790,20 +1905,30 @@ impl ReceiverContext {
             let suppress_msg_deleted = self.config.deletion.suppress_msg_deleted;
             let mut msg_budget = MsgDeletedBudget::new();
             for entry in &all_deleted {
-                // upstream: log.c:930 log_delete() - a server generator forwards
-                // the raw name as MSG_DELETED; a local/client receiver renders
-                // "deleting %n" directly (%n appends a trailing slash for dirs).
-                msg_budget.emit(
-                    writer,
-                    &entry.rel,
-                    entry.is_dir,
-                    server_mode,
-                    protocol,
-                    emit_itemize,
-                    suppress_msg_deleted,
-                )?;
+                match &entry.removal {
+                    // upstream: log.c:930 log_delete() - a server generator
+                    // forwards the raw name as MSG_DELETED; a local/client
+                    // receiver renders "deleting %n" directly (%n appends a
+                    // trailing slash for dirs).
+                    Removal::Removed => msg_budget.emit(
+                        writer,
+                        &entry.rel,
+                        entry.is_dir,
+                        server_mode,
+                        protocol,
+                        emit_itemize,
+                        suppress_msg_deleted,
+                    )?,
+                    Removal::NotEmpty | Removal::Failed(_) => {
+                        self.report_removal(writer, &entry.rel, &entry.removal);
+                    }
+                }
             }
         }
+        let all_deleted = all_deleted
+            .into_iter()
+            .filter(DeletedEntry::is_removed)
+            .collect();
 
         // Only the serial executor above enforces a cap, so nothing is skipped
         // on this path.
@@ -2099,8 +2224,7 @@ impl ReceiverContext {
             // Sort ascending with the full comparator (files before dirs at a
             // level) then reverse so the prefix deleted when the cap trips
             // matches upstream's traversal.
-            candidates.sort_by(|a, b| f_name_cmp_full(&a.rel, a.is_dir, &b.rel, b.is_dir));
-            candidates.reverse();
+            sort_reverse_dirlist_by(&mut candidates, |c| (c.rel.as_path(), c.is_dir));
 
             let mut remembered = Vec::new();
             for candidate in candidates {
@@ -2428,8 +2552,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 return Ok(false);
             }
         };
-        children.sort_by(|a, b| f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1));
-        children.reverse();
+        sort_reverse_dirlist_by(&mut children, |child| (Path::new(&child.0), child.1));
 
         let guard = filter.enter(path);
         let mut all_removed = true;
@@ -2602,11 +2725,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
     /// `rprintf(FINFO, ..)`, not counted and not an I/O error. rwrite() ignores
     /// the write result.
     fn report_non_empty_dir(&mut self, rel: &Path) {
-        let name = rel.display().to_string().replace('\\', "/");
-        let _ = self.receiver.emit_info_line(
-            self.writer,
-            &format!("cannot delete non-empty directory: {name}\n"),
-        );
+        self.receiver.report_non_empty_dir(self.writer, rel);
     }
 
     /// Issues the actual removal for one leaf, updates the stats/itemize on
@@ -2640,6 +2759,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                         is_dir,
                         is_symlink,
                         mode,
+                        removal: Removal::Removed,
                     });
                 }
                 self.deleted = self.deleted.saturating_add(1);
@@ -2665,20 +2785,12 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 }
                 Ok(true)
             }
-            Err(e) => {
-                debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
-                // upstream: delete.c:259-263 - an rmdir that fails ENOTEMPTY
-                // names the directory and moves on.
-                if is_dir && super::obstacle::is_not_empty(&e) {
-                    self.report_non_empty_dir(rel);
-                    return Ok(false);
-                }
-                if let Some(err) = fail_loud_unlink_error(e) {
-                    return Err(err);
-                }
-                // EACCES / NotFound: upstream leaves the entry and continues.
-                Ok(false)
-            }
+            // upstream: delete.c:260-269 - ENOENT counts as removed; any other
+            // failure is reported and the pass moves on.
+            Err(failure) => Ok(self
+                .receiver
+                .report_delete_failure(self.writer, rel, &failure)
+                == DeleteVerdict::Vanished),
         }
     }
 
@@ -2686,8 +2798,8 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
     /// one leaf, anchored through the sandbox helper on Unix.
     ///
     /// A file victim is first backed up when `--backup` is set (upstream
-    /// delete.c:165-174); directories are never backed up here.
-    fn raw_unlink(&self, rel: &Path, path: &Path, is_dir: bool) -> io::Result<()> {
+    /// delete.c:228-237); directories are never backed up here.
+    fn raw_unlink(&self, rel: &Path, path: &Path, is_dir: bool) -> Result<(), DeleteFailure> {
         // upstream: syscall.c:848-850 do_unlink() and syscall.c:1598-1600
         // do_rmdir() return 0 without touching the filesystem under dry_run.
         if self.dry_run {
@@ -2696,13 +2808,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         #[cfg(unix)]
         {
             if is_dir {
-                return fast_io::unlink_via_sandbox_or_fallback(
-                    self.sandbox,
-                    self.dest_dir,
-                    rel,
-                    path,
-                    fast_io::UnlinkFlags::Dir,
-                );
+                return remove_single_dir(self.sandbox, self.dest_dir, rel, path);
             }
             super::backup::remove_file_victim(
                 self.backup,
@@ -2718,9 +2824,8 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         }
         #[cfg(not(unix))]
         {
-            let _ = rel;
             if is_dir {
-                std::fs::remove_dir(path)
+                remove_single_dir(self.dest_dir, rel, path)
             } else {
                 super::backup::remove_file_victim(
                     self.backup,
@@ -3096,6 +3201,7 @@ mod tests {
             is_dir,
             is_symlink: false,
             mode: if is_dir { 0o040_000 } else { 0o100_000 },
+            removal: Removal::Removed,
         }
     }
 

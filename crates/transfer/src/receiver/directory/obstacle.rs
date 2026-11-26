@@ -56,6 +56,7 @@ use std::io;
 use std::path::Path;
 
 #[cfg(any(unix, windows))]
+use super::delete_failure::{DeleteFailure, DeleteStep, DeleteVerdict};
 #[cfg(any(unix, windows))]
 use crate::receiver::ReceiverContext;
 
@@ -357,31 +358,14 @@ impl ReceiverContext {
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
-        if error.kind() == io::ErrorKind::NotFound {
+        // upstream: delete.c:178-181 - the emptiness notice is FINFO and
+        // leaves the exit code alone; the make-way line that follows is what
+        // lifts it to RERR_PARTIAL.
+        let failure = DeleteFailure::new(DeleteStep::Rmdir, error);
+        if self.report_delete_failure(writer, relative_path, &failure) == DeleteVerdict::Vanished {
             return Ok(());
         }
-        if is_not_empty(&error) {
-            // upstream: delete.c:178-181 - delete_dir_contents() reports the
-            // emptiness probe at FINFO before delete_item() names the item it
-            // blocked. FINFO leaves the exit code alone; the FERROR_XFER line
-            // that follows is what lifts it to RERR_PARTIAL.
-            let _ = self.emit_info_line(
-                writer,
-                &format!(
-                    "cannot delete non-empty directory: {}\n",
-                    relative_path.display()
-                ),
-            );
-        } else {
-            // upstream: delete.c:264-266 - rsyserr(FERROR_XFER, errno,
-            // "delete_file: %s(%s) failed", what, fbuf).
-            let _ = self.emit_generator_error_xfer(
-                writer,
-                &format!("delete_file: rmdir({}) failed", relative_path.display()),
-                &error,
-            );
-        }
-        self.report_make_way_failure(writer, relative_path, make_way_for, error)
+        self.report_make_way_failure(writer, relative_path, make_way_for, failure.error)
     }
 
     /// Renders a failed obstacle `unlink` the way `delete_item` does.
@@ -399,15 +383,11 @@ impl ReceiverContext {
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
-        if error.kind() == io::ErrorKind::NotFound {
+        let failure = DeleteFailure::new(DeleteStep::Unlink, error);
+        if self.report_delete_failure(writer, relative_path, &failure) == DeleteVerdict::Vanished {
             return Ok(());
         }
-        let _ = self.emit_generator_error_xfer(
-            writer,
-            &format!("delete_file: unlink({}) failed", relative_path.display()),
-            &error,
-        );
-        self.report_make_way_failure(writer, relative_path, make_way_for, error)
+        self.report_make_way_failure(writer, relative_path, make_way_for, failure.error)
     }
 
     /// Emits `could not make way for new %s: %s` and returns the error so the

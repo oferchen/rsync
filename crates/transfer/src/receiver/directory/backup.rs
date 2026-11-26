@@ -33,6 +33,7 @@ use std::path::Path;
 #[cfg(any(unix, windows))]
 use metadata::MetadataOptions;
 
+use super::delete_failure::{DeleteFailure, DeleteStep};
 #[cfg(any(unix, windows))]
 use crate::receiver::ReceiverContext;
 
@@ -586,7 +587,10 @@ pub(in crate::receiver::directory) fn backup_victim(
 /// serial executor. When the backup took ownership of the victim the direct
 /// unlink is skipped.
 ///
-/// upstream: `delete.c:165-174` - back up under the guard, otherwise unlink.
+/// A failure names the step that returned it, so the caller can print
+/// upstream's `delete_file: make_backup(...)` or `delete_file: unlink(...)`.
+///
+/// upstream: `delete.c:228-237` - back up under the guard, otherwise unlink.
 #[cfg(unix)]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::receiver::directory) fn remove_file_victim(
@@ -599,8 +603,8 @@ pub(in crate::receiver::directory) fn remove_file_victim(
     sandbox: Option<&fast_io::DirSandbox>,
     metadata_opts: &MetadataOptions,
     backup_dir_cache: &engine::BackupDirCache,
-) -> io::Result<()> {
-    if backup_victim(
+) -> Result<(), DeleteFailure> {
+    let backed_up = backup_victim(
         backup,
         backup_dir,
         suffix,
@@ -610,7 +614,9 @@ pub(in crate::receiver::directory) fn remove_file_victim(
         sandbox,
         metadata_opts,
         backup_dir_cache,
-    )? {
+    )
+    .map_err(|error| DeleteFailure::new(DeleteStep::MakeBackup, error))?;
+    if backed_up {
         return Ok(());
     }
     fast_io::unlink_via_sandbox_or_fallback(
@@ -620,6 +626,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
         existing,
         fast_io::UnlinkFlags::File,
     )
+    .map_err(|error| DeleteFailure::new(DeleteStep::Unlink, error))
 }
 
 /// Non-Unix variant of [`remove_file_victim`]: path-based removal, with the
@@ -633,10 +640,10 @@ pub(in crate::receiver::directory) fn remove_file_victim(
     dest_dir: &std::path::Path,
     metadata_opts: &MetadataOptions,
     backup_dir_cache: &engine::BackupDirCache,
-) -> std::io::Result<()> {
+) -> Result<(), DeleteFailure> {
     #[cfg(windows)]
     {
-        if backup_victim(
+        let backed_up = backup_victim(
             backup,
             backup_dir,
             suffix,
@@ -644,7 +651,9 @@ pub(in crate::receiver::directory) fn remove_file_victim(
             dest_dir,
             metadata_opts,
             backup_dir_cache,
-        )? {
+        )
+        .map_err(|error| DeleteFailure::new(DeleteStep::MakeBackup, error))?;
+        if backed_up {
             return Ok(());
         }
     }
@@ -652,7 +661,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
     {
         let _ = (backup, backup_dir, suffix, dest_dir, metadata_opts);
     }
-    std::fs::remove_file(existing)
+    std::fs::remove_file(existing).map_err(|error| DeleteFailure::new(DeleteStep::Unlink, error))
 }
 
 impl ReceiverContext {
