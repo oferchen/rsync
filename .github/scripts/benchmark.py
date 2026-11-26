@@ -189,6 +189,18 @@ TESTS = [
         "args": "-avc {src}/ {dst}/",
         "reset": False,
     },
+    # Every file has an identical twin (content and mtime) in the
+    # --copy-dest directory, so each one is copied from the alternate tree
+    # rather than sent. This is the path issue #8838 found 17% slower than
+    # rsync 3.5.2.
+    {
+        "id": "local_copy_dest_initial",
+        "name": "Initial sync from --copy-dest (10,000 files)",
+        "mode": "local",
+        "fixture": "copy_dest",
+        "args": "-av --copy-dest={src}.alt {src}/ {dst}/",
+        "reset": True,
+    },
     # SSH pull (local=receiver, remote=sender)
     {
         "id": "ssh_pull_initial",
@@ -741,6 +753,25 @@ def tree_size(path):
     )
 
 
+def make_alt_dest_fixture(path, files, size):
+    """Create `files` random files under `path` and a twin tree at `path.alt`.
+
+    Each twin has the same bytes and mtime as its source file, so the
+    quick check matches and rsync copies it from the alternate tree.
+    Returns the source tree's byte size.
+    """
+    alt = f"{path}.alt"
+    os.makedirs(path, exist_ok=True)
+    os.makedirs(alt, exist_ok=True)
+    for i in range(files):
+        name = f"f{i:05d}.bin"
+        src_file = os.path.join(path, name)
+        with open(src_file, "wb") as f:
+            f.write(os.urandom(size))
+        shutil.copy2(src_file, os.path.join(alt, name))
+    return tree_size(path)
+
+
 def wipe(*paths):
     """Recreate each path as an empty directory."""
     for path in paths:
@@ -799,9 +830,14 @@ def main():
             for i in range(64):
                 with open(f"{dir_path}/f{i:02d}.bin", "wb") as f:
                     f.write(os.urandom(1024))
+        copy_dest_src = f"{tmpdir}/src_copy_dest"
         fixtures = {
             "main": (src, total_size),
             "segmented": (segmented_src, tree_size(segmented_src)),
+            "copy_dest": (
+                copy_dest_src,
+                make_alt_dest_fixture(copy_dest_src, 10_000, 1024),
+            ),
         }
 
         results["test_data"] = {
