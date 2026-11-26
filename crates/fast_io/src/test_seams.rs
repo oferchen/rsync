@@ -9,7 +9,7 @@
 //! A shipped build cannot reach it: the release and packaging builds name
 //! their features explicitly and never include `test-seams`. Even in a test
 //! build that compiles it in (for example `--all-features`), the only way to
-//! arm it is to call [`judge_symlink_owner`] from Rust. There is no
+//! arm it is to call `judge_symlink_owner` from Rust. There is no
 //! environment variable, command-line flag, configuration key or file that
 //! does it, so no external input can change what the walk decides.
 
