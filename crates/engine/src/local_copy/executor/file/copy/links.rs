@@ -16,9 +16,9 @@ use logging::info_log;
 
 use crate::local_copy::overrides::create_hard_link;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
-    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery,
-    find_reference_action, map_metadata_error, reference_attrs_unchanged,
+    AltDestBasis, CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, ReferenceDecision,
+    ReferenceQuery, find_reference_action, map_metadata_error, reference_attrs_unchanged,
     remove_source_entry_if_requested,
 };
 
@@ -58,6 +58,9 @@ pub(super) struct LinkOutcome {
     /// `--copy-dest` basis and must itemize as a local change (`c`) compared
     /// against the basis rather than as a network transfer (`>`).
     pub(super) reference_basis: Option<PathBuf>,
+    /// A basis-directory file the delta is built against when the destination
+    /// is missing and no candidate matched the source.
+    pub(super) alt_dest_basis: Option<AltDestBasis>,
     pub(super) completed: bool,
 }
 
@@ -91,6 +94,7 @@ pub(super) fn process_links(
 
     let mut copy_source_override: Option<PathBuf> = None;
     let mut reference_basis: Option<PathBuf> = None;
+    let mut alt_dest_basis: Option<AltDestBasis> = None;
 
     // Whether `-X` xattr preservation is active, used both to evaluate a
     // link-dest basis's match_level and to seed reference-directory queries.
@@ -141,6 +145,7 @@ pub(super) fn process_links(
             return Ok(LinkOutcome {
                 copy_source_override: Some(link_target.clone()),
                 reference_basis: Some(link_target),
+                alt_dest_basis: None,
                 completed: false,
             });
         }
@@ -274,6 +279,7 @@ pub(super) fn process_links(
         return Ok(LinkOutcome {
             copy_source_override: None,
             reference_basis: None,
+            alt_dest_basis: None,
             completed: true,
         });
     }
@@ -403,6 +409,7 @@ pub(super) fn process_links(
             return Ok(LinkOutcome {
                 copy_source_override: None,
                 reference_basis: None,
+                alt_dest_basis: None,
                 completed: true,
             });
         }
@@ -431,6 +438,7 @@ pub(super) fn process_links(
                             return Ok(LinkOutcome {
                                 copy_source_override: None,
                                 reference_basis: None,
+                                alt_dest_basis: None,
                                 completed: false,
                             });
                         }
@@ -438,6 +446,7 @@ pub(super) fn process_links(
                         return Ok(LinkOutcome {
                             copy_source_override: None,
                             reference_basis: None,
+                            alt_dest_basis: None,
                             completed: true,
                         });
                     }
@@ -466,6 +475,7 @@ pub(super) fn process_links(
                         return Ok(LinkOutcome {
                             copy_source_override: None,
                             reference_basis: None,
+                            alt_dest_basis: None,
                             completed: false,
                         });
                     }
@@ -473,6 +483,7 @@ pub(super) fn process_links(
                     return Ok(LinkOutcome {
                         copy_source_override: None,
                         reference_basis: None,
+                        alt_dest_basis: None,
                         completed: true,
                     });
                 }
@@ -613,6 +624,7 @@ pub(super) fn process_links(
                     checksum: checksum_enabled,
                     metadata_options: &metadata_options,
                     preserve_xattrs: preserve_xattrs_flag,
+                    delta_basis_wanted: false,
                 },
             )?
             .is_some();
@@ -636,6 +648,7 @@ pub(super) fn process_links(
         return Ok(LinkOutcome {
             copy_source_override: None,
             reference_basis: None,
+            alt_dest_basis: None,
             completed: true,
         });
     }
@@ -655,6 +668,7 @@ pub(super) fn process_links(
                 checksum: checksum_enabled,
                 metadata_options: &metadata_options,
                 preserve_xattrs: preserve_xattrs_flag,
+                delta_basis_wanted: existing_metadata.is_none() && !context.whole_file_enabled(),
             },
         )?
     {
@@ -756,9 +770,15 @@ pub(super) fn process_links(
                     return Ok(LinkOutcome {
                         copy_source_override: None,
                         reference_basis: None,
+                        alt_dest_basis: None,
                         completed: true,
                     });
                 }
+            }
+            ReferenceDecision::Basis(basis) => {
+                // upstream: generator.c:2201-2205 - the level-1 file becomes
+                // `fnamecmp`; the data still comes from the source.
+                alt_dest_basis = Some(basis);
             }
             ReferenceDecision::Copy(path) => {
                 // upstream: generator.c:1200-1209 - copy_altdest_file() copies
@@ -883,6 +903,7 @@ pub(super) fn process_links(
                     return Ok(LinkOutcome {
                         copy_source_override: None,
                         reference_basis: None,
+                        alt_dest_basis: None,
                         completed: true,
                     });
                 }
@@ -893,6 +914,7 @@ pub(super) fn process_links(
     Ok(LinkOutcome {
         copy_source_override,
         reference_basis,
+        alt_dest_basis,
         completed: false,
     })
 }

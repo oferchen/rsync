@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 use ::metadata::MetadataOptions;
 
+use crate::local_copy::executor::AltDestBasis;
 use crate::local_copy::{CopyContext, LocalCopyError, LocalCopyExecution};
 
 use super::execute::execute_transfer_once;
@@ -60,6 +61,7 @@ pub(in crate::local_copy) fn execute_transfer(
     mode: LocalCopyExecution,
     copy_source_override: Option<PathBuf>,
     reference_basis: Option<PathBuf>,
+    alt_dest_basis: Option<AltDestBasis>,
 ) -> Result<(), LocalCopyError> {
     let outcome = execute_transfer_once(
         context,
@@ -76,6 +78,7 @@ pub(in crate::local_copy) fn execute_transfer(
         mode,
         copy_source_override.clone(),
         reference_basis.clone(),
+        alt_dest_basis.clone(),
     )?;
 
     let redo_outcome = match outcome {
@@ -113,6 +116,8 @@ pub(in crate::local_copy) fn execute_transfer(
                 mode,
                 copy_source_override,
                 reference_basis,
+                // The retained partial is the basis now, not the alt file.
+                None,
             )?
         }
         TransferOutcome::SourceChanged | TransferOutcome::ChecksumMismatch => {
@@ -145,6 +150,7 @@ pub(in crate::local_copy) fn execute_transfer(
                 mode,
                 copy_source_override,
                 reference_basis,
+                alt_dest_basis,
             )?
         }
     };

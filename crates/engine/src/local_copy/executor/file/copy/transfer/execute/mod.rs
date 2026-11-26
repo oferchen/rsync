@@ -84,7 +84,9 @@ use crate::local_copy::{
 };
 
 use super::super::super::append::{AppendMode, determine_append_mode};
-use super::super::super::comparison::{block_sum_length, build_delta_signature};
+use super::super::super::comparison::{
+    block_sum_length, build_basis_signature, build_delta_signature,
+};
 use super::super::super::compute_backup_path;
 use super::super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
@@ -92,6 +94,7 @@ use super::finalize::finalize_guard_and_metadata;
 use super::open::{open_source_file, source_open_error};
 use super::write_strategy::{WriteStrategy, open_destination_writer, select_write_strategy};
 use super::{TransferFlags, TransferOutcome};
+use crate::local_copy::executor::AltDestBasis;
 
 use skip::try_skip_up_to_date;
 
@@ -122,6 +125,9 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // upstream: generator.c:1215 try_dests_reg() -
     // itemize(..., ITEM_LOCAL_CHANGE, ...).
     reference_basis: Option<PathBuf>,
+    // A basis-directory file that matched nothing but is the delta basis for
+    // the missing destination (generator.c:1230, :2201-2205).
+    alt_dest_basis: Option<AltDestBasis>,
 ) -> Result<TransferOutcome, LocalCopyError> {
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
@@ -199,22 +205,33 @@ pub(in crate::local_copy) fn execute_transfer_once(
         _ => None,
     };
 
-    let fuzzy_basis =
-        if !whole_file_enabled && existing_metadata.is_none() && partial_dir_basis.is_none() {
-            // upstream: generator.c:895 compares against the source file's mtime
-            // (whole seconds) for the fuzzy size/modtime fast-path.
-            let target_mtime = metadata.modified().ok().map(system_time_to_unix_secs);
-            find_fuzzy_basis(
-                context,
-                destination,
-                relative,
-                file_type,
-                file_size,
-                target_mtime,
-            )
-        } else {
-            None
-        };
+    // upstream: generator.c:2196-2205 - the alt-dest scan runs before the
+    // partial-dir and fuzzy lookups. A `--partial-dir` leaf still replaces it as
+    // `fnamecmp` (:2312-2316), and a found basis sets `statret = 0`, which
+    // skips the fuzzy search (:2222).
+    let alt_dest_basis = alt_dest_basis.filter(|_| {
+        !whole_file_enabled && existing_metadata.is_none() && partial_dir_basis.is_none()
+    });
+
+    let fuzzy_basis = if !whole_file_enabled
+        && existing_metadata.is_none()
+        && partial_dir_basis.is_none()
+        && alt_dest_basis.is_none()
+    {
+        // upstream: generator.c:895 compares against the source file's mtime
+        // (whole seconds) for the fuzzy size/modtime fast-path.
+        let target_mtime = metadata.modified().ok().map(system_time_to_unix_secs);
+        find_fuzzy_basis(
+            context,
+            destination,
+            relative,
+            file_type,
+            file_size,
+            target_mtime,
+        )
+    } else {
+        None
+    };
 
     // Build delta signature BEFORE backup renames the destination away.
     // upstream: receiver.c - the basis file must be read while it still exists
@@ -234,15 +251,23 @@ pub(in crate::local_copy) fn execute_transfer_once(
                 Some(existing) if existing.is_file() => {
                     build_delta_signature(destination, existing, block_size, algorithm, sum_length)?
                 }
-                _ => match fuzzy_basis {
-                    Some((ref path, ref meta)) => build_delta_signature(
+                _ => match (&alt_dest_basis, &fuzzy_basis) {
+                    (Some(basis), _) => build_basis_signature(
+                        &basis.path,
+                        &basis.metadata,
+                        block_size,
+                        algorithm,
+                        sum_length,
+                        DeltaBasis::AltDest,
+                    )?,
+                    (None, Some((path, meta))) => build_delta_signature(
                         path,
                         &fast_io::EntryMetadata::from(meta.clone()),
                         block_size,
                         algorithm,
                         sum_length,
                     )?,
-                    None => None,
+                    (None, None) => None,
                 },
             },
         }
@@ -260,8 +285,10 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // A fuzzy basis is likewise a file separate from the (absent) destination:
     // the writer creates a fresh destination while matched blocks are read from
     // the fuzzy candidate, so seed the override with its path.
-    let mut delta_basis_override: Option<PathBuf> =
-        fuzzy_basis.as_ref().map(|(path, _)| path.clone());
+    let mut delta_basis_override: Option<PathBuf> = alt_dest_basis
+        .as_ref()
+        .map(|basis| basis.path.clone())
+        .or_else(|| fuzzy_basis.as_ref().map(|(path, _)| path.clone()));
     // Set when the delta is built against the `--inplace --backup` copy, the
     // basis upstream calls FNAMECMP_BACKUP.
     let mut backup_is_basis = false;
@@ -530,6 +557,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
             context.record_batch_basis(protocol::FnameCmpType::PartialDir, &[])?;
         } else if backup_is_basis {
             context.record_batch_basis(protocol::FnameCmpType::Backup, &[])?;
+        } else if let Some(basis) = alt_dest_basis.as_ref() {
+            context.record_batch_basis(protocol::FnameCmpType::BasisDir(basis.index), &[])?;
         } else if existing_metadata.is_none_or(|existing| !existing.is_file())
             && let Some((path, _)) = fuzzy_basis.as_ref()
         {
@@ -750,6 +779,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
         DeltaBasis::UpdatedInPlace
     } else if backup_is_basis {
         DeltaBasis::BackupOfInPlace
+    } else if alt_dest_basis.is_some() && delta_signature.is_some() {
+        DeltaBasis::AltDest
     } else if delta_basis_override.is_none() && context.inplace_enabled() {
         DeltaBasis::UpdatedInPlace
     } else {

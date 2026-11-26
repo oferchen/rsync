@@ -204,6 +204,7 @@ fn copy_is_bounded_by_the_opened_file_not_the_recorded_length() {
         mode,
         None,
         None,
+        None,
     )
     .expect("transfer");
 
@@ -902,6 +903,7 @@ fn run_shrinking_transfer(
         None,
         flags,
         mode,
+        None,
         None,
         None,
     );

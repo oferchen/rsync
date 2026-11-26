@@ -1765,7 +1765,6 @@ fn backup_with_inplace_preserves_dest_inode_and_truncates() {
 // (FNAMECMP_BACKUP) so the basis is read from the backup path while the
 // writer overwrites the (now-empty) destination.
 /// Deterministic incompressible bytes, so every match is a real block match.
-#[cfg(unix)]
 fn noise_bytes(seed: u64, len: usize) -> Vec<u8> {
     let mut state = seed;
     (0..len)

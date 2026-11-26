@@ -9,8 +9,8 @@ use std::time::SystemTime;
 use metadata::ModifyWindow;
 
 use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
-use crate::local_copy::LocalCopyError;
 use crate::local_copy::executor::directory::pair_checksums_match;
+use crate::local_copy::{DeltaBasis, LocalCopyError};
 use crate::signature::{
     PARALLEL_THRESHOLD_BYTES, SignatureAlgorithm, SignatureError, generate_file_signature,
     generate_file_signature_windowed,
@@ -142,6 +142,25 @@ pub(crate) fn build_delta_signature(
     algorithm: SignatureAlgorithm,
     csum_length: NonZeroU8,
 ) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
+    build_basis_signature(
+        destination,
+        metadata,
+        block_size_override,
+        algorithm,
+        csum_length,
+        DeltaBasis::Separate,
+    )
+}
+
+/// [`build_delta_signature`] for a basis opened the way its `role` requires.
+pub(crate) fn build_basis_signature(
+    destination: &Path,
+    metadata: &fast_io::EntryMetadata,
+    block_size_override: Option<NonZeroU32>,
+    algorithm: SignatureAlgorithm,
+    csum_length: NonZeroU8,
+    role: DeltaBasis,
+) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
     let length = metadata.len();
     if length == 0 {
         return Ok(None);
@@ -161,9 +180,7 @@ pub(crate) fn build_delta_signature(
         return Ok(None);
     };
 
-    // upstream: receiver.c:1086-1093 - the basis opens by a name relative to
-    // the entered destination, so it resolves from the pinned root.
-    let basis = fast_io::destination_at::open_read(destination).map_err(|error| {
+    let basis = role.open(destination).map_err(|error| {
         LocalCopyError::io(
             "read existing destination",
             destination.to_path_buf(),

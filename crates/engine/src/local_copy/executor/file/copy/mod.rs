@@ -393,6 +393,7 @@ pub(crate) fn copy_file(
         mode,
         link_outcome.copy_source_override,
         link_outcome.reference_basis,
+        link_outcome.alt_dest_basis,
     )?;
     Ok(true)
 }
