@@ -16,7 +16,7 @@ pub(crate) enum ReferenceDecision {
     /// A `--compare-dest` match: the file is skipped and itemized as `.f`
     /// against the carried basis path (blank columns when identical).
     Skip(PathBuf),
-    Copy(PathBuf),
+    Copy(AltCopySource),
     Link(PathBuf),
     /// No candidate matches the source, but a basis directory holds a regular
     /// file at this name: it is the delta basis for the missing destination.
@@ -38,6 +38,86 @@ pub(crate) struct AltDestBasis {
     pub(crate) path: PathBuf,
     /// The `basis_stat` result that selected it.
     pub(crate) metadata: fast_io::EntryMetadata,
+}
+
+/// The alternate-basis file a `--copy-dest` (or match-level-2 `--link-dest`)
+/// copy reads its data from.
+///
+/// On Unix a source chosen by [`find_reference_action`] carries the parent
+/// directory its `basis_stat` walked, and the copy opens the leaf beneath that
+/// directory instead of walking the path a second time. A source without one
+/// (a degraded `--link-dest` link) is opened through a fresh ownership walk.
+#[derive(Clone, Debug)]
+pub(crate) struct AltCopySource {
+    path: PathBuf,
+    #[cfg(unix)]
+    checked: Option<std::sync::Arc<fast_io::OperatorBasisEntry>>,
+}
+
+impl AltCopySource {
+    /// A source with no walked parent; [`Self::open`] walks the path.
+    pub(crate) fn unchecked(path: PathBuf) -> Self {
+        Self {
+            path,
+            #[cfg(unix)]
+            checked: None,
+        }
+    }
+
+    /// Path of the alternate-basis file.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Opens the file read-only: beneath the checked parent when there is one,
+    /// otherwise through the ownership walk; the leaf is never followed.
+    ///
+    /// upstream: `rsync-3.5.2/util1.c:414-428` `copy_file()` -
+    /// `owner_walk_parent()` then `openat(dfd, leaf, O_RDONLY | O_NOFOLLOW)`.
+    pub(crate) fn open(&self) -> io::Result<fs::File> {
+        #[cfg(unix)]
+        {
+            match &self.checked {
+                Some(entry) => entry.open_read(),
+                None => fast_io::operator_open_basis_read(&self.path),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            fs::File::open(&self.path)
+        }
+    }
+}
+
+/// A candidate `basis_stat` accepted, with the parent its walk opened.
+struct BasisCandidate {
+    metadata: fast_io::EntryMetadata,
+    #[cfg(unix)]
+    entry: fast_io::OperatorBasisEntry,
+}
+
+impl BasisCandidate {
+    #[cfg(unix)]
+    fn stat(path: &Path) -> io::Result<Self> {
+        let entry = fast_io::operator_basis_entry(path)?;
+        Ok(Self {
+            metadata: fast_io::EntryMetadata::from(entry.metadata().clone()),
+            entry,
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn stat(path: &Path) -> io::Result<Self> {
+        basis_stat(path).map(|metadata| Self { metadata })
+    }
+
+    fn into_copy_source(self, path: PathBuf) -> AltCopySource {
+        AltCopySource {
+            path,
+            #[cfg(unix)]
+            checked: Some(std::sync::Arc::new(self.entry)),
+        }
+    }
 }
 
 /// Computes the full path for a reference directory candidate.
@@ -201,7 +281,28 @@ pub(crate) fn reference_attrs_unchanged(
     let Ok(basis_meta) = basis_stat(basis) else {
         return false;
     };
+    basis_attrs_unchanged(
+        basis,
+        &basis_meta,
+        source,
+        source_meta,
+        options,
+        modify_window,
+        preserve_xattrs,
+    )
+}
 
+/// [`reference_attrs_unchanged`] for a basis whose `basis_stat` result is
+/// already in hand, so the candidate scan stats each candidate once.
+fn basis_attrs_unchanged(
+    basis: &Path,
+    basis_meta: &fast_io::EntryMetadata,
+    source: &Path,
+    source_meta: &fs::Metadata,
+    options: &MetadataOptions,
+    modify_window: ModifyWindow,
+    preserve_xattrs: bool,
+) -> bool {
     // A --chmod tweak changes the intended mode away from the source's, so
     // the basis (which carries the untweaked mode) can never be a
     // match_level-3 attrs match; force a reapply.
@@ -218,7 +319,7 @@ pub(crate) fn reference_attrs_unchanged(
     // preserved to nanosecond precision - the common case for anything not
     // written by rsync itself - is demoted from match_level 3 to 2 and copied
     // instead of hard-linked.
-    if options.times() && !reference_mtime_matches(source_meta, &basis_meta, modify_window) {
+    if options.times() && !reference_mtime_matches(source_meta, basis_meta, modify_window) {
         return false;
     }
 
@@ -226,7 +327,7 @@ pub(crate) fn reference_attrs_unchanged(
     // bits; on platforms without POSIX modes (Windows) the only preserved
     // permission is the read-only attribute, matching how oc applies and
     // quick-checks permissions there.
-    if options.permissions() && !reference_permissions_match(source_meta, &basis_meta) {
+    if options.permissions() && !reference_permissions_match(source_meta, basis_meta) {
         return false;
     }
 
@@ -250,7 +351,7 @@ pub(crate) fn reference_attrs_unchanged(
     }
     #[cfg(not(unix))]
     {
-        let _ = (source, preserve_xattrs);
+        let _ = (basis, source, preserve_xattrs);
     }
 
     true
@@ -314,7 +415,9 @@ pub(crate) fn find_reference_action(
         delta_basis_wanted,
     } = query;
 
-    let mut best: Option<(ReferenceDirectoryKind, PathBuf, u8)> = None;
+    // Only the best candidate keeps its walked parent; every other candidate's
+    // descriptor is dropped when the loop moves on.
+    let mut best: Option<(ReferenceDirectoryKind, PathBuf, u8, BasisCandidate)> = None;
     let mut first_regular: Option<AltDestBasis> = None;
     for (index, reference) in context.reference_directories().iter().enumerate() {
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
@@ -325,9 +428,10 @@ pub(crate) fn find_reference_action(
         // or is not a directory has already been reported once by
         // check_alt_basis_dirs() (main.c:880); aborting the transfer on the
         // resulting ENOTDIR would fail a run upstream completes normally.
-        let Ok(candidate_metadata) = basis_stat(&candidate) else {
+        let Ok(checked) = BasisCandidate::stat(&candidate) else {
             continue;
         };
+        let candidate_metadata = &checked.metadata;
 
         if !candidate_metadata.file_type().is_file() {
             continue;
@@ -350,7 +454,7 @@ pub(crate) fn find_reference_action(
             source_path: source,
             source: metadata,
             destination_path: &candidate,
-            destination: &candidate_metadata,
+            destination: candidate_metadata,
             size_only,
             ignore_times,
             checksum,
@@ -363,8 +467,9 @@ pub(crate) fn find_reference_action(
 
         // The candidate is at least match_level 2 (data matches); it is
         // match_level 3 when its preserved attributes also match the source.
-        let level = if reference_attrs_unchanged(
+        let level = if basis_attrs_unchanged(
             &candidate,
+            candidate_metadata,
             source,
             metadata,
             metadata_options,
@@ -378,9 +483,9 @@ pub(crate) fn find_reference_action(
 
         if best
             .as_ref()
-            .is_none_or(|(_, _, best_level)| level > *best_level)
+            .is_none_or(|(_, _, best_level, _)| level > *best_level)
         {
-            best = Some((reference.kind(), candidate, level));
+            best = Some((reference.kind(), candidate, level, checked));
         }
         // upstream: generator.c:1136 - an exact match ends the scan immediately.
         if level == 3 {
@@ -388,26 +493,16 @@ pub(crate) fn find_reference_action(
         }
     }
 
-    let Some((kind, basis, level)) = best else {
+    let Some((kind, basis, level, checked)) = best else {
         return Ok(first_regular.map(ReferenceDecision::Basis));
     };
 
-    let decision = match kind {
-        ReferenceDirectoryKind::Compare => {
-            if level == 3 {
-                ReferenceDecision::Skip(basis)
-            } else {
-                ReferenceDecision::Copy(basis)
-            }
-        }
-        ReferenceDirectoryKind::Copy => ReferenceDecision::Copy(basis),
-        ReferenceDirectoryKind::Link => {
-            if level == 3 {
-                ReferenceDecision::Link(basis)
-            } else {
-                ReferenceDecision::Copy(basis)
-            }
-        }
+    // A skip or a link never reads the file, so its walked parent is dropped
+    // here; only a copy carries it on to the open.
+    let decision = match (kind, level) {
+        (ReferenceDirectoryKind::Compare, 3) => ReferenceDecision::Skip(basis),
+        (ReferenceDirectoryKind::Link, 3) => ReferenceDecision::Link(basis),
+        _ => ReferenceDecision::Copy(checked.into_copy_source(basis)),
     };
 
     Ok(Some(decision))
@@ -636,9 +731,9 @@ mod tests {
     #[test]
     fn reference_decision_copy_variant() {
         let path = PathBuf::from("/some/path");
-        let decision = ReferenceDecision::Copy(path.clone());
+        let decision = ReferenceDecision::Copy(AltCopySource::unchecked(path.clone()));
         match decision {
-            ReferenceDecision::Copy(p) => assert_eq!(p, path),
+            ReferenceDecision::Copy(source) => assert_eq!(source.path(), path),
             _ => panic!("Expected Copy variant"),
         }
     }

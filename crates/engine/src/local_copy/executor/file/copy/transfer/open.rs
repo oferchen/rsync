@@ -133,6 +133,22 @@ pub(in crate::local_copy) fn open_source_file(
     Ok(file)
 }
 
+/// Opens the alternate-basis file a `--copy-dest` (or match-level-2
+/// `--link-dest`) copy reads its data from.
+///
+/// The open keeps the rules `basis_stat` applied when the file was chosen:
+/// beneath the parent that check walked (or through a fresh walk), leaf never
+/// followed, whatever `-L` or `--open-noatime` say. upstream: `rsync-3.5.2/util1.c:414-428`
+/// `copy_file()` - `owner_walk_parent()` then
+/// `openat(dfd, leaf, O_RDONLY | O_NOFOLLOW)`, with no `O_NOATIME`.
+pub(in crate::local_copy) fn open_alt_basis_source(
+    source: &crate::local_copy::executor::AltCopySource,
+) -> io::Result<fs::File> {
+    let file = crate::local_copy::overrides::open_alt_basis(source)?;
+    apply_macos_read_hint(&file);
+    Ok(file)
+}
+
 /// Opens the source handle under the confinement and leaf policies, before the
 /// platform read hint is applied.
 #[cfg(unix)]
