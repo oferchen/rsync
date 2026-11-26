@@ -114,8 +114,8 @@ pub use wire_tally::WireTotals;
 
 pub(crate) use compressor::ActiveCompressor;
 pub(crate) use context::{
-    CopyContext, CopyOutcome, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams,
-    MATCHED_NONE, MetadataPathContext, OwnedPathContext, SourceAttrs,
+    CopyContext, CopyOutcome, CreatedEntryKind, DeferredUpdate, DeltaBasis, FinalizeMetadataParams,
+    InplaceBackup, MATCHED_NONE, MetadataPathContext, OwnedPathContext, SourceAttrs,
 };
 
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
@@ -127,11 +127,12 @@ pub(crate) use dir_merge::{
 
 pub(crate) use executor::*;
 pub use executor::{
-    BackupDirCache, DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy,
-    SparseDetector, SparseReader, SparseRegion, compute_backup_path, copy_pre_image_to_backup,
-    create_backup_dir_parents, remove_existing_destination, remove_incomplete_destination,
-    trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,
-    trace_make_backup_rename, trace_make_backup_symlink,
+    BackupCopyError, BackupCopyStep, BackupDirCache, DestinationWriteGuard, PartialFileManager,
+    PartialMode, SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion,
+    compute_backup_path, copy_pre_image_to_backup, create_backup_dir_parents,
+    remove_existing_destination, remove_incomplete_destination, trace_make_backup_copy,
+    trace_make_backup_device, trace_make_backup_hlink, trace_make_backup_rename,
+    trace_make_backup_symlink,
 };
 
 pub(crate) use hard_links::HardLinkTracker;

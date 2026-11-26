@@ -1764,6 +1764,78 @@ fn backup_with_inplace_preserves_dest_inode_and_truncates() {
 // upstream receiver.c:1022-1023 sets fnamecmp = get_backup_name(fname)
 // (FNAMECMP_BACKUP) so the basis is read from the backup path while the
 // writer overwrites the (now-empty) destination.
+/// Deterministic incompressible bytes, so every match is a real block match.
+#[cfg(unix)]
+fn noise_bytes(seed: u64, len: usize) -> Vec<u8> {
+    let mut state = seed;
+    (0..len)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 56) as u8
+        })
+        .collect()
+}
+
+// Under `--inplace --backup` the delta is built against the backup copy, so
+// a block that now sits EARLIER in the old file than in the new one is still
+// matched: with a separate basis the scan is not limited to blocks the writer
+// has not yet overwritten. The destination is rewritten in place (same inode)
+// and the backup keeps the pre-image.
+//
+// upstream: generator.c:2371-2399 (FNAMECMP_BACKUP), sender.c:637-638
+// (`updating_basis_file` is off for that basis), receiver.c:1022-1024 (the
+// receiver reads matched blocks from the backup).
+#[cfg(unix)]
+#[test]
+fn inplace_backup_matches_blocks_that_moved_to_a_lower_offset() {
+    use std::os::unix::fs::MetadataExt;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_content = noise_bytes(7, 48 * 1024);
+    let basis_content = source_content[100..100 + 32 * 1024].to_vec();
+    fs::write(ctx.source.join("payload.bin"), &source_content).expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("payload.bin");
+    write_stale_dest(&existing, &basis_content);
+    let inode_before = fs::metadata(&existing).expect("stat dest").ino();
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .inplace(true)
+        .whole_file(false);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert_eq!(fs::read(&existing).expect("read dest"), source_content);
+    assert_eq!(
+        fs::read(dest_root.join("payload.bin~")).expect("read backup"),
+        basis_content
+    );
+    assert_eq!(
+        fs::metadata(&existing).expect("stat dest").ino(),
+        inode_before,
+        "--inplace keeps the destination inode"
+    );
+    assert!(
+        summary.matched_bytes() >= 24 * 1024,
+        "blocks of the backup basis must match, matched {} bytes",
+        summary.matched_bytes()
+    );
+}
+
 #[test]
 fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
     let ctx = test_helpers::setup_copy_test();

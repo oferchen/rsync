@@ -1363,9 +1363,10 @@ pub(crate) fn make_backup_copy(
     }
 
     // upstream: generator.c:2337 copy_file() - duplicate the pre-transfer bytes
-    // into the backup, leaving the original inode in place to be updated. A
-    // pre-existing backup at this path is overwritten (upstream robust_unlinks
-    // it at generator.c:2340); the O_TRUNC create reaches the same end state.
+    // into the backup, leaving the original inode in place to be updated.
+    // Whatever occupies the backup name is unlinked first and the backup is
+    // created with O_EXCL (util1.c:351 and :369; generator.c:2383 and :2391 on
+    // the delta path), so a planted leaf symlink is replaced, never followed.
     // The backup path is operator-named and resolves through the ownership
     // walk: generator.c:2283 raises `operator_path_resolve` around this copy
     // precisely because the in-place backup bypasses `make_backup()`.

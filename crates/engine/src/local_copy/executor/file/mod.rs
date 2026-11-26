@@ -15,7 +15,8 @@ mod preallocate;
 mod sparse;
 
 pub use backup::{
-    BackupDirCache, compute_backup_path, copy_pre_image_to_backup, create_backup_dir_parents,
+    BackupCopyError, BackupCopyStep, BackupDirCache, compute_backup_path, copy_pre_image_to_backup,
+    create_backup_dir_parents,
 };
 pub(crate) use backup::{copy_entry_to_backup, create_backup_parents};
 pub use backup_trace::{

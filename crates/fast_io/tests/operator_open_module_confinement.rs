@@ -457,6 +457,48 @@ fn plant_out_of_module_backup_dir(fixture: &Fixture) -> (PathBuf, PathBuf) {
     (backup_dir, outside_dir)
 }
 
+/// The in-place backup's `O_EXCL` create through an out-of-module
+/// `--backup-dir`. The walk follows the interior symlink and the module root
+/// refuses the landing site, so no file appears outside the module. The unlink
+/// that precedes it is pinned by
+/// `a_confined_unlink_through_a_symlinked_dir_leaving_the_module_is_refused`.
+///
+/// upstream: `rsync-3.5.2/generator.c:2391` `do_open_at(backupptr,
+/// O_WRONLY|O_CREAT|O_TRUNC|O_EXCL, 0600)`, inside the `operator_path_resolve =
+/// 1` window the in-place backup opens because it bypasses `make_backup()`.
+#[test]
+fn a_confined_exclusive_create_through_a_symlinked_dir_leaving_the_module_is_refused() {
+    let fixture = fixture();
+    let (backup_dir, outside_dir) = plant_out_of_module_backup_dir(&fixture);
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_open_create_new_confined(&backup_dir.join("payload"), 0o600)
+        .expect_err("a confined exclusive create must not resolve out of the module");
+
+    assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    assert!(
+        !outside_dir.join("payload").exists(),
+        "a refused create must not have left a file outside the module"
+    );
+}
+
+/// The exclusive create opens the leaf with `O_NOFOLLOW` even when the name
+/// appears between the walk's stat and the open: a symlink there is never
+/// written through, and an existing name is `EEXIST`, not truncated.
+#[test]
+fn a_confined_exclusive_create_never_writes_through_an_existing_leaf() {
+    let fixture = fixture();
+    let leaf = fixture.module.join("backup/sub/existing");
+    fs::write(&leaf, "KEEP").expect("seed the existing leaf");
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_open_create_new_confined(&leaf, 0o600)
+        .expect_err("an exclusive create over an existing name must fail");
+
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(fs::read_to_string(&leaf).expect("read the leaf"), "KEEP");
+}
+
 /// THE MKDIR-SIDE PIN. The `--backup-dir` PARENT CHAIN is built before any
 /// backup tier runs, so it is the first thing an out-of-module backup area
 /// reaches - and creating the subtree is already an escape, whatever the tiers

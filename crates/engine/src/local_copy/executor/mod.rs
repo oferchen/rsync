@@ -17,7 +17,6 @@ pub(crate) use cleanup::{
 };
 #[cfg(unix)]
 pub(crate) use create_failure::report_mknod_failure;
-#[cfg(unix)]
 pub(crate) use create_failure::{full_fname, report as report_generator_failure};
 pub(crate) use create_failure::{report_link_failure, report_symlink_failure};
 pub(crate) use directory::ChecksumCache;
@@ -30,11 +29,12 @@ pub(crate) use directory::{
 #[allow(unused_imports)]
 pub(crate) use file::take_fsync_call_count;
 pub use file::{
-    BackupDirCache, DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy,
-    SparseDetector, SparseReader, SparseRegion, compute_backup_path, copy_pre_image_to_backup,
-    create_backup_dir_parents, remove_existing_destination, remove_incomplete_destination,
-    trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,
-    trace_make_backup_rename, trace_make_backup_symlink,
+    BackupCopyError, BackupCopyStep, BackupDirCache, DestinationWriteGuard, PartialFileManager,
+    PartialMode, SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion,
+    compute_backup_path, copy_pre_image_to_backup, create_backup_dir_parents,
+    remove_existing_destination, remove_incomplete_destination, trace_make_backup_copy,
+    trace_make_backup_device, trace_make_backup_hlink, trace_make_backup_rename,
+    trace_make_backup_symlink,
 };
 pub(crate) use file::{
     CopyComparison, LiteralLatch, PartialPromotion, SparseWriteState, copy_entry_to_backup,

@@ -321,6 +321,18 @@ fn inplace_layout(dest: &Path, src: &[u8]) {
     stamp(&dest.join("f"), OLD_MTIME);
 }
 
+/// The destination holds the source's bytes from offset 100 on, so every
+/// block sits earlier in the basis than in the source: a scan restricted to
+/// blocks the writer has not yet overwritten matches none of them.
+fn shifted_basis(src: &[u8]) -> &[u8] {
+    &src[100..100 + BASIS_LEN]
+}
+
+fn inplace_backup_layout(dest: &Path, src: &[u8]) {
+    fs::write(dest.join("f"), shifted_basis(src)).expect("write dest");
+    stamp(&dest.join("f"), OLD_MTIME);
+}
+
 /// FNAMECMP_PARTIAL_DIR: the delta resumes from `.p/f`; the row must name
 /// that basis and carry the matches the in-place rewrite of `.p/f` skips.
 const PARTIAL_DIR: Shape = Shape {
@@ -348,6 +360,16 @@ const INPLACE: Shape = Shape {
     row: Row::Destination,
 };
 
+/// FNAMECMP_BACKUP under `--inplace --backup`: the delta is built against
+/// the backup copy (generator.c:2371-2399), so blocks that moved to a lower
+/// offset still match (sender.c:637-638 leaves `updating_basis_file` off).
+const INPLACE_BACKUP: Shape = Shape {
+    seed: 4,
+    lay_out: inplace_backup_layout,
+    flags: &["--inplace", "-b"],
+    row: Row::Basis(0x82),
+};
+
 #[test]
 fn partial_dir_row_names_its_basis() {
     check(&PARTIAL_DIR);
@@ -361,6 +383,24 @@ fn fuzzy_row_names_its_basis() {
 #[test]
 fn inplace_row_carries_same_offset_matches() {
     check(&INPLACE);
+}
+
+#[test]
+fn inplace_backup_row_names_its_basis() {
+    check(&INPLACE_BACKUP);
+}
+
+/// The backup the recording run leaves behind holds the destination's
+/// pre-image, and the destination itself is the source.
+#[test]
+fn inplace_backup_keeps_the_pre_image() {
+    let recording = INPLACE_BACKUP.record(&oc_rsync(), Link::Local);
+    let recorded = recording.root.path().join("recorded");
+    assert!(fs::read(recorded.join("f")).expect("read f") == recording.src);
+    assert!(
+        fs::read(recorded.join("f~")).expect("read f~") == shifted_basis(&recording.src),
+        "f~ must hold the destination as it was before the update"
+    );
 }
 
 #[test]
