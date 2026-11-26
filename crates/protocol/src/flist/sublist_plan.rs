@@ -226,6 +226,9 @@ pub struct SubListLookahead {
     file_old_total: usize,
     current: usize,
     sent: usize,
+    /// Whether every list's size is known. An open lookahead learns sizes as
+    /// a streaming writer plans them.
+    closed: bool,
 }
 
 impl SubListLookahead {
@@ -243,6 +246,58 @@ impl SubListLookahead {
             file_old_total: initial,
             current: 0,
             sent: 0,
+            closed: true,
+        }
+    }
+
+    /// Starts an open lookahead that knows only the initial list's size;
+    /// [`push_list`](Self::push_list) adds each later list as it is planned
+    /// and [`close`](Self::close) marks the last one.
+    #[must_use]
+    pub fn open(initial: usize) -> Self {
+        let mut lookahead = Self::new(vec![initial]);
+        lookahead.closed = false;
+        lookahead
+    }
+
+    /// Records the size of the next list in send order.
+    pub fn push_list(&mut self, used: usize) {
+        debug_assert!(!self.closed, "a closed lookahead knows every list");
+        self.used.push(used);
+    }
+
+    /// Marks every list as known.
+    pub fn close(&mut self) {
+        self.closed = true;
+    }
+
+    /// Like [`serve`](Self::serve), but returns `None` while the decision
+    /// depends on a list whose size is not known yet. Sub-lists counted as
+    /// sent before returning `None` stay sent: the sender would have sent them
+    /// regardless of what follows.
+    pub fn try_serve(&mut self, list: usize) -> Option<usize> {
+        if !self.closed && list >= self.used.len() {
+            return None;
+        }
+        let list = list.min(self.used.len() - 1);
+        if list != self.current {
+            self.current = list;
+            self.file_old_total = self.used[..=list].iter().sum();
+        }
+        loop {
+            let wants_more =
+                self.sent < list || self.file_total < self.file_old_total + MIN_FILECNT_LOOKAHEAD;
+            if !wants_more {
+                return Some(self.sent);
+            }
+            if self.sent + 1 < self.used.len() {
+                self.sent += 1;
+                self.file_total += self.used[self.sent];
+            } else if self.closed {
+                return Some(self.sent);
+            } else {
+                return None;
+            }
         }
     }
 
@@ -250,18 +305,9 @@ impl SubListLookahead {
     /// returns how many sub-lists have been sent. A `list` past the last one
     /// is treated as the last.
     pub fn serve(&mut self, list: usize) -> usize {
-        let list = list.min(self.used.len() - 1);
-        if list != self.current {
-            self.current = list;
-            self.file_old_total = self.used[..=list].iter().sum();
-        }
-        while self.sent + 1 < self.used.len()
-            && (self.sent < list || self.file_total < self.file_old_total + MIN_FILECNT_LOOKAHEAD)
-        {
-            self.sent += 1;
-            self.file_total += self.used[self.sent];
-        }
-        self.sent
+        debug_assert!(self.closed, "serve() needs every list's size");
+        self.try_serve(list)
+            .expect("a closed lookahead always decides")
     }
 
     /// Number of sub-lists sent so far.

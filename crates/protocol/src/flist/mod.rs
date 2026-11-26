@@ -48,6 +48,7 @@ mod read;
 mod sort;
 mod state;
 mod sublist_plan;
+mod sublist_stream;
 mod trace;
 mod wire_mode;
 mod wire_path;
@@ -82,6 +83,7 @@ pub use sort::{
 };
 pub use state::{FileListCompressionState, FileListStats};
 pub use sublist_plan::{MIN_FILECNT_LOOKAHEAD, SubList, SubListLookahead, SubListPlan};
+pub use sublist_stream::{StreamedList, SubListPlanError, SubListPlanner};
 pub use trace::{
     ProcessRole, output_flist, trace_file_list_sent, trace_flist_eof, trace_make_file,
     trace_received_names, trace_receiving_flist_for_dir, trace_recv_file_list_done,
