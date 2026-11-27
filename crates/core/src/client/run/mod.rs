@@ -230,6 +230,13 @@ fn resolve_destination_like_change_dir(dest: &Path) -> Result<(), ClientError> {
         .map_err(|error| super::error::destination_access_error(dest, error))
 }
 
+/// Reports whether `arg` names a remote-shell or daemon peer, by the operand
+/// forms the transfer dispatch below routes away from a local copy.
+fn operand_names_peer(arg: &std::ffi::OsString) -> bool {
+    let text = arg.to_string_lossy();
+    text.starts_with("rsync://") || text.contains("::") || remote::operand_is_remote(arg)
+}
+
 #[cfg_attr(
     feature = "tracing",
     instrument(skip(config, observer), name = "client_internal")
@@ -277,6 +284,12 @@ fn run_client_internal(
     let batch_writer = if let Some(batch_cfg) = config.batch_config() {
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
             return result;
+        }
+        // upstream: compat.c:414-416 - only a local copy's server child shares
+        // the client's `write_batch`; a remote server is never told about a
+        // `--write-batch` and validates against its own environment.
+        if !config.transfer_args().iter().any(operand_names_peer) {
+            batch::refuse_local_batch_choices(&config)?;
         }
         Some(batch::create_batch_writer(batch_cfg, &config)?)
     } else {
