@@ -216,10 +216,11 @@ pub use multiplex::{
     MplexWriter, recv_msg, recv_msg_into, send_frame, send_keepalive, send_msg, send_msgs_vectored,
 };
 pub use negotiation::{
-    BufferedPrefixTooSmall, ChecksumAlgorithm, CompressionAlgorithm, NegotiationConfig,
-    NegotiationPrologue, NegotiationPrologueDetector, NegotiationPrologueSniffer,
-    NegotiationResult, ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind,
-    detect_negotiation_prologue, negotiate_capabilities, negotiate_capabilities_with_override,
+    BufferedPrefixTooSmall, ChecksumAlgorithm, ChoiceRefused, CompressionAlgorithm,
+    NegotiationConfig, NegotiationPrologue, NegotiationPrologueDetector,
+    NegotiationPrologueSniffer, NegotiationResult, ParseNegotiationPrologueError,
+    ParseNegotiationPrologueErrorKind, choice_refused_error, detect_negotiation_prologue,
+    negotiate_capabilities, negotiate_capabilities_with_override,
     read_and_parse_legacy_daemon_greeting, read_and_parse_legacy_daemon_greeting_details,
     read_legacy_daemon_line,
 };

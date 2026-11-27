@@ -205,7 +205,13 @@ pub fn negotiate_capabilities_with_override(
         // upstream: setup_protocol calls parse_*_choice regardless of protocol
         // version, so the server still validates a forced choice against the env
         // list. No vstring exchange runs here, so ordering is irrelevant.
-        validate_forced_choices(is_server, checksum_override, compression_override)?;
+        validate_forced_choices(
+            is_server,
+            write_batch,
+            protocol,
+            checksum_override,
+            compression_override,
+        )?;
         // upstream: negotiate_the_strings still runs for legacy protocols; the
         // prefilled default is "md4" (compat.c:556) here.
         validate_fallback_defaults(
@@ -249,7 +255,13 @@ pub fn negotiate_capabilities_with_override(
         // upstream: setup_protocol still calls parse_*_choice when
         // do_negotiated_strings == 0, so the server validates a forced choice
         // against the env list. No vstring exchange runs, so ordering is moot.
-        validate_forced_choices(is_server, checksum_override, compression_override)?;
+        validate_forced_choices(
+            is_server,
+            write_batch,
+            protocol,
+            checksum_override,
+            compression_override,
+        )?;
         // upstream: negotiate_the_strings runs even when do_negotiated_strings
         // == 0 - send_negotiate_str populates the env-restricted saw list and
         // recv_negotiate_str validates the prefilled "md5" default against it
@@ -406,7 +418,13 @@ pub fn negotiate_capabilities_with_override(
     // non-forced category) has been sent and received. Validating here - after
     // the recv above - preserves that wire ordering: a refusal does not truncate
     // the exchange the peer expects.
-    validate_forced_choices(is_server, checksum_override, compression_override)?;
+    validate_forced_choices(
+        is_server,
+        write_batch,
+        protocol,
+        checksum_override,
+        compression_override,
+    )?;
 
     // upstream: compat.c:530-534 - each side picks its own most-preferred name
     // that also appears in the peer's list. Deviation from upstream 3.5.1: the
@@ -503,8 +521,14 @@ pub fn negotiate_capabilities_with_override(
 /// forced choice is finalised (legacy, no-negotiation and the main negotiated
 /// path) so the check is version- and path-independent, exactly as upstream
 /// validates inside `setup_protocol` regardless of `do_negotiated_strings`.
+///
+/// A server told about the batch (`--only-write-batch=X` on a push) validates
+/// against the pinned old-style lists instead, as `getenv_nstr()` substitutes
+/// them for the env value (`compat.c:414-416`).
 fn validate_forced_choices(
     is_server: bool,
+    write_batch: bool,
+    protocol: ProtocolVersion,
     checksum_override: Option<ChecksumAlgorithm>,
     compression_override: Option<CompressionAlgorithm>,
 ) -> io::Result<()> {
@@ -512,10 +536,10 @@ fn validate_forced_choices(
         return Ok(());
     }
     if let Some(forced) = checksum_override {
-        env_list::validate_checksum_choice(forced.as_str())?;
+        env_list::validate_checksum_choice(forced.as_str(), write_batch, protocol.as_u8())?;
     }
     if let Some(forced) = compression_override {
-        env_list::validate_compress_choice(forced.as_str())?;
+        env_list::validate_compress_choice(forced.as_str(), write_batch)?;
     }
     Ok(())
 }

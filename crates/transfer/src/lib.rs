@@ -1058,10 +1058,10 @@ fn run_server_on_core(
         // upstream: compat.c:771-773 - abort when --crtimes is requested but the
         // negotiated peer lacks CF_VARINT_FLIST_FLAGS (rsync < 3.2.0).
         preserve_crtimes: config.flags.crtimes,
-        // upstream: compat.c:413-415 getenv_nstr() - only the client sets
-        // `write_batch`, and only it needs to pin the negotiation lists; the
-        // remote server is never told about the batch at all.
-        write_batch: batch.is_some(),
+        // upstream: compat.c:413-415 getenv_nstr() - the recording client sets
+        // `write_batch`; a server is told only by `--only-write-batch=X`, which
+        // a push forwards to its receiver (options.c:3091-3092).
+        write_batch: batch.is_some() || config.flags.only_write_batch,
     };
     // upstream: compat.c:664-714 - every peer refuses options the negotiated
     // protocol cannot carry before any further exchange. `local_server` is

@@ -105,6 +105,15 @@ impl CompressRequest {
         })
     }
 
+    /// Returns the effective `compress_choice` as upstream prints it, if any.
+    ///
+    /// upstream: compat.c:183-213 parse_compress_choice(0) - the user's spelling,
+    /// `zlibx` for a repeated `-z`, and "none" for any `none` spelling.
+    #[must_use]
+    pub fn choice(&self) -> Option<&str> {
+        self.choice.as_deref()
+    }
+
     /// Returns the codec an explicit `compress_choice` pins on both peers.
     ///
     /// upstream: compat.c:548 - a set `compress_choice` skips the vstring

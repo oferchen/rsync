@@ -3759,6 +3759,57 @@ mod env_list_overrides {
         assert_eq!(server.candidates, vec!["xxh3", "xxh128"]);
     }
 
+    // -- validate_choice_vs_env under write_batch (upstream compat.c:414-416) --
+    //
+    // A server told about the batch (`--only-write-batch=X` on a push) checks a
+    // forced choice against the old-style list getenv_nstr() substitutes for the
+    // env value. WHY: a batch replay negotiates nothing, so 3.5.2 refuses any
+    // other forced algorithm with exit 4 instead of recording it.
+
+    #[test]
+    fn write_batch_server_accepts_only_the_old_style_checksum() {
+        let _lock = env_lock();
+        let _cs = EnvGuard::remove(CHECKSUM_ENV);
+        env_list::validate_checksum_choice("md5", true, 32).expect("md5 is pinned at 30+");
+        env_list::validate_checksum_choice("md4", true, 29).expect("md4 is pinned below 30");
+        for (choice, protocol) in [("sha1", 32), ("md4", 30), ("xxh128", 32), ("md5", 29)] {
+            let err = env_list::validate_checksum_choice(choice, true, protocol).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+            assert_eq!(
+                err.to_string(),
+                format!("Your --checksum-choice value ({choice}) was refused by the server.")
+            );
+            assert!(
+                err.get_ref()
+                    .is_some_and(|inner| inner.is::<ChoiceRefused>())
+            );
+        }
+    }
+
+    // The pinned list replaces the env value outright, so an env list naming
+    // the forced choice does not rescue it. upstream: compat.c:414-416.
+    #[test]
+    fn write_batch_server_ignores_the_env_checksum_list() {
+        let _lock = env_lock();
+        let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("sha1"));
+        env_list::validate_checksum_choice("sha1", true, 32).unwrap_err();
+        env_list::validate_checksum_choice("md5", true, 32).expect("md5 is pinned");
+    }
+
+    #[test]
+    fn write_batch_server_accepts_only_zlib_compression() {
+        let _lock = env_lock();
+        let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd zlibx"));
+        env_list::validate_compress_choice("zlib", true).expect("zlib is pinned");
+        for choice in ["zstd", "zlibx", "none"] {
+            let err = env_list::validate_compress_choice(choice, true).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("Your --compress-choice value ({choice}) was refused by the server.")
+            );
+        }
+    }
+
     // -- validate_choice_vs_env (upstream compat.c:427-456) --
     //
     // The server refuses a client-forced --checksum-choice/--compress-choice
@@ -3771,8 +3822,9 @@ mod env_list_overrides {
     fn validate_checksum_choice_accepts_when_env_unset() {
         let _lock = env_lock();
         let _cs = EnvGuard::remove(CHECKSUM_ENV);
-        env_list::validate_checksum_choice("md5").expect("unset env accepts any choice");
-        env_list::validate_checksum_choice("xxh128").expect("unset env accepts any choice");
+        env_list::validate_checksum_choice("md5", false, 32).expect("unset env accepts any choice");
+        env_list::validate_checksum_choice("xxh128", false, 32)
+            .expect("unset env accepts any choice");
     }
 
     // Whitespace-only env is treated as unset (upstream compat.c:436-437).
@@ -3780,7 +3832,7 @@ mod env_list_overrides {
     fn validate_checksum_choice_accepts_when_env_blank() {
         let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("   "));
-        env_list::validate_checksum_choice("md5").expect("blank env accepts any choice");
+        env_list::validate_checksum_choice("md5", false, 32).expect("blank env accepts any choice");
     }
 
     // (b) Env list set and the forced choice is a member - accepted.
@@ -3788,8 +3840,8 @@ mod env_list_overrides {
     fn validate_checksum_choice_accepts_when_in_list() {
         let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
-        env_list::validate_checksum_choice("md5").expect("md5 is in the list");
-        env_list::validate_checksum_choice("xxh3").expect("xxh3 is in the list");
+        env_list::validate_checksum_choice("md5", false, 32).expect("md5 is in the list");
+        env_list::validate_checksum_choice("xxh3", false, 32).expect("xxh3 is in the list");
     }
 
     // (c) Env list set and the forced choice is NOT a member - refused with the
@@ -3801,7 +3853,7 @@ mod env_list_overrides {
     fn validate_checksum_choice_refuses_when_not_in_list() {
         let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("xxh3 xxh128"));
-        let err = env_list::validate_checksum_choice("md5").unwrap_err();
+        let err = env_list::validate_checksum_choice("md5", false, 32).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
         assert_eq!(
             err.to_string(),
@@ -3816,7 +3868,7 @@ mod env_list_overrides {
     fn validate_checksum_choice_refuses_when_list_all_invalid() {
         let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("bogus nope"));
-        let err = env_list::validate_checksum_choice("md5").unwrap_err();
+        let err = env_list::validate_checksum_choice("md5", false, 32).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
     }
 
@@ -3825,7 +3877,7 @@ mod env_list_overrides {
     fn validate_compress_choice_refuses_when_not_in_list() {
         let _lock = env_lock();
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zstd"));
-        let err = env_list::validate_compress_choice("zlib").unwrap_err();
+        let err = env_list::validate_compress_choice("zlib", false).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
         assert_eq!(
             err.to_string(),
@@ -3837,8 +3889,8 @@ mod env_list_overrides {
     fn validate_compress_choice_accepts_when_in_list() {
         let _lock = env_lock();
         let _cp = EnvGuard::set(COMPRESS_ENV, OsStr::new("zlib zlibx"));
-        env_list::validate_compress_choice("zlib").expect("zlib is in the list");
-        env_list::validate_compress_choice("zlibx").expect("zlibx is in the list");
+        env_list::validate_compress_choice("zlib", false).expect("zlib is in the list");
+        env_list::validate_compress_choice("zlibx", false).expect("zlibx is in the list");
     }
 
     // (e) MD4 special case. upstream compat.c:444-445 marks the archaic/busted/
@@ -3849,14 +3901,14 @@ mod env_list_overrides {
     fn validate_checksum_choice_md4_in_list_accepts_md4() {
         let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md4 md5"));
-        env_list::validate_checksum_choice("md4").expect("md4 is in the list");
+        env_list::validate_checksum_choice("md4", false, 32).expect("md4 is in the list");
     }
 
     #[test]
     fn validate_checksum_choice_md4_absent_refuses_md4() {
         let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 xxh3"));
-        let err = env_list::validate_checksum_choice("md4").unwrap_err();
+        let err = env_list::validate_checksum_choice("md4", false, 32).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
         assert_eq!(
             err.to_string(),
@@ -3871,8 +3923,8 @@ mod env_list_overrides {
     fn validate_uses_server_half_of_ampersand_scope() {
         let _lock = env_lock();
         let _cs = EnvGuard::set(CHECKSUM_ENV, OsStr::new("md5 & xxh3"));
-        env_list::validate_checksum_choice("xxh3").expect("server half contains xxh3");
-        let err = env_list::validate_checksum_choice("md5").unwrap_err();
+        env_list::validate_checksum_choice("xxh3", false, 32).expect("server half contains xxh3");
+        let err = env_list::validate_checksum_choice("md5", false, 32).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
     }
 

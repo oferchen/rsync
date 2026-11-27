@@ -29,6 +29,7 @@ mod failure;
 mod negotiate;
 
 pub use algorithms::{ChecksumAlgorithm, CompressionAlgorithm};
+pub use env_list::{ChoiceRefused, choice_refused_error};
 pub use negotiate::{
     NegotiationConfig, NegotiationResult, negotiate_capabilities,
     negotiate_capabilities_with_override,

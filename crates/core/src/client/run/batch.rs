@@ -14,8 +14,8 @@ use protocol::filters::{FilterRuleWireFormat, RuleType};
 use crate::message::Role;
 use crate::rsync_error;
 
-use super::super::config::{ClientConfig, FilterRuleSpec};
-use super::super::error::ClientError;
+use super::super::config::{ClientConfig, FilterRuleSpec, StrongChecksumAlgorithm};
+use super::super::error::{ClientError, cause_line_error, connection_unexpectedly_closed_error};
 use super::super::remote;
 use super::super::summary::ClientSummary;
 
@@ -51,6 +51,77 @@ pub(crate) fn handle_batch_read(
     }
 
     Some(replay_batch(batch_cfg, config))
+}
+
+/// Refuses an explicit `--checksum-choice` or `--compress-choice` that a local
+/// copy recording a batch cannot negotiate.
+///
+/// upstream: compat.c:414-416 getenv_nstr() pins both lists to the old-style
+/// choice (`md5`, `md4` below protocol 30, and `zlib`) while `write_batch` is
+/// set, and the forked local server child validates the forced choices against
+/// them (checksum.c:203-204, compat.c:194-195) in setup_protocol(), checksum
+/// first (compat.c:839-840). It prints the refusal and exits `RERR_UNSUPPORTED`
+/// as `[Receiver]` (compat.c:448-451); the sending parent then meets the
+/// closed pipe before reading a byte and exits `RERR_STREAMIO` (io.c:299-303).
+///
+/// Run before the batch files are opened, so a refused copy leaves none
+/// behind instead of upstream's truncated recording.
+pub(crate) fn refuse_local_batch_choices(config: &ClientConfig) -> Result<(), ClientError> {
+    let protocol = config
+        .protocol_version()
+        .unwrap_or(protocol::ProtocolVersion::NEWEST);
+    let refused = refused_checksum_choice(config, protocol)
+        .map(|choice| protocol::choice_refused_error("checksum", &choice))
+        .or_else(|| {
+            refused_compress_choice(config)
+                .map(|choice| protocol::choice_refused_error("compress", &choice))
+        });
+    match refused {
+        None => Ok(()),
+        Some(error) => {
+            let receiver = cause_line_error(
+                error.to_string(),
+                crate::exit_code::ExitCode::Unsupported,
+                Role::PreForkReceiver,
+            );
+            Err(connection_unexpectedly_closed_error(
+                0,
+                crate::exit_code::ExitCode::StreamIo,
+                Role::Sender,
+            )
+            .after(receiver))
+        }
+    }
+}
+
+/// Returns the explicit checksum choice the pinned batch list lacks.
+///
+/// An `auto` component resolves to the implied old-style checksum
+/// (checksum.c:136-150), which the pinned list always holds.
+fn refused_checksum_choice(
+    config: &ClientConfig,
+    protocol: protocol::ProtocolVersion,
+) -> Option<String> {
+    let pinned = if protocol.as_u8() >= 30 {
+        StrongChecksumAlgorithm::Md5
+    } else {
+        StrongChecksumAlgorithm::Md4
+    };
+    let choice = config.checksum_choice();
+    let listed =
+        |algorithm| matches!(algorithm, StrongChecksumAlgorithm::Auto) || algorithm == pinned;
+    (!listed(choice.transfer()) || !listed(choice.file())).then(|| choice.to_argument())
+}
+
+/// Returns the explicit compress choice other than the pinned `zlib`.
+fn refused_compress_choice(config: &ClientConfig) -> Option<String> {
+    let request = config.compress_request();
+    let refused = request
+        .pinned_codec()
+        .is_some_and(|codec| codec != protocol::CompressionAlgorithm::Zlib);
+    refused
+        .then(|| request.choice().map(str::to_owned))
+        .flatten()
 }
 
 /// Creates a [`BatchWriter`] for recording a transfer to a batch file.

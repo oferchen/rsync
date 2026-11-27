@@ -35,6 +35,11 @@ pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
         .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
     {
         Some(ExitCode::Protocol)
+    } else if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ChoiceRefused>())
+    {
+        Some(ExitCode::Unsupported)
     } else {
         None
     }
@@ -90,6 +95,15 @@ pub fn fatal_report_lines(
             )
             .into_bytes(),
         );
+    } else if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ChoiceRefused>())
+    {
+        // upstream: compat.c:448-451 - setup_protocol() refuses the choice
+        // before do_server_recv()/do_server_sender() run, while who_am_i()
+        // still answers "server" (rsync.c:987-990).
+        role = Role::Server;
+        lines.push(format!("{error}\n").into_bytes());
     } else if cause_line_exit_code(error).is_some() && !bare {
         lines.push(format!("{error}\n").into_bytes());
     }

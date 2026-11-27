@@ -29,7 +29,7 @@
 //! - `compat.c:506-536 send_negotiate_str()` - advertises the parsed list,
 //!   falling back to `get_default_nno_list()` when the value is empty.
 
-use std::io;
+use std::{error::Error, fmt, io};
 
 use super::algorithms::{resolve_checksum_name, resolve_compression_name};
 
@@ -109,8 +109,16 @@ pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Opti
 ///
 /// - `compat.c:426-455 validate_choice_vs_env()` - the refusal check itself.
 /// - `checksum.c:203-204` - the server-only call site.
-pub(super) fn validate_checksum_choice(choice: &str) -> io::Result<()> {
-    validate_choice(CHECKSUM_LIST_ENV, "checksum", choice, resolve_checksum_name)
+pub(super) fn validate_checksum_choice(
+    choice: &str,
+    write_batch: bool,
+    protocol: u8,
+) -> io::Result<()> {
+    validate_choice(
+        "checksum",
+        choice,
+        checksum_candidates(true, write_batch, protocol),
+    )
 }
 
 /// Refuses a client-forced `--compress-choice` whose algorithm is absent from
@@ -124,12 +132,11 @@ pub(super) fn validate_checksum_choice(choice: &str) -> io::Result<()> {
 ///
 /// - `compat.c:426-455 validate_choice_vs_env()`.
 /// - `compat.c:193-194` - the server-only call site.
-pub(super) fn validate_compress_choice(choice: &str) -> io::Result<()> {
+pub(super) fn validate_compress_choice(choice: &str, write_batch: bool) -> io::Result<()> {
     validate_choice(
-        COMPRESS_LIST_ENV,
         "compress",
         choice,
-        resolve_compression_name,
+        compression_candidates(true, write_batch),
     )
 }
 
@@ -183,9 +190,8 @@ enum EnvMembership {
 
 /// Parses the env list once and reports whether `algo` survives it.
 ///
-/// Shared by the forced-choice refusal ([`validate_choice`]) and the
-/// fallback-default refusal ([`validate_default`]) so both use the identical
-/// `&`-split, tokenising, alias canonicalisation and de-duplication from
+/// Used by the fallback-default refusal ([`validate_default`]), with the same
+/// `&`-split, tokenising, alias canonicalisation and de-duplication as
 /// [`parse_env`] - the single source of truth for the candidate set. An empty
 /// set (the `INVALID` sentinel) never contains `algo`, so a value whose names
 /// were all unrecognised reports [`EnvMembership::Absent`], matching upstream.
@@ -205,31 +211,52 @@ fn env_membership(
 /// Shared refusal check for both forced-choice kinds.
 ///
 /// Only the server validates a forced `--checksum-choice`/`--compress-choice`,
-/// so it always parses with `is_server = true`. When the variable is unset or
-/// empty the choice is accepted; otherwise the forced canonical name must be a
-/// member of the parsed candidate set.
+/// so `list` is the server's half of the candidate list: the env value, or the
+/// old-style choice `write_batch` pins. When there is no list the choice is
+/// accepted; otherwise the forced canonical name must be a member of it.
 ///
-/// On refusal, emits the byte-exact upstream message and fails with an
-/// [`io::ErrorKind::Unsupported`] error, which the core exit-code mapper turns
-/// into `RERR_UNSUPPORTED` (exit 4) - the code `validate_choice_vs_env` passes to
-/// `exit_cleanup` (`compat.c:450`).
-fn validate_choice(
-    key: &str,
-    kind: &str,
-    choice: &str,
-    resolve: impl Fn(&str) -> Option<&'static str>,
-) -> io::Result<()> {
+/// On refusal, fails with [`choice_refused_error`].
+fn validate_choice(kind: &str, choice: &str, list: Option<EnvOverride>) -> io::Result<()> {
     // upstream: compat.c:433-446 - unset/blank accepts; saw[num] must be set.
-    match env_membership(key, true, choice, resolve) {
-        EnvMembership::Unset | EnvMembership::Present => Ok(()),
-        // upstream: compat.c:448-450 rprintf(FERROR, "Your --%s-choice value
-        // (%s) was refused by the server.\n", ...). The trailing newline is
-        // added by the diagnostic layer, not embedded in the message.
-        EnvMembership::Absent => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Your --{kind}-choice value ({choice}) was refused by the server."),
-        )),
+    match list {
+        Some(list) if !list.candidates.contains(&choice) => Err(choice_refused_error(kind, choice)),
+        _ => Ok(()),
     }
+}
+
+/// A forced `--checksum-choice`/`--compress-choice` value the server refused.
+///
+/// Displays as the line `validate_choice_vs_env()` prints before its
+/// `RERR_UNSUPPORTED` exit, so a server's fatal report can print it as the
+/// cause line under its startup role (`compat.c:448-451`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChoiceRefused(String);
+
+impl fmt::Display for ChoiceRefused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Error for ChoiceRefused {}
+
+/// Builds upstream's refusal of a forced `--{kind}-choice` value.
+///
+/// The [`io::ErrorKind::Unsupported`] kind is what the core exit-code mapper
+/// turns into `RERR_UNSUPPORTED` (exit 4) - the code `validate_choice_vs_env`
+/// passes to `exit_cleanup` (`compat.c:450`). The payload is a
+/// [`ChoiceRefused`].
+#[must_use]
+pub fn choice_refused_error(kind: &str, choice: &str) -> io::Error {
+    // upstream: compat.c:448-450 rprintf(FERROR, "Your --%s-choice value
+    // (%s) was refused by the server.\n", ...). The trailing newline is
+    // added by the diagnostic layer, not embedded in the message.
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        ChoiceRefused(format!(
+            "Your --{kind}-choice value ({choice}) was refused by the server."
+        )),
+    )
 }
 
 /// Refuses the prefilled fallback default that upstream validates in
