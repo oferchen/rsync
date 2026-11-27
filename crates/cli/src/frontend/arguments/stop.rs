@@ -1,6 +1,18 @@
 use std::ffi::OsString;
 use std::time::SystemTime;
 
+/// One `--stop-after` (or its `--time-limit` alias) or `--stop-at` occurrence.
+///
+/// upstream: options.c:837-839 - all three spellings assign `stop_at_utime`, so
+/// the occurrences are kept in argv order and resolved together.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StopOption {
+    /// `--stop-after=MINS` or `--time-limit=MINS`.
+    After(OsString),
+    /// `--stop-at=WHEN`.
+    At(OsString),
+}
+
 /// Distinguishes which user-facing flag produced a [`StopRequest`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StopRequestKind {

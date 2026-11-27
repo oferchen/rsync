@@ -113,18 +113,6 @@ fn test_protocol_defaults_to_none() {
 }
 
 #[test]
-fn test_stop_after_defaults_to_none() {
-    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.stop_after, None, "stop_after should default to None");
-}
-
-#[test]
-fn test_stop_at_defaults_to_none() {
-    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.stop_at, None, "stop_at should default to None");
-}
-
-#[test]
 fn test_delete_mode_defaults_to_disabled() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert_eq!(

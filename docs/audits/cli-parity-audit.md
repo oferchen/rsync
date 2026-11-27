@@ -211,7 +211,7 @@ upstream alias is identical in spelling and semantics it is recorded under
 | `--contimeout` / `--no-contimeout` | -- | supported | -- |
 | `--timeout` / `--no-timeout` | -- | supported | -- |
 | `--stop-after` / `--time-limit` | -- | supported | `--time-limit` is the older upstream spelling, kept as alias. |
-| `--stop-at` | -- | supported | Conflicts with `--stop-after`. |
+| `--stop-at` | -- | supported | Each `--stop-at`, `--stop-after` and `--time-limit` is validated where it appears; the last one sets the stop time (options.c:2035-2058). |
 | `--bwlimit` / `--no-bwlimit` | -- | supported | K/M/G suffixes. |
 | `--protocol` | -- | supported | Force protocol version 28-32. |
 | `--secluded-args` / `--no-secluded-args` | `-s` | supported | `--protect-args` / `--no-protect-args` accepted as the upstream-historical aliases; `--no-s` short form supported. |

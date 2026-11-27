@@ -93,13 +93,15 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::SetTrue)
                 .overrides_with("old-args"),
         )
+        // upstream: options.c:845-846 (and :885-886 for --daemon) - `-4` and
+        // `-6` are POPT_ARG_VAL on `default_af_hint`, so the last one wins.
         .arg(
             Arg::new("ipv4")
                 .long("ipv4")
                 .short('4')
                 .help("Prefer IPv4 when contacting remote hosts.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("ipv6"),
+                .overrides_with("ipv6"),
         )
         .arg(
             Arg::new("ipv6")
@@ -107,7 +109,7 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .short('6')
                 .help("Prefer IPv6 when contacting remote hosts.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("ipv4"),
+                .overrides_with("ipv4"),
         )
         .arg(
             Arg::new("address")

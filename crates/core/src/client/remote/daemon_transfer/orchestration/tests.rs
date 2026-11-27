@@ -143,6 +143,48 @@ mod protect_args_daemon_tests {
         assert!(phase2.is_empty());
     }
 
+    /// upstream: options.c:2909-2913, :2969 - the daemon argv for `-HH` is the
+    /// `-H` argv with one more `H`; the capability suffix, with oc's private
+    /// `Z` letter when OC_CONSECUTIVE_MATCH=1, keeps the same bytes.
+    #[test]
+    fn doubled_hard_links_leave_the_rest_of_the_daemon_argv_unchanged() {
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        for consecutive in [false, true] {
+            let _env = if consecutive {
+                platform::env::EnvGuard::set("OC_CONSECUTIVE_MATCH", std::ffi::OsStr::new("1"))
+            } else {
+                platform::env::EnvGuard::remove("OC_CONSECUTIVE_MATCH")
+            };
+            let args = |level| {
+                let config = ClientConfig::builder().hard_links_level(level).build();
+                build_full_daemon_args(&config, &request, protocol, false)
+            };
+            let (one, two) = (args(1), args(2));
+            let cluster_at = |args: &[String]| {
+                args.iter()
+                    .position(|arg| {
+                        arg.starts_with('-') && !arg.starts_with("--") && arg.contains("e.")
+                    })
+                    .expect("option cluster with the capability suffix")
+            };
+            let (at_one, at_two) = (cluster_at(&one), cluster_at(&two));
+            assert_eq!(
+                (at_one, one.len()),
+                (at_two, two.len()),
+                "{one:?} vs {two:?}"
+            );
+            assert_eq!(two[at_two], one[at_one].replacen('H', "HH", 1));
+            for (index, (a, b)) in one.iter().zip(&two).enumerate() {
+                if index != at_one {
+                    assert_eq!(a, b, "argument {index}");
+                }
+            }
+            let suffix = &one[at_one][one[at_one].find("e.").expect("suffix")..];
+            assert_eq!(suffix.ends_with('Z'), consecutive, "{suffix}");
+        }
+    }
+
     #[test]
     fn build_full_args_includes_module_path() {
         let config = ClientConfig::default();

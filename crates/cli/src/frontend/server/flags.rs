@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
 use core::server::server_argv::long_option;
+
+use crate::frontend::arguments::StopOption;
 pub(super) use core::server::server_argv::{
     ArgvRefusal, SHORT_OPTIONS_WITH_VALUE, is_joined_filter_option, is_two_arg_server_long_flag,
     normalize_server_argv, split_at_end_of_options,
@@ -168,8 +170,8 @@ pub(super) struct ServerLongFlags {
     /// default. Each side enforces its own cap, so the server records and
     /// applies the value locally.
     pub(super) max_alloc: Option<String>,
-    pub(super) stop_at: Option<String>,
-    pub(super) stop_after: Option<String>,
+    /// Every `--stop-at` / `--stop-after` / `--time-limit` value, in argv order.
+    pub(super) stop_options: Vec<StopOption>,
     pub(super) files_from: Option<String>,
     /// `--confine-root=DIR` - the root every operator/peer-supplied path this
     /// server resolves must stay under.
@@ -607,8 +609,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         min_size: None,
         max_size: None,
         max_alloc: None,
-        stop_at: None,
-        stop_after: None,
+        stop_options: Vec::new(),
         files_from: None,
         confine_root: None,
         insecure_links: false,
@@ -1061,12 +1062,12 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         // upstream: options.c:3041 - client forwards `--bwlimit=%d` in whole KiB.
         flags.bwlimit = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--stop-at=") {
-        flags.stop_at = Some(value.to_owned());
+        flags.stop_options.push(StopOption::At(value.into()));
     } else if let Some(value) = s
         .strip_prefix("--stop-after=")
         .or_else(|| s.strip_prefix("--time-limit="))
     {
-        flags.stop_after = Some(value.to_owned());
+        flags.stop_options.push(StopOption::After(value.into()));
     } else if let Some(value) = s.strip_prefix("--files-from=") {
         flags.files_from = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--confine-root=") {

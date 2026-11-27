@@ -32,7 +32,9 @@ use super::flags::{
     archive_aware_flag, device_class_flag, leveled_flag_pair, tri_state_flag_negative_first,
     tri_state_flag_positive_first,
 };
-use super::values::{empty_backup_suffix_error, join_os_values, strip_backup_dir_dot_prefix};
+use super::values::{
+    empty_backup_suffix_error, join_os_values, stop_options_in_order, strip_backup_dir_dot_prefix,
+};
 use super::{
     BandwidthArgument, ParsedArgs, detect_program_name, env_iconv_default, env_max_alloc_default,
     resolve_arg_protection,
@@ -1416,8 +1418,7 @@ fn parsed_args_from_matches(
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
     let contimeout = matches.remove_one::<OsString>("contimeout");
-    let stop_after = matches.remove_one::<OsString>("stop-after");
-    let stop_at_option = matches.remove_one::<OsString>("stop-at");
+    let stop_options = stop_options_in_order(&mut matches);
     let out_format = matches.remove_one::<OsString>("out-format");
     let dparam: Vec<OsString> = matches
         .remove_many::<OsString>("dparam")
@@ -1738,8 +1739,7 @@ fn parsed_args_from_matches(
         protocol,
         timeout,
         contimeout,
-        stop_after,
-        stop_at: stop_at_option,
+        stop_options,
         out_format,
         daemon_port,
         #[cfg(feature = "quic")]

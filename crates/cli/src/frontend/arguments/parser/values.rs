@@ -2,6 +2,8 @@
 
 use std::ffi::{OsStr, OsString};
 
+use crate::frontend::arguments::StopOption;
+
 /// Joins multiple `OsString` values with commas into a single `OsString`.
 ///
 /// Returns `None` if the iterator is empty, or the single value if there is
@@ -19,6 +21,30 @@ pub(crate) fn join_os_values(values: Option<impl Iterator<Item = OsString>>) -> 
         joined.push(&value);
     }
     Some(joined)
+}
+
+/// Collects every `--stop-after`/`--time-limit` and `--stop-at` value in argv order.
+pub(crate) fn stop_options_in_order(matches: &mut clap::ArgMatches) -> Vec<StopOption> {
+    let mut indexed = indexed_values(matches, "stop-after", StopOption::After);
+    indexed.extend(indexed_values(matches, "stop-at", StopOption::At));
+    indexed.sort_unstable_by_key(|(index, _)| *index);
+    indexed.into_iter().map(|(_, option)| option).collect()
+}
+
+/// Pairs each value of the argument `id` with its position on the command line.
+fn indexed_values(
+    matches: &mut clap::ArgMatches,
+    id: &str,
+    wrap: fn(OsString) -> StopOption,
+) -> Vec<(usize, StopOption)> {
+    let indices: Vec<usize> = matches
+        .indices_of(id)
+        .map(Iterator::collect)
+        .unwrap_or_default();
+    matches
+        .remove_many::<OsString>(id)
+        .map(|values| indices.into_iter().zip(values.map(wrap)).collect())
+        .unwrap_or_default()
 }
 
 /// Strips leading `./` pairs and then a lone `.` from a `--backup-dir` value.

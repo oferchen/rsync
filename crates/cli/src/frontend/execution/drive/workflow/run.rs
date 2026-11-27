@@ -34,7 +34,7 @@ use std::io::{self, IsTerminal, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argument};
+use crate::frontend::execution::resolve_stop_options;
 
 /// Reports a `-M` value a local transfer's server side does not know.
 ///
@@ -456,8 +456,7 @@ where
         protocol,
         timeout,
         contimeout,
-        stop_after,
-        stop_at,
+        stop_options,
         out_format,
         // `--dparam` never reaches here: `run` routes it to the daemon-option
         // check first, as upstream's OPT_DAEMON does (options.c:871, 1538).
@@ -619,18 +618,9 @@ where
 
     let connect_timeout_setting = resolve_timeout(contimeout.as_ref(), stderr)?;
 
-    let stop_request = if let Some(value) = stop_after.as_ref() {
-        match parse_stop_after_argument(value.as_os_str()) {
-            Ok(deadline) => Some(StopRequest::new_stop_after(value.clone(), deadline)),
-            Err(message) => return Err(fail_with_message(message, stderr)),
-        }
-    } else if let Some(value) = stop_at.as_ref() {
-        match parse_stop_at_argument(value.as_os_str()) {
-            Ok(deadline) => Some(StopRequest::new_stop_at(value.clone(), deadline)),
-            Err(message) => return Err(fail_with_message(message, stderr)),
-        }
-    } else {
-        None
+    let stop_request = match resolve_stop_options(&stop_options) {
+        Ok(request) => request,
+        Err(message) => return Err(fail_with_message(message, stderr)),
     };
 
     let iconv_setting = match resolve_iconv_setting(iconv.as_deref(), no_iconv) {

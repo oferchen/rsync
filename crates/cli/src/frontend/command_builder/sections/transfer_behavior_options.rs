@@ -925,6 +925,9 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::SetTrue)
                     .overrides_with("timeout"),
             )
+            // upstream: options.c:837-839, :2035-2058 - every `--stop-after`,
+            // `--time-limit` and `--stop-at` is validated where it appears and
+            // assigns `stop_at_utime`, so each occurrence is kept in order.
             .arg(
                 Arg::new("stop-after")
                     .long("stop-after")
@@ -932,9 +935,8 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_name("MINS")
                     .help("Stop the transfer after running for the specified number of minutes.")
                     .num_args(1)
-                    .action(ArgAction::Set)
-                    .value_parser(OsStringValueParser::new())
-                    .conflicts_with("stop-at"),
+                    .action(ArgAction::Append)
+                    .value_parser(OsStringValueParser::new()),
             )
             .arg(
                 Arg::new("stop-at")
@@ -942,8 +944,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_name("WHEN")
                     .help("Stop the transfer at the specified local time (e.g. HH:MM or YYYY-MM-DDTHH:MM).")
                     .num_args(1)
-                    .action(ArgAction::Set)
-                    .value_parser(OsStringValueParser::new())
-                    .conflicts_with("stop-after"),
+                    .action(ArgAction::Append)
+                    .value_parser(OsStringValueParser::new()),
             )
 }

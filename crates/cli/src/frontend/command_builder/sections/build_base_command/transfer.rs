@@ -195,13 +195,15 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
         )
+        // upstream: options.c:727-729 - `-S`/`--sparse`, `--no-sparse` and
+        // `--no-S` are POPT_ARG_VAL on `sparse_files`, so the last one wins.
         .arg(
             Arg::new("sparse")
                 .long("sparse")
                 .short('S')
                 .help("Preserve sparse files by creating holes in the destination.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("no-sparse"),
+                .overrides_with("no-sparse"),
         )
         .arg(
             Arg::new("no-sparse")
@@ -209,7 +211,7 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
                 .visible_alias("no-S")
                 .help("Disable sparse file handling.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("sparse"),
+                .overrides_with("sparse"),
         )
         .arg(
             Arg::new("sparse-detect")

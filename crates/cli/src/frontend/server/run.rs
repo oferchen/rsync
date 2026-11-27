@@ -19,7 +19,9 @@ use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
-use crate::frontend::arguments::{backup_dir_dot_prefix_len, empty_backup_suffix_error};
+use crate::frontend::arguments::{
+    StopOption, backup_dir_dot_prefix_len, empty_backup_suffix_error,
+};
 use crate::frontend::execution::{SYNTAX_ERROR, exit_trailer, parse_max_delete_argument};
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
@@ -1526,18 +1528,14 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
-    if let Some(when_str) = &long_flags.stop_at {
-        match parse_server_stop_at(when_str) {
-            Ok(deadline) => config.stop_at = Some(deadline),
-            Err(msg) => {
-                write_server_error(stderr, brand, msg);
-                return Err(1);
-            }
-        }
-    }
-
-    if let Some(mins_str) = &long_flags.stop_after {
-        match parse_server_stop_after(mins_str) {
+    // upstream: options.c:2035-2058 - each value is validated where it
+    // appears and assigns `stop_at_utime`, so the last valid one wins.
+    for option in &long_flags.stop_options {
+        let parsed = match option {
+            StopOption::At(when) => parse_server_stop_at(&when.to_string_lossy()),
+            StopOption::After(mins) => parse_server_stop_after(&mins.to_string_lossy()),
+        };
+        match parsed {
             Ok(deadline) => config.stop_at = Some(deadline),
             Err(msg) => {
                 write_server_error(stderr, brand, msg);

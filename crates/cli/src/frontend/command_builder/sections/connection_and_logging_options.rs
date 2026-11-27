@@ -166,6 +166,9 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .action(ArgAction::SetTrue)
                 .overrides_with("aes"),
         )
+        // upstream: options.c:843-844, :1831-1834 - `--iconv` stores its string
+        // and OPT_NO_ICONV clears it, each at its own position, so a later
+        // `--iconv` sets it again.
         .arg(
             Arg::new("iconv")
                 .long("iconv")
@@ -176,14 +179,14 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new())
-                .conflicts_with("no-iconv"),
+                .overrides_with("no-iconv"),
         )
         .arg(
             Arg::new("no-iconv")
                 .long("no-iconv")
                 .help("Disable iconv charset conversion.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("iconv"),
+                .overrides_with("iconv"),
         )
         .arg(
             Arg::new("stderr")

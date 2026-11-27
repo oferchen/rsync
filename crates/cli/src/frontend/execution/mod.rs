@@ -51,7 +51,7 @@ pub(crate) use options::{
 };
 #[cfg(windows)]
 pub(crate) use source_glob::expand_source_operands;
-pub(crate) use stop::{parse_stop_after_argument, parse_stop_at_argument};
+pub(crate) use stop::{parse_stop_after_argument, parse_stop_at_argument, resolve_stop_options};
 
 #[cfg(test)]
 pub(crate) fn render_missing_operands_stdout(program_name: ProgramName) -> String {

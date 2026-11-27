@@ -1820,16 +1820,6 @@ mod tests {
         );
     }
 
-    /// Golden byte-order test: a real rsync server dispatches each compact
-    /// flag independently (`parse_arguments()` switches on one byte at a
-    /// time), so the LETTER ORDER within the bundle has no effect on how a
-    /// peer parses it. But wire-fidelity requires oc-rsync's client to be a
-    /// drop-in replacement whose argv is indistinguishable from upstream's
-    /// own client - packet captures, `--server` invocation logs, and
-    /// interop diffing all compare this string byte-for-byte. Exercising one
-    /// flag from each upstream `server_options()` grouping pins the full
-    /// emission sequence (options.c:2795-2899) so a future edit cannot
-    /// silently reorder it back out of parity.
     /// upstream: options.c:2909-2913 - `-HH` doubles the letter in the
     /// compact cluster; `-H` sends one and no `-H` sends none.
     #[test]
@@ -1845,6 +1835,16 @@ mod tests {
         }
     }
 
+    /// Golden byte-order test: a real rsync server dispatches each compact
+    /// flag independently (`parse_arguments()` switches on one byte at a
+    /// time), so the LETTER ORDER within the bundle has no effect on how a
+    /// peer parses it. But wire-fidelity requires oc-rsync's client to be a
+    /// drop-in replacement whose argv is indistinguishable from upstream's
+    /// own client - packet captures, `--server` invocation logs, and
+    /// interop diffing all compare this string byte-for-byte. Exercising one
+    /// flag from each upstream `server_options()` grouping pins the full
+    /// emission sequence (options.c:2795-2899) so a future edit cannot
+    /// silently reorder it back out of parity.
     #[test]
     fn server_flag_string_matches_upstream_letter_order() {
         let config = ClientConfig::builder()

@@ -9,6 +9,7 @@ use core::client::{
 
 use super::bandwidth::BandwidthArgument;
 use super::program_name::ProgramName;
+use super::stop::StopOption;
 use crate::frontend::filter_rules::FilterOrderToken;
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 
@@ -161,11 +162,8 @@ pub struct ParsedArgs {
     /// `--contimeout` - connection establishment timeout in seconds.
     pub contimeout: Option<OsString>,
 
-    /// `--stop-after` - stop transfer after the specified duration.
-    pub stop_after: Option<OsString>,
-
-    /// `--stop-at` - stop transfer at the specified wall-clock time.
-    pub stop_at: Option<OsString>,
+    /// Every `--stop-after` / `--time-limit` and `--stop-at` value, in argv order.
+    pub stop_options: Vec<StopOption>,
 
     /// `--server` - run in server mode (internal, set by remote invocation).
     pub server_mode: bool,

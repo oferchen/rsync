@@ -8,7 +8,7 @@
 //! - Invalid arguments and error handling
 //! - Path operand parsing (source, destination)
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use super::*;
 use crate::frontend::arguments::bandwidth::BandwidthArgument;
@@ -1162,6 +1162,42 @@ mod negation_flags {
                 parsed.write_devices, write_devices,
                 "{args:?} write_devices"
             );
+        }
+    }
+
+    /// upstream: options.c:727-729 (sparse_files), :845-846 (default_af_hint)
+    /// and :843-844 with :1831-1834 (iconv_opt) - each pair is last-wins, and a
+    /// later `--iconv` sets the charset again after `--no-iconv`.
+    #[test]
+    fn sparse_address_family_and_iconv_pairs_are_last_wins() {
+        let parse = |args: &[&str]| {
+            parse_test_args(args.iter().chain(&["src/", "dst/"]))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"))
+        };
+        for (args, sparse) in [
+            (["-S", "--no-S"].as_slice(), Some(false)),
+            (&["--no-S", "-S"], Some(true)),
+            (&["--sparse", "--no-sparse"], Some(false)),
+            (&["--no-sparse", "--sparse"], Some(true)),
+        ] {
+            assert_eq!(parse(args).sparse, sparse, "{args:?}");
+        }
+        for (args, mode) in [
+            (["-4", "-6"].as_slice(), AddressMode::Ipv6),
+            (&["-6", "-4"], AddressMode::Ipv4),
+            (&["--ipv4", "--ipv6"], AddressMode::Ipv6),
+            (&["--ipv6", "--ipv4"], AddressMode::Ipv4),
+        ] {
+            assert_eq!(parse(args).address_mode, mode, "{args:?}");
+        }
+        for (args, iconv, no_iconv) in [
+            (["--iconv=a,b", "--no-iconv"].as_slice(), None, true),
+            (&["--no-iconv", "--iconv=a,b"], Some("a,b"), false),
+            (&["--iconv=x,y", "--iconv=a,b"], Some("a,b"), false),
+        ] {
+            let parsed = parse(args);
+            assert_eq!(parsed.iconv.as_deref(), iconv.map(OsStr::new), "{args:?}");
+            assert_eq!(parsed.no_iconv, no_iconv, "{args:?}");
         }
     }
 
@@ -2882,24 +2918,127 @@ mod checksum_choice_tests {
 }
 
 mod stop_time_tests {
+    use super::super::stop::StopRequestKind;
     use super::*;
+    use crate::frontend::arguments::StopOption;
+    use crate::frontend::execution::resolve_stop_options;
+
+    const FUTURE: &str = "2099-12-31T23:59";
+
+    fn stop_options(args: &[&str]) -> Vec<StopOption> {
+        parse_test_args(args.iter().chain(&["src/", "dst/"]))
+            .unwrap_or_else(|e| panic!("{args:?}: {e}"))
+            .stop_options
+    }
 
     #[test]
     fn stop_after_option() {
-        let parsed = parse_test_args(["--stop-after=60", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.stop_after, Some(OsString::from("60")));
+        assert_eq!(
+            stop_options(&["--stop-after=60"]),
+            [StopOption::After("60".into())]
+        );
     }
 
     #[test]
     fn stop_at_option() {
-        let parsed = parse_test_args(["--stop-at=12:30", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.stop_at, Some(OsString::from("12:30")));
+        assert_eq!(
+            stop_options(&["--stop-at=12:30"]),
+            [StopOption::At("12:30".into())]
+        );
     }
 
     #[test]
     fn stop_after_alias_time_limit() {
-        let parsed = parse_test_args(["--time-limit=30", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.stop_after, Some(OsString::from("30")));
+        assert_eq!(
+            stop_options(&["--time-limit=30"]),
+            [StopOption::After("30".into())]
+        );
+    }
+
+    /// upstream: options.c:837-839 - the three spellings feed one setting, so
+    /// every occurrence is kept, in argv order, repeats included.
+    #[test]
+    fn stop_options_keep_argv_order() {
+        assert_eq!(
+            stop_options(&[
+                "--stop-at=12:30",
+                "--time-limit=5",
+                "--stop-after=7",
+                "--stop-at=13:00",
+            ]),
+            [
+                StopOption::At("12:30".into()),
+                StopOption::After("5".into()),
+                StopOption::After("7".into()),
+                StopOption::At("13:00".into()),
+            ]
+        );
+    }
+
+    /// upstream: options.c:2035-2058 - each occurrence assigns
+    /// `stop_at_utime`, so the last one sets the deadline.
+    #[test]
+    fn the_last_stop_option_sets_the_deadline() {
+        let after_then_at = format!("--stop-at={FUTURE}");
+        for (args, kind, value) in [
+            (
+                ["--stop-after=5", after_then_at.as_str()],
+                StopRequestKind::StopAt,
+                FUTURE,
+            ),
+            (
+                [after_then_at.as_str(), "--stop-after=5"],
+                StopRequestKind::StopAfter,
+                "5",
+            ),
+            (
+                ["--stop-after=5", "--time-limit=7"],
+                StopRequestKind::StopAfter,
+                "7",
+            ),
+        ] {
+            let request = resolve_stop_options(&stop_options(&args))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"))
+                .expect("a stop request");
+            assert_eq!(request.kind(), kind, "{args:?}");
+            assert_eq!(request.cli_value(), value, "{args:?}");
+        }
+    }
+
+    /// upstream: options.c:2039-2041, :2050-2056 - a value is validated where
+    /// it appears, so an invalid one is refused even when a later one is valid.
+    #[test]
+    fn an_earlier_invalid_stop_value_is_refused() {
+        let future = format!("--stop-at={FUTURE}");
+        for (args, text) in [
+            (
+                ["--stop-after=x", "--stop-after=5"],
+                "invalid --stop-after value: x",
+            ),
+            (
+                ["--stop-after=x", future.as_str()],
+                "invalid --stop-after value: x",
+            ),
+            (
+                ["--stop-at=bogus", "--stop-after=5"],
+                "invalid --stop-at format: bogus",
+            ),
+            (
+                ["--stop-at=2000-01-01T00:00", "--stop-after=5"],
+                "--stop-at time is not in the future: 2000-01-01T00:00",
+            ),
+        ] {
+            let error = resolve_stop_options(&stop_options(&args))
+                .expect_err(&format!("{args:?} must be refused"));
+            assert!(error.to_string().contains(text), "{args:?}: {error}");
+        }
+    }
+
+    #[test]
+    fn no_stop_option_means_no_deadline() {
+        let options = stop_options(&[]);
+        assert!(options.is_empty());
+        assert_eq!(resolve_stop_options(&options).expect("resolve"), None);
     }
 }
 

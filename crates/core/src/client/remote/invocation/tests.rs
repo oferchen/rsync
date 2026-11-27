@@ -2084,6 +2084,45 @@ fn doubled_hard_links_send_two_letters() {
     }
 }
 
+/// upstream: options.c:2909-2913 doubles `H` inside the compact cluster and
+/// maybe_add_e_option() (options.c:2969) appends the capability string after
+/// it. `-HH` changes nothing else in the remote-shell argv: it equals the `-H`
+/// argv with one more `H`, and the `e.` suffix - with oc's private `Z` letter
+/// when OC_CONSECUTIVE_MATCH=1 - keeps the same bytes.
+#[test]
+fn doubled_hard_links_leave_the_rest_of_the_argv_unchanged() {
+    for consecutive in [false, true] {
+        let _env = if consecutive {
+            platform::env::EnvGuard::set("OC_CONSECUTIVE_MATCH", std::ffi::OsStr::new("1"))
+        } else {
+            platform::env::EnvGuard::remove("OC_CONSECUTIVE_MATCH")
+        };
+        let one = build_sender_args(&ClientConfig::builder().hard_links_level(1).build());
+        let two = build_sender_args(&ClientConfig::builder().hard_links_level(2).build());
+        let cluster_at = |args: &[String]| {
+            args.iter()
+                .position(|arg| {
+                    arg.starts_with('-') && !arg.starts_with("--") && arg.contains("e.")
+                })
+                .expect("option cluster with the capability suffix")
+        };
+        let (at_one, at_two) = (cluster_at(&one), cluster_at(&two));
+        assert_eq!(
+            (at_one, one.len()),
+            (at_two, two.len()),
+            "{one:?} vs {two:?}"
+        );
+        assert_eq!(two[at_two], one[at_one].replacen('H', "HH", 1));
+        for (index, (a, b)) in one.iter().zip(&two).enumerate() {
+            if index != at_one {
+                assert_eq!(a, b, "argument {index}");
+            }
+        }
+        let suffix = &one[at_one][one[at_one].find("e.").expect("suffix")..];
+        assert_eq!(suffix.ends_with('Z'), consecutive, "{suffix}");
+    }
+}
+
 #[test]
 fn numeric_ids_is_long_form_not_in_flag_string() {
     // upstream: numeric_ids is sent as --numeric-ids long-form arg, never as 'n' flag.

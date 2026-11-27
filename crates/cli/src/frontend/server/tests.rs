@@ -13,6 +13,7 @@ use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
+use crate::frontend::arguments::StopOption;
 
 #[test]
 fn daemon_mode_arguments_empty_args() {
@@ -851,8 +852,7 @@ fn long_flags_defaults() {
     assert!(flags.min_size.is_none());
     assert!(flags.max_size.is_none());
     assert!(flags.max_alloc.is_none());
-    assert!(flags.stop_at.is_none());
-    assert!(flags.stop_after.is_none());
+    assert!(flags.stop_options.is_empty());
     assert!(matches!(
         flags.io_uring_policy,
         fast_io::IoUringPolicy::Auto
@@ -1521,7 +1521,10 @@ fn long_flags_stop_at() {
         OsString::from("--stop-at=2099-12-31T23:59"),
     ];
     let flags = parse_server_long_flags(&args);
-    assert_eq!(flags.stop_at.as_deref(), Some("2099-12-31T23:59"));
+    assert_eq!(
+        flags.stop_options,
+        [StopOption::At("2099-12-31T23:59".into())]
+    );
 }
 
 #[test]
@@ -1531,7 +1534,28 @@ fn long_flags_stop_after() {
         OsString::from("--stop-after=60"),
     ];
     let flags = parse_server_long_flags(&args);
-    assert_eq!(flags.stop_after.as_deref(), Some("60"));
+    assert_eq!(flags.stop_options, [StopOption::After("60".into())]);
+}
+
+/// upstream: options.c:837-839 - a `-M` payload can repeat or mix the stop
+/// options; the server keeps every value in argv order.
+#[test]
+fn long_flags_keep_every_stop_option_in_order() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--stop-after=5"),
+        OsString::from("--stop-at=2099-12-31T23:59"),
+        OsString::from("--time-limit=7"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(
+        flags.stop_options,
+        [
+            StopOption::After("5".into()),
+            StopOption::At("2099-12-31T23:59".into()),
+            StopOption::After("7".into()),
+        ]
+    );
 }
 
 #[test]
@@ -1566,7 +1590,7 @@ fn long_flags_all_combined() {
     assert_eq!(flags.min_size.as_deref(), Some("100"));
     assert_eq!(flags.max_size.as_deref(), Some("1M"));
     assert_eq!(flags.max_alloc.as_deref(), Some("2G"));
-    assert_eq!(flags.stop_after.as_deref(), Some("30"));
+    assert_eq!(flags.stop_options, [StopOption::After("30".into())]);
 }
 
 #[test]

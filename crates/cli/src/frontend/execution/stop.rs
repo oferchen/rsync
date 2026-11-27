@@ -3,6 +3,7 @@
 use std::ffi::OsStr;
 use std::time::{Duration, SystemTime};
 
+use crate::frontend::arguments::{StopOption, StopRequest};
 use core::message::{Message, Role};
 use core::rsync_error;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
@@ -66,6 +67,26 @@ pub(crate) fn parse_stop_at_argument(value: &OsStr) -> Result<SystemTime, Messag
         Err(StopAtError::InvalidFormat) => Err(invalid_stop_at(display)),
         Err(StopAtError::NotInFuture) => Err(stop_at_not_future(display)),
     }
+}
+
+/// Resolves the `--stop-after` / `--stop-at` occurrences into the request the transfer uses.
+///
+/// upstream: options.c:2035-2058 - popt runs each occurrence's case in argv
+/// order, validating its value and assigning `stop_at_utime`, so the first
+/// invalid value aborts the parse and otherwise the last one wins.
+pub(crate) fn resolve_stop_options(options: &[StopOption]) -> Result<Option<StopRequest>, Message> {
+    let mut request = None;
+    for option in options {
+        request = Some(match option {
+            StopOption::After(value) => {
+                StopRequest::new_stop_after(value.clone(), parse_stop_after_argument(value)?)
+            }
+            StopOption::At(value) => {
+                StopRequest::new_stop_at(value.clone(), parse_stop_at_argument(value)?)
+            }
+        });
+    }
+    Ok(request)
 }
 
 fn invalid_stop_after(value: &str) -> Message {

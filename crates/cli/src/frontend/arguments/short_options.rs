@@ -164,15 +164,20 @@ fn fragment_needs_value(fragment: Option<&String>, value_shorts: &HashSet<char>)
     }
 }
 
-/// Builds a map of recognised long option names (including visible aliases) to
-/// whether the option requires a value.
+/// Builds a map of recognised long option names (including visible and hidden
+/// aliases) to whether the option requires a value.
+///
+/// A hidden alias such as `--time-limit` is an option like any other; treating
+/// it as an operand would hoist it behind every other option and reorder the
+/// command line popt processes left to right.
 fn classify_long_options(command: &ClapCommand) -> HashMap<String, bool> {
     let mut long_options = HashMap::new();
 
     for argument in command.get_arguments() {
-        let Some(longs) = argument.get_long_and_visible_aliases() else {
+        let Some(mut longs) = argument.get_long_and_visible_aliases() else {
             continue;
         };
+        longs.extend(argument.get_aliases().unwrap_or_default());
 
         // Honour an explicit `num_args`; otherwise fall back to whether the
         // action consumes a value. Options like `--ssh-identity` use

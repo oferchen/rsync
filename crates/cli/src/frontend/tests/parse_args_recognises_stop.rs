@@ -1,5 +1,6 @@
 use super::common::*;
 use super::*;
+use crate::frontend::arguments::StopOption;
 
 #[test]
 fn parse_args_recognises_stop_after_option() {
@@ -11,8 +12,7 @@ fn parse_args_recognises_stop_after_option() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.stop_after, Some(OsString::from("5")));
-    assert!(parsed.stop_at.is_none());
+    assert_eq!(parsed.stop_options, [StopOption::After("5".into())]);
 }
 
 #[test]
@@ -25,8 +25,7 @@ fn parse_args_recognises_time_limit_alias() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.stop_after, Some(OsString::from("15")));
-    assert!(parsed.stop_at.is_none());
+    assert_eq!(parsed.stop_options, [StopOption::After("15".into())]);
 }
 
 #[test]
@@ -39,6 +38,8 @@ fn parse_args_recognises_stop_at_option() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.stop_at, Some(OsString::from("2099-12-31T23:59")));
-    assert!(parsed.stop_after.is_none());
+    assert_eq!(
+        parsed.stop_options,
+        [StopOption::At("2099-12-31T23:59".into())]
+    );
 }

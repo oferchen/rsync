@@ -10,6 +10,7 @@ use super::flags::{
     ArgvRefusal, normalize_server_argv, parse_server_long_flags, refused_server_option,
 };
 use super::parse::parse_server_flag_string_and_args;
+use crate::frontend::arguments::StopOption;
 
 /// A pushed server argv with `options` where `-M` puts them, normalised as
 /// the server normalises it.
@@ -269,7 +270,10 @@ fn forwarded_long_options_set_the_server_fields() {
         flags(&["--out-format=%n"]).log_format.as_deref(),
         Some("%n")
     );
-    assert_eq!(flags(&["--time-limit=5"]).stop_after.as_deref(), Some("5"));
+    assert_eq!(
+        flags(&["--time-limit=5"]).stop_options,
+        [StopOption::After("5".into())]
+    );
     assert_eq!(flags(&["--cc=md5"]).checksum_choice.as_deref(), Some("md5"));
     assert_eq!(flags(&["--zl=3"]).compression_level.as_deref(), Some("3"));
     assert_eq!(
