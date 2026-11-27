@@ -8,10 +8,12 @@ use std::path::PathBuf;
 
 use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
+use core::server::server_argv::long_option;
 pub(super) use core::server::server_argv::{
     ArgvRefusal, SHORT_OPTIONS_WITH_VALUE, is_joined_filter_option, is_two_arg_server_long_flag,
     normalize_server_argv, split_at_end_of_options,
 };
+use core::server::writer::MessageRoute;
 
 /// Returns the first long option the server must refuse as unknown.
 ///
@@ -33,11 +35,49 @@ pub(super) fn refused_server_option(args: &[OsString]) -> Option<ArgvRefusal> {
             after_server = true;
         } else if is_two_arg_server_long_flag(&text) {
             tokens.next();
-        } else if text.starts_with("--") && !is_known_server_long_flag(&text) {
-            return Some(ArgvRefusal::popt(&text, "unknown option", after_server));
+        } else if let Some(refusal) = refused_long_option(&text, after_server) {
+            return Some(refusal);
         }
     }
     None
+}
+
+/// The refusal 3.5.2's server gives one `--` token, if any.
+///
+/// upstream: popt refuses a name outside the table as `unknown option` and a
+/// value joined to a switch as `option does not take an argument`; rsync's
+/// own checks refuse an unknown `--stderr` mode and an invalid `--chmod`.
+fn refused_long_option(text: &str, after_server: bool) -> Option<ArgvRefusal> {
+    let rest = text.strip_prefix("--")?;
+    let (name, value) = match rest.split_once('=') {
+        Some((name, value)) => (name, Some(value)),
+        None => (rest, None),
+    };
+    match long_option(name) {
+        Some(kind) if value.is_some() && !kind.takes_value() => Some(ArgvRefusal::popt(
+            text,
+            "option does not take an argument",
+            after_server,
+        )),
+        Some(_) => match (name, value) {
+            ("stderr", Some(mode)) if MessageRoute::from_stderr_mode(mode).is_none() => {
+                Some(ArgvRefusal {
+                    text: format!("--stderr mode \"{mode}\" is not one of errors, all, or client"),
+                    after_server,
+                })
+            }
+            // upstream: options.c:1909-1916 `case OPT_CHMOD`.
+            ("chmod", Some(spec)) if ::metadata::ChmodModifiers::parse(spec).is_err() => {
+                Some(ArgvRefusal {
+                    text: format!("Invalid argument passed to --chmod ({spec})"),
+                    after_server,
+                })
+            }
+            _ => None,
+        },
+        None if is_known_server_long_flag(text) => None,
+        None => Some(ArgvRefusal::popt(text, "unknown option", after_server)),
+    }
 }
 
 /// Detects whether secluded-args mode is requested in the server arguments.
@@ -521,6 +561,19 @@ pub(super) struct ServerLongFlags {
     /// emits a standalone `-B<digits>` token after the compact flag string.
     /// Recognised here so it is not mistaken for a positional destination path.
     pub(super) block_size: Option<String>,
+    /// `--devices` / `--no-devices`, which set `preserve_devices` alone
+    /// (options.c:682-683); the `-D` letter sets it with specials.
+    pub(super) devices: Option<bool>,
+    /// `--munge-links` / `--no-munge-links` (options.c:700-701).
+    pub(super) munge_symlinks: Option<bool>,
+    /// Every `--chmod` value, in order; upstream appends each to
+    /// `chmod_modes` (options.c:1909-1916).
+    pub(super) chmod: Vec<String>,
+    /// `--compress-threads=N` / `--zt=N` (options.c:784-785).
+    pub(super) compress_threads: Option<String>,
+    /// `--no-inc-recursive` / `--no-i-r` cleared `allow_inc_recurse`
+    /// (options.c:634-637), and no later `--inc-recursive` set it again.
+    pub(super) no_inc_recurse: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -613,6 +666,11 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         groupmap: None,
         skip_compress: None,
         block_size: None,
+        devices: None,
+        munge_symlinks: None,
+        chmod: Vec::new(),
+        compress_threads: None,
+        no_inc_recurse: false,
     };
 
     let mut idx = 0;
@@ -678,7 +736,9 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // effect) that check already reports true, so recognizing the flag
             // matches upstream. A non-root receiver would only differ by
             // attempting privileged ops that fail with EPERM, which oc omits.
-            "--super" => {}
+            // Both spellings share `am_root` with `--fake-super` (options.c:
+            // 671-673), so either one ends a fake-super set earlier.
+            "--super" | "--no-super" => flags.fake_super = Some(false),
             // upstream: options.c:3239-3240 - `if (preallocate_files && am_sender)
             // args[ac++] = "--preallocate"`, forwarded to a server receiver so
             // it fallocate()s each destination file before writing (receiver.c:
@@ -700,14 +760,17 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: options.c:711 / 3157-3158 - `--no-implied-dirs` is
             // forwarded to the sender on a pull. The server-side sender must omit
             // implied parent dirs from the flist at protocol < 30.
-            "--no-implied-dirs" => flags.no_implied_dirs = true,
+            "--no-implied-dirs" | "--no-i-d" => flags.no_implied_dirs = true,
+            // upstream: options.c:710-713 - the positive spellings restore the
+            // default `implied_dirs = 1`.
+            "--implied-dirs" | "--i-d" => flags.no_implied_dirs = false,
             // upstream: options.c:633 / 2928-2929 - `--no-r` clears `recurse`
             // on the server-side popt table. A client running `-d --delete`
             // forwards it so the remote can delete with `-d` sans `-r`.
-            "--no-r" => flags.no_recurse = true,
+            "--no-r" | "--no-recursive" => flags.no_recurse = true,
             // upstream: options.c:761 / 3139-3140 - `--no-W` clears `whole_file`
             // so `--inplace --sparse` streams a delta instead of the whole file.
-            "--no-W" => flags.no_whole_file = true,
+            "--no-W" | "--no-whole-file" => flags.no_whole_file = true,
             // upstream: options.c:2954-2955 / 3153-3154 - the sender packs the
             // compact `R` letter for relative mode; when relative paths are off
             // (including the `--files-from` default being explicitly disabled),
@@ -737,7 +800,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --numeric-ids is long-form only (options.c:3154-3155)
             "--numeric-ids" => flags.numeric_ids = true,
             // upstream: --delete variants are long-form only (options.c:3077-3086)
-            "--delete" | "--delete-during" => {
+            "--delete" | "--delete-during" | "--del" => {
                 flags.delete = true;
             }
             // upstream: options.c:3077-3078 server_options() forwards an explicit
@@ -849,6 +912,38 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // them here only so a stray forward is consumed rather than mistaken
             // for a positional path; they carry no mkpath semantics.
             "--old-dirs" | "--old-d" => {}
+            // upstream: options.c long_options[] - the negations and aliases a
+            // client can forward with `-M`, which set the same variables as
+            // the spellings above. `-M` options come last in the server argv
+            // (options.c:3251-3258), so a negation overrides what precedes it.
+            "--append-verify" => {
+                flags.append = true;
+                flags.append_verify = true;
+            }
+            "--no-append" => {
+                flags.append = false;
+                flags.append_verify = false;
+            }
+            "--no-inplace" => flags.inplace = false,
+            "--no-partial" => flags.partial = false,
+            "--no-delay-updates" => flags.delay_updates = false,
+            "--no-delay-symlinks" => flags.delay_symlinks = false,
+            "--no-force" => flags.force = false,
+            "--no-ignore-errors" => flags.ignore_errors = false,
+            "--no-numeric-ids" => flags.numeric_ids = false,
+            "--no-from0" => flags.from0 = false,
+            "--no-write-devices" => flags.write_devices = false,
+            "--no-open-noatime" => flags.open_noatime = false,
+            "--devices" => flags.devices = Some(true),
+            "--no-devices" => flags.devices = Some(false),
+            "--munge-links" => flags.munge_symlinks = Some(true),
+            "--no-munge-links" => flags.munge_symlinks = Some(false),
+            "--inc-recursive" | "--i-r" => flags.no_inc_recurse = false,
+            "--no-inc-recursive" | "--no-i-r" => flags.no_inc_recurse = true,
+            // upstream: options.c:1831-1835 `case OPT_NO_ICONV`.
+            "--no-iconv" => flags.iconv = None,
+            "--no-bwlimit" => flags.bwlimit = None,
+            "--no-timeout" => flags.timeout = None,
             _ => {
                 // upstream: options.c::server_options() emits a handful of
                 // path-bearing long flags (`--copy-dest`, `--link-dest`,
@@ -948,7 +1043,10 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.checksum_seed = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--protocol=") {
         flags.protocol = Some(value.to_owned());
-    } else if let Some(value) = s.strip_prefix("--checksum-choice=") {
+    } else if let Some(value) = s
+        .strip_prefix("--checksum-choice=")
+        .or_else(|| s.strip_prefix("--cc="))
+    {
         flags.checksum_choice = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--modify-window=") {
         // upstream: options.c:3114-3119 - server_options() emits `--modify-window=%d`.
@@ -964,7 +1062,10 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.bwlimit = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--stop-at=") {
         flags.stop_at = Some(value.to_owned());
-    } else if let Some(value) = s.strip_prefix("--stop-after=") {
+    } else if let Some(value) = s
+        .strip_prefix("--stop-after=")
+        .or_else(|| s.strip_prefix("--time-limit="))
+    {
         flags.stop_after = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--files-from=") {
         flags.files_from = Some(value.to_owned());
@@ -1012,7 +1113,10 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.compress_choice = Some(value.to_owned());
     // upstream: options.c:2996-3000 - `--compress-level=%d` carries the
     // explicit compression level so the server codec matches the client.
-    } else if let Some(value) = s.strip_prefix("--compress-level=") {
+    } else if let Some(value) = s
+        .strip_prefix("--compress-level=")
+        .or_else(|| s.strip_prefix("--zl="))
+    {
         flags.compression_level = Some(value.to_owned());
     // upstream: options.c:3011-3021 - client forwards --log-format=%i (or %o,
     // %i%I, X) so the server knows whether to generate itemize data.
@@ -1024,8 +1128,23 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         // dry-run-with-real-checksums mode instead of leaking the token into
         // the positional destination list.
         flags.only_write_batch = true;
-    } else if let Some(value) = s.strip_prefix("--log-format=") {
+    } else if let Some(value) = s
+        .strip_prefix("--log-format=")
+        .or_else(|| s.strip_prefix("--out-format="))
+    {
+        // upstream: options.c:801-802 - both names set `stdout_format`.
         flags.log_format = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--chmod=") {
+        flags.chmod.push(value.to_owned());
+    } else if let Some(value) = s
+        .strip_prefix("--compress-threads=")
+        .or_else(|| s.strip_prefix("--zt="))
+    {
+        flags.compress_threads = Some(value.to_owned());
+    } else if let Some(mode) = s.strip_prefix("--stderr=") {
+        // upstream: options.c:2061-2077 - refused_server_option already
+        // refused a mode outside the three names.
+        flags.msgs2stderr = core::server::writer::MessageRoute::from_stderr_mode(mode);
     // upstream: options.c:3195-3198 - server_options() forwards info levels.
     // Capture the raw value so run_server_mode can parse it tolerantly via
     // parse_info_flags_server (mirroring `am_server` in parse_output_words).
@@ -1053,6 +1172,15 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
             PathBuf::from(value),
         ));
     }
+}
+
+/// Whether `arg` is a `--name` or `--name=VALUE` token of 3.5.2's table.
+///
+/// upstream: options.c:610-876 - the table the server's popt pass reads.
+fn is_upstream_long_option(arg: &str) -> bool {
+    arg.strip_prefix("--")
+        .map(|rest| rest.split_once('=').map_or(rest, |(name, _)| name))
+        .is_some_and(|name| long_option(name).is_some())
 }
 
 /// Returns `true` when the argument is a known server-mode long flag.
@@ -1149,7 +1277,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--no-mkpath"
             | "--old-dirs"
             | "--old-d"
-    ) || arg == "-s"
+    ) || is_upstream_long_option(arg)
+        || arg == "-s"
         || arg == "--new-compress"
         || arg == "--old-compress"
         || arg.starts_with("--nice=")
@@ -1240,6 +1369,9 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         // sink (upstream calls `log_init(0)` from options.c:2594), so storing
         // it would create a field with no reader. Recognising the token is
         // what stops the leak; server-side `--log-file` writing is separate.
+        // `--log-file-format` (options.c:800) is accepted through the table
+        // the same way and read by nothing: without a log file upstream drops
+        // it too (options.c:2595-2596).
         || arg.starts_with("--log-file=")
         || arg.starts_with("--info=")
         // upstream: options.c:1926 - `--debug=FLAGS` parsed via

@@ -17,6 +17,8 @@ mod tests;
 
 #[cfg(test)]
 mod roundtrip_tests;
+#[cfg(test)]
+mod remote_option_tests;
 
 #[cfg(all(test, windows))]
 mod windows_osstring_tests;

@@ -7,6 +7,10 @@
 
 use std::ffi::{OsStr, OsString};
 
+mod long_options;
+
+pub use long_options::{LongOption, long_option};
+
 /// The bare `--` that ends option processing.
 ///
 /// upstream: options.c:1515 - the server runs the same popt parser as the
@@ -97,6 +101,12 @@ impl ArgvRefusal {
 ///   string, in argv order, each `-F` already expanded to its rule. Those ahead
 ///   of `--server` are kept twice: upstream's restarted pass parses them again
 ///   without clearing `filter_list` or `F_option_cnt`.
+/// - A long option of 3.5.2's table ([`long_option`]) that names a short
+///   switch joins the flag string as that letter; a `--no-` negation of one
+///   removes the letter; `--block-size` and `--rsh` are read as `-B` and
+///   `-e`; `--chown` becomes the `--usermap` / `--groupmap` it implies. Any
+///   other value-taking long option is joined to its value, so every later
+///   pass reads one `--opt=VALUE` token.
 ///
 /// Tokens after the `--` marker are operands and pass through untouched. The
 /// rewrite is idempotent, so it can run again over a secluded-args list.
@@ -168,8 +178,47 @@ pub fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, ArgvRef
             check_remote_option(value, after_server)?;
             continue;
         }
-        if text.starts_with("--") {
-            kept.push(arg.clone());
+        if let Some(rest) = text.strip_prefix("--") {
+            let (name, joined) = match rest.split_once('=') {
+                Some((name, value)) => (name, Some(value)),
+                None => (rest, None),
+            };
+            let kind = long_option(name);
+            // popt binds a value-taking option's value from the next token
+            // when it is not joined; join it so every later pass reads one.
+            let mut token = arg.clone();
+            if kind.is_some_and(LongOption::takes_value) && joined.is_none() {
+                let (_, value) = tokens
+                    .next()
+                    .ok_or_else(|| ArgvRefusal::popt(&text, "missing argument", after_server))?;
+                token = OsString::from(format!("{text}="));
+                token.push(value);
+            }
+            let value = || {
+                let token = token.to_string_lossy();
+                token.split_once('=').map_or_else(String::new, |(_, v)| v.to_owned())
+            };
+            match kind {
+                Some(LongOption::Letter(letter)) if joined.is_none() => {
+                    first_cluster_at.get_or_insert(kept.len());
+                    letters.push(letter);
+                }
+                Some(LongOption::Clears(letter)) if joined.is_none() => {
+                    clear_letter(&mut letters, letter);
+                }
+                Some(LongOption::ValueLetter(letter)) => {
+                    let value = value();
+                    match letter {
+                        'e' => rsh = Some(value),
+                        _ => kept.push(OsString::from(format!("-{letter}{value}"))),
+                    }
+                }
+                _ if name == "chown" => {
+                    let value = value();
+                    kept.extend(chown_maps(&value, &mut letters));
+                }
+                _ => kept.push(token),
+            }
             continue;
         }
         first_cluster_at.get_or_insert(kept.len());
@@ -275,6 +324,42 @@ fn rsync_filter_rule(count: usize) -> Option<String> {
         2 => Some("--filter=- .rsync-filter".to_owned()),
         _ => None,
     }
+}
+
+/// The letters `-a` sets, each in its own variable.
+///
+/// upstream: options.c:1686-1702 `case 'a'`.
+const ARCHIVE_LETTERS: &str = "rlptgoD";
+
+/// Resets what every earlier `letter` set, as a `--no-` option does.
+///
+/// A `-a` is expanded first when it set `letter`: popt sets each of its
+/// variables separately, so `-a --no-p` keeps the rest of the archive set.
+fn clear_letter(letters: &mut String, letter: char) {
+    if ARCHIVE_LETTERS.contains(letter) && letters.contains('a') {
+        *letters = letters.replace('a', ARCHIVE_LETTERS);
+    }
+    letters.retain(|set| set != letter);
+}
+
+/// The `--usermap` / `--groupmap` tokens a `--chown=USER:GROUP` stands for,
+/// adding the `-o` / `-g` it implies.
+///
+/// upstream: options.c:1961-2000 `case OPT_CHOWN` - a non-empty user part
+/// becomes `usermap = "*:USER"` with `preserve_uid = 1`, a non-empty group
+/// part `groupmap = "*:GROUP"` with `preserve_gid = 1`.
+fn chown_maps(spec: &str, letters: &mut String) -> Vec<OsString> {
+    let (user, group) = spec.split_once(':').unwrap_or((spec, ""));
+    let mut maps = Vec::new();
+    if !user.is_empty() {
+        letters.push('o');
+        maps.push(OsString::from(format!("--usermap=*:{user}")));
+    }
+    if !group.is_empty() {
+        letters.push('g');
+        maps.push(OsString::from(format!("--groupmap=*:{group}")));
+    }
+    maps
 }
 
 /// Refuses a remote-option value without a leading dash, as options.c:1764-1767
