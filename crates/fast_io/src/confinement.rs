@@ -427,6 +427,23 @@ pub fn pinned_destination_relative(
     Some((std::sync::Arc::clone(&pinned.fd), relative))
 }
 
+/// The spelling of the pinned destination root when `path` lies beneath it.
+///
+/// A single-file destination's confinement root is the file itself, so the
+/// file's siblings - its temp file, its final name - are not beneath that root.
+/// They are beneath the parent the receiver entered and pinned, and resolve
+/// from it as upstream's do from its cwd (`rsync-3.5.2/main.c:865-868`
+/// `change_dir#3`).
+#[cfg(unix)]
+pub(crate) fn pinned_destination_spelling_above(path: &Path) -> Option<PathBuf> {
+    let guard = DESTINATION_ROOT_FD
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let pinned = guard.as_ref()?;
+    remainder_beneath(&pinned.literal, path)?;
+    Some(pinned.literal.clone())
+}
+
 /// The part of `path` below `root`, spelled `.` for `root` itself, or `None`
 /// when `path` is not lexically beneath `root`.
 ///

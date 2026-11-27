@@ -295,6 +295,11 @@ impl ConfinedEndpoint<'_> {
 /// already `chdir`'d the receiver into the destination, so its transfer paths
 /// are relative where oc's are absolute-but-beneath-root.
 ///
+/// A path that names no entry beneath `root` but lies beneath the pinned
+/// destination root resolves from the pin instead: a single-file destination's
+/// root is the file, and its temp file and final name are entries of the parent
+/// the receiver entered.
+///
 /// Deliberately **not** applied to the destination of a transfer: the ownership
 /// rule is more permissive than the confined walk, so widening it to a path
 /// beneath `root` would weaken that side rather than strengthen this one.
@@ -305,6 +310,17 @@ pub(super) fn anchor_confined_endpoint<'a>(
 ) -> io::Result<ConfinedEndpoint<'a>> {
     use crate::dir_sandbox::{ConfinePolicy, DirSandbox, NoExclude};
 
+    let pinned_parent;
+    let names_entry_beneath_root = path
+        .strip_prefix(root)
+        .is_ok_and(|relative| relative.file_name().is_some());
+    let root = match crate::confinement::pinned_destination_spelling_above(path) {
+        Some(pinned) if !names_entry_beneath_root => {
+            pinned_parent = pinned;
+            pinned_parent.as_path()
+        }
+        _ => root,
+    };
     let Ok(relative) = path.strip_prefix(root) else {
         if path.is_absolute() {
             let (parent, leaf) = crate::owner_walk::owner_trusted_parent(path)?;

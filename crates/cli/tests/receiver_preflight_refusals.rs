@@ -255,15 +255,22 @@ fn check_unsearchable_root(leg: Leg, options: &[String]) {
         fs::set_permissions(&out, fs::Permissions::from_mode(0o755)).expect("chmod 755");
         let case = format!("{leg:?} {options:?} unsearchable root / {pair}");
         assert_eq!(code, Some(3), "{case}: {stderr}");
-        // The local copy is still worded `failed to access destination
-        // directory`; the remote receivers carry upstream's line.
-        if leg != Leg::Local {
-            let message = format!("change_dir#1 \"{}/\" failed: ", out.display());
-            assert!(
-                stderr.contains(&message),
-                "{case}: expected {message:?} in {stderr}"
-            );
-        }
+        // upstream: main.c:776-781 - every receiver, the local copy included,
+        // prints `change_dir#1 "<dest>/" failed: <strerror>` and exits on the
+        // code-3 trailer; its source location is the binary's own.
+        let message = format!(
+            "change_dir#1 \"{}/\" failed: Permission denied (13)",
+            out.display()
+        );
+        assert!(
+            stderr.contains(&message),
+            "{case}: expected {message:?} in {stderr}"
+        );
+        let trailer = "error: errors selecting input/output files, dirs (code 3) at ";
+        assert!(
+            stderr.contains(trailer),
+            "{case}: expected the code-3 trailer in {stderr}"
+        );
         assert_eq!(
             fs::read(out.join("f")).expect("read destination"),
             b"old\n",

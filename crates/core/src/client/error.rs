@@ -11,7 +11,9 @@ use crate::auth::supported_daemon_digest_list;
 use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
 use crate::rsync_error;
-use engine::local_copy::{LocalCopyError, LocalCopyErrorKind, LocalCopySide, upstream_io_error};
+use engine::local_copy::{
+    DestinationEntry, LocalCopyError, LocalCopyErrorKind, LocalCopySide, upstream_io_error,
+};
 use rsync_io::ssh::{CleanupChild, RemoteOperandParseError};
 
 // upstream: errcode.h - Exit code definitions
@@ -505,12 +507,18 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             );
             program_line_error(line, ExitCode::FileIo, Role::PreForkReceiver)
         }
-        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
-            // upstream: main.c:865-868 get_local_name() - `rsyserr(FERROR,
-            // errno, "change_dir#3 %s failed", full_fname(dest_path))`.
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry,
+            path,
+            source,
+        } => {
+            // upstream: main.c:777-781, :837-839, :865-868 get_local_name() -
+            // `rsyserr(FERROR, errno, "change_dir#N %s failed",
+            // full_fname(dest_path))`.
             let line = format!(
-                "[Receiver] change_dir#3 {} failed: {}",
-                logging::full_fname(&path),
+                "[Receiver] change_dir#{} {} failed: {}",
+                entry.number(),
+                entered_name(entry, &path),
                 upstream_io_error(&source)
             );
             program_line_error(line, ExitCode::FileSelect, Role::PreForkReceiver)
@@ -679,18 +687,21 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
     ClientError::with_code(code, message)
 }
 
-#[cold]
-pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientError {
-    // upstream: main.c:778-781 get_local_name() - a failed change_dir into the
-    // destination exits RERR_FILESELECT (3).
-    let code = ExitCode::FileSelect;
-    let path_display = path.display();
-    let text = format!(
-        "failed to access destination directory '{path_display}': {}",
-        upstream_io_error(&error)
-    );
-    let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
-    ClientError::with_code(code, message)
+/// The destination name a `change_dir#N` failure prints.
+///
+/// upstream: main.c:777-781 prints `full_fname(dest_path)` with the operand as
+/// given, so an existing destination named with a trailing slash keeps it;
+/// `change_dir#2` lops the slash first (main.c:810) and `change_dir#3` names
+/// the parent.
+fn entered_name(entry: DestinationEntry, path: &Path) -> String {
+    let name = logging::full_fname(path);
+    let as_given_with_slash = entry == DestinationEntry::Existing
+        && path.as_os_str().as_encoded_bytes().ends_with(b"/")
+        && !name.ends_with("/\"");
+    match name.strip_suffix('"') {
+        Some(unquoted) if as_given_with_slash => format!("{unquoted}/\""),
+        _ => name,
+    }
 }
 
 /// Validates a `--temp-dir` argument before transferring, mirroring upstream's
@@ -1396,12 +1407,52 @@ mod tests {
         /// "mkdir %s failed", full_fname(dest_path))` then
         /// `exit_cleanup(RERR_FILEIO)`. It runs before the fork, so both the
         /// line and the trailer name the `Receiver`.
+        /// upstream: main.c:777-781 prints the existing destination as the
+        /// operand was given, so `dest/` keeps its slash; main.c:810 lops it
+        /// before `change_dir#2`.
         #[test]
-        fn map_destination_parent_unusable_reports_change_dir_3_as_receiver() {
+        fn change_dir_1_keeps_the_operands_trailing_slash_and_change_dir_2_drops_it() {
+            let eloop = || io::Error::from(ErrorKind::PermissionDenied);
+            let line = |entry, path: &str| {
+                map_local_copy_error(LocalCopyError::destination_entry_failed(
+                    entry,
+                    Path::new(path),
+                    eloop(),
+                ))
+                .program_line()
+                .map(str::to_owned)
+            };
+            let tail = upstream_io_error(&eloop());
+            assert_eq!(
+                line(DestinationEntry::Existing, "/var/dest/"),
+                Some(format!(
+                    "[Receiver] change_dir#1 \"/var/dest/\" failed: {tail}"
+                ))
+            );
+            assert_eq!(
+                line(DestinationEntry::Existing, "/var/dest"),
+                Some(format!(
+                    "[Receiver] change_dir#1 \"/var/dest\" failed: {tail}"
+                ))
+            );
+            assert_eq!(
+                line(DestinationEntry::Created, "/var/new/"),
+                Some(format!(
+                    "[Receiver] change_dir#2 \"/var/new\" failed: {tail}"
+                ))
+            );
+        }
+
+        #[test]
+        fn map_destination_entry_failed_reports_change_dir_3_as_receiver() {
             let temp = tempfile::tempdir().expect("tempdir");
             let parent = temp.path().join("nodir");
             let missing = || std::fs::metadata(&parent).expect_err("parent is missing");
-            let local_error = LocalCopyError::destination_parent_unusable(&parent, missing());
+            let local_error = LocalCopyError::destination_entry_failed(
+                DestinationEntry::Parent,
+                &parent,
+                missing(),
+            );
             let client_error = map_local_copy_error(local_error);
             assert_eq!(client_error.code(), ExitCode::FileSelect);
             assert_eq!(client_error.exit_code(), 3);
@@ -1493,17 +1544,6 @@ mod tests {
                 direct.to_string(),
                 map_local_copy_error(LocalCopyError::interrupted()).to_string()
             );
-        }
-
-        #[test]
-        fn destination_access_error_uses_correct_code() {
-            let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
-            let error = destination_access_error(Path::new("/var/dest"), io_err);
-
-            assert_eq!(error.exit_code(), FILE_SELECTION_EXIT_CODE);
-            let msg = error.to_string();
-            assert!(msg.contains("failed to access destination directory"));
-            assert!(msg.contains("/var/dest"));
         }
 
         #[test]

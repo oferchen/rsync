@@ -331,7 +331,10 @@ fn no_implied_dirs_dry_run_still_enters_the_parent() {
         .expect_err("a dry run still enters the destination's parent");
     assert!(matches!(
         error.kind(),
-        LocalCopyErrorKind::DestinationParentUnusable { .. }
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry: DestinationEntry::Parent,
+            ..
+        }
     ));
     assert!(!destination.exists());
 }
@@ -428,7 +431,11 @@ fn no_implied_dirs_single_file_requires_existing_parent() {
         .expect_err("should fail without parent directory");
 
     match error.kind() {
-        LocalCopyErrorKind::DestinationParentUnusable { path, .. } => {
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry: DestinationEntry::Parent,
+            path,
+            ..
+        } => {
             assert_eq!(Some(path.as_path()), destination.parent());
         }
         other => panic!("unexpected error kind: {other:?}"),
@@ -616,7 +623,11 @@ fn default_does_not_create_missing_dest_arg_parent() {
         .expect_err("transfer must fail without --mkpath when parent is missing");
 
     match error.kind() {
-        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry: DestinationEntry::Parent,
+            path,
+            source,
+        } => {
             assert_eq!(Some(path.as_path()), destination.parent());
             assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         }

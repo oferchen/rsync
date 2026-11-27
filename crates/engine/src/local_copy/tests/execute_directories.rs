@@ -423,7 +423,11 @@ fn execute_without_implied_dirs_requires_existing_parent() {
         .expect_err("missing parent should error");
 
     match error.kind() {
-        LocalCopyErrorKind::DestinationParentUnusable { path, .. } => {
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry: DestinationEntry::Parent,
+            path,
+            ..
+        } => {
             assert_eq!(path, destination.parent().expect("parent"));
         }
         other => panic!("unexpected error kind: {other:?}"),
@@ -450,7 +454,10 @@ fn execute_dry_run_without_implied_dirs_still_enters_the_parent() {
         .expect_err("a dry run still enters the destination's parent");
     assert!(matches!(
         error.kind(),
-        LocalCopyErrorKind::DestinationParentUnusable { .. }
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry: DestinationEntry::Parent,
+            ..
+        }
     ));
 
     assert!(!destination.exists());
@@ -479,7 +486,11 @@ fn execute_with_implied_dirs_still_requires_dest_arg_parent() {
         .expect_err("missing dest-arg parent should error without --mkpath");
 
     match error.kind() {
-        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry: DestinationEntry::Parent,
+            path,
+            source,
+        } => {
             assert_eq!(Some(path.as_path()), destination.parent());
             assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         }

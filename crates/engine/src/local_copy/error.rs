@@ -220,14 +220,25 @@ impl LocalCopyError {
         })
     }
 
-    /// Constructs an error for the parent of a single-file destination that
-    /// cannot be entered.
-    ///
-    /// upstream: `main.c:865-868` `get_local_name()` - `change_dir#3 %s
-    /// failed`, then `exit_cleanup(RERR_FILESELECT)`.
+    /// Whether this is a destination directory the receiver failed to enter.
     #[must_use]
-    pub fn destination_parent_unusable(path: impl Into<PathBuf>, source: io::Error) -> Self {
-        Self::new(LocalCopyErrorKind::DestinationParentUnusable {
+    pub const fn is_destination_entry_failure(&self) -> bool {
+        matches!(self.kind, LocalCopyErrorKind::DestinationEntryFailed { .. })
+    }
+
+    /// Constructs an error for a destination directory that cannot be entered.
+    ///
+    /// upstream: `main.c:777-781`, `:837-839` and `:865-868`
+    /// `get_local_name()` - `change_dir#N %s failed`, then
+    /// `exit_cleanup(RERR_FILESELECT)`.
+    #[must_use]
+    pub fn destination_entry_failed(
+        entry: DestinationEntry,
+        path: impl Into<PathBuf>,
+        source: io::Error,
+    ) -> Self {
+        Self::new(LocalCopyErrorKind::DestinationEntryFailed {
+            entry,
             path: path.into(),
             source,
         })
@@ -345,7 +356,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
             LocalCopyErrorKind::FileIo { .. }
             | LocalCopyErrorKind::DestinationMkdirFailed { .. } => FILE_IO_EXIT_CODE,
-            LocalCopyErrorKind::DestinationParentUnusable { .. }
+            LocalCopyErrorKind::DestinationEntryFailed { .. }
             | LocalCopyErrorKind::DestinationConflict(_) => FILE_SELECT_EXIT_CODE,
             LocalCopyErrorKind::PartialTransfer => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Vanished => VANISHED_EXIT_CODE,
@@ -377,7 +388,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
             LocalCopyErrorKind::FileIo { .. }
             | LocalCopyErrorKind::DestinationMkdirFailed { .. } => "RERR_FILEIO",
-            LocalCopyErrorKind::DestinationParentUnusable { .. }
+            LocalCopyErrorKind::DestinationEntryFailed { .. }
             | LocalCopyErrorKind::DestinationConflict(_) => "RERR_FILESELECT",
             LocalCopyErrorKind::PartialTransfer => "RERR_PARTIAL",
             LocalCopyErrorKind::Vanished => "RERR_VANISHED",
@@ -568,11 +579,18 @@ pub enum LocalCopyErrorKind {
         #[source]
         source: io::Error,
     },
-    /// The parent directory of a single-file destination cannot be entered.
+    /// A destination directory the receiver must enter cannot be entered.
     /// Exits 3 (`RERR_FILESELECT`) before anything is transferred.
-    #[error("change_dir#3 \"{}\" failed: {}", path.display(), upstream_io_error(source))]
-    DestinationParentUnusable {
-        /// The parent directory the receiver would have entered.
+    #[error(
+        "change_dir#{} \"{}\" failed: {}",
+        entry.number(),
+        path.display(),
+        upstream_io_error(source)
+    )]
+    DestinationEntryFailed {
+        /// Which of upstream's `change_dir()` calls this entry mirrors.
+        entry: DestinationEntry,
+        /// The directory the receiver would have entered.
         path: PathBuf,
         /// Underlying error.
         #[source]
@@ -659,6 +677,34 @@ impl LocalCopyErrorKind {
                 source,
             } => Some((action, path.as_path(), source)),
             _ => None,
+        }
+    }
+}
+
+/// The `change_dir()` call in upstream's `get_local_name()` that enters a
+/// destination directory before anything is transferred. Its number names the
+/// failure line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DestinationEntry {
+    /// `change_dir#1` (`main.c:777-781`): a directory that exists when it is
+    /// entered, here one `--mkpath` has just made (`main.c:757-772`).
+    Existing,
+    /// `change_dir#2` (`main.c:837-839`): the directory the pre-flight
+    /// `do_mkdir()` created.
+    Created,
+    /// `change_dir#3` (`main.c:865-868`): the parent of a single-file
+    /// destination.
+    Parent,
+}
+
+impl DestinationEntry {
+    /// The `#N` upstream prints after `change_dir`.
+    #[must_use]
+    pub const fn number(self) -> u8 {
+        match self {
+            Self::Existing => 1,
+            Self::Created => 2,
+            Self::Parent => 3,
         }
     }
 }
