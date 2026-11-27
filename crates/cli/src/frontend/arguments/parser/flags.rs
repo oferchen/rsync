@@ -117,6 +117,34 @@ pub(crate) fn archive_aware_flag(
     }
 }
 
+/// Resolves `--devices`/`--no-devices` or `--specials`/`--no-specials` together
+/// with `-D`/`--no-D` and `-a`, in command-line order.
+///
+/// upstream: options.c:682-683, :687-688 are POPT_ARG_VAL pairs, and
+/// options.c:1700-1709 set both `preserve_devices` and `preserve_specials` for
+/// `-a` and `-D` and clear both for `--no-D`, each at its own position. The
+/// last of them wins, so `-D --no-devices` keeps specials only and
+/// `--no-devices -D` keeps both. When `-a` comes last the explicit setting is
+/// dropped (`None`) so the archive default applies downstream.
+pub(crate) fn device_class_flag(
+    matches: &clap::ArgMatches,
+    positive: &str,
+    negative: &str,
+    archive_index: Option<usize>,
+) -> Option<bool> {
+    let own = tri_state_flag_indexed(matches, positive, negative, true);
+    let grouped = tri_state_flag_indexed(matches, "archive-devices", "no-archive-devices", true);
+    let latest = match (own, grouped) {
+        (Some(own), Some(grouped)) => Some(if own.1 >= grouped.1 { own } else { grouped }),
+        (own, grouped) => own.or(grouped),
+    };
+    match latest {
+        Some((_, index)) if archive_index.is_some_and(|a| a > index) => None,
+        Some((value, _)) => Some(value),
+        None => None,
+    }
+}
+
 /// Returns the highest argument index for a given flag id.
 fn last_occurrence(matches: &clap::ArgMatches, id: &str) -> Option<usize> {
     matches.indices_of(id).and_then(Iterator::max)

@@ -100,7 +100,7 @@ mod short_options {
     #[test]
     fn hard_links_short_flag() {
         let parsed = parse_test_args(["-H", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.hard_links, Some(true));
+        assert_eq!(parsed.hard_links, Some(1));
     }
 
     #[test]
@@ -348,7 +348,7 @@ mod combined_short_options {
         assert!(parsed.archive);
         assert_eq!(parsed.verbosity, 1);
         assert!(parsed.compress);
-        assert_eq!(parsed.hard_links, Some(true));
+        assert_eq!(parsed.hard_links, Some(1));
     }
 
     #[test]
@@ -501,7 +501,7 @@ mod long_options {
     #[test]
     fn hard_links_long_flag() {
         let parsed = parse_test_args(["--hard-links", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.hard_links, Some(true));
+        assert_eq!(parsed.hard_links, Some(1));
     }
 
     #[test]
@@ -1107,6 +1107,86 @@ mod negation_flags {
         }
     }
 
+    /// upstream: options.c:704-706, :1716-1717 - `-H` counts and
+    /// `--no-hard-links`/`--no-H` reset it, so the last one wins.
+    #[test]
+    fn hard_links_pairing_is_last_wins_and_counts() {
+        for (args, expected) in [
+            (["-H", "--no-hard-links"].as_slice(), Some(0)),
+            (&["--no-hard-links", "-H"], Some(1)),
+            (&["-H", "--no-H"], Some(0)),
+            (&["--no-H", "-H"], Some(1)),
+            (&["-HH"], Some(2)),
+            (&["-H", "-H"], Some(2)),
+            (&["-HHH"], Some(2)),
+            (&["-HH", "--no-H"], Some(0)),
+            (&["--no-H", "-HH"], Some(2)),
+        ] {
+            let parsed = parse_test_args(args.iter().chain(&["src/", "dst/"]))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert_eq!(parsed.hard_links, expected, "{args:?}");
+        }
+    }
+
+    /// upstream: options.c:682-688 - each POPT_ARG_VAL pair is last-wins.
+    #[test]
+    fn device_pairs_are_last_wins() {
+        for (args, devices, specials, write_devices) in [
+            (
+                ["--devices", "--no-devices"].as_slice(),
+                Some(false),
+                None,
+                None,
+            ),
+            (&["--no-devices", "--devices"], Some(true), None, None),
+            (&["--specials", "--no-specials"], None, Some(false), None),
+            (&["--no-specials", "--specials"], None, Some(true), None),
+            (
+                &["--write-devices", "--no-write-devices"],
+                None,
+                None,
+                Some(false),
+            ),
+            (
+                &["--no-write-devices", "--write-devices"],
+                None,
+                None,
+                Some(true),
+            ),
+        ] {
+            let parsed = parse_test_args(args.iter().chain(&["src/", "dst/"]))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert_eq!(parsed.devices, devices, "{args:?} devices");
+            assert_eq!(parsed.specials, specials, "{args:?} specials");
+            assert_eq!(
+                parsed.write_devices, write_devices,
+                "{args:?} write_devices"
+            );
+        }
+    }
+
+    /// upstream: options.c:1700-1709 - `-a` and `-D` set devices and specials
+    /// together and `--no-D` clears both, each at its own position, so they
+    /// combine with `--devices`/`--specials` in command-line order.
+    #[test]
+    fn grouped_device_flags_apply_in_order() {
+        for (args, devices, specials) in [
+            (["-D", "--no-devices"].as_slice(), Some(false), Some(true)),
+            (&["--no-devices", "-D"], Some(true), Some(true)),
+            (&["--no-D", "--specials"], Some(false), Some(true)),
+            (&["--specials", "--no-D"], Some(false), Some(false)),
+            (&["-a", "--no-D"], Some(false), Some(false)),
+            (&["--no-D", "-a"], None, None),
+            (&["-a", "--no-specials"], None, Some(false)),
+            (&["--no-specials", "-a"], None, None),
+        ] {
+            let parsed = parse_test_args(args.iter().chain(&["src/", "dst/"]))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert_eq!(parsed.devices, devices, "{args:?} devices");
+            assert_eq!(parsed.specials, specials, "{args:?} specials");
+        }
+    }
+
     #[test]
     fn no_devices_flag() {
         let parsed = parse_test_args(["--no-devices", "src/", "dst/"]).expect("parse");
@@ -1122,7 +1202,7 @@ mod negation_flags {
     #[test]
     fn no_hard_links_flag() {
         let parsed = parse_test_args(["--no-hard-links", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.hard_links, Some(false));
+        assert_eq!(parsed.hard_links, Some(0));
     }
 
     #[test]

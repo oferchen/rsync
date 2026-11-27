@@ -20,19 +20,23 @@ pub(super) fn add_device_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::SetTrue)
                 .overrides_with("archive-devices"),
         )
+        // upstream: options.c:682-688 - `--devices`, `--write-devices` and
+        // `--specials` are POPT_ARG_VAL pairs with their `--no-` forms, so the
+        // last one wins; `-D` / `--no-D` (options.c:1704-1710) set devices and
+        // specials together at their own position.
         .arg(
             Arg::new("devices")
                 .long("devices")
                 .help("Preserve device files.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("no-devices"),
+                .overrides_with("no-devices"),
         )
         .arg(
             Arg::new("no-devices")
                 .long("no-devices")
                 .help("Disable device file preservation.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("devices"),
+                .overrides_with("devices"),
         )
         .arg(
             Arg::new("copy-devices")
@@ -45,28 +49,28 @@ pub(super) fn add_device_args(command: ClapCommand) -> ClapCommand {
                 .long("write-devices")
                 .help("Write file data directly to device files instead of creating nodes.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("no-write-devices"),
+                .overrides_with("no-write-devices"),
         )
         .arg(
             Arg::new("no-write-devices")
                 .long("no-write-devices")
                 .help("Do not write file data directly to device files.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("write-devices"),
+                .overrides_with("write-devices"),
         )
         .arg(
             Arg::new("specials")
                 .long("specials")
                 .help("Preserve special files such as FIFOs.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("no-specials"),
+                .overrides_with("no-specials"),
         )
         .arg(
             Arg::new("no-specials")
                 .long("no-specials")
                 .help("Disable preservation of special files such as FIFOs.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("specials"),
+                .overrides_with("specials"),
         )
         // Paired with `overrides_with` rather than `conflicts_with` because
         // upstream declares both as POPT_ARG_VAL assignments to one variable

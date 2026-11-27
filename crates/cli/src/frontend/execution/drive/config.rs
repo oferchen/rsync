@@ -131,7 +131,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) ignore_missing_args: bool,
     pub(crate) update: bool,
     pub(crate) numeric_ids: bool,
-    pub(crate) hard_links: bool,
+    pub(crate) hard_links: u8,
     pub(crate) links: bool,
     pub(crate) sparse: bool,
     pub(crate) sparse_detect: engine::SparseDetectStrategy,
@@ -325,7 +325,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .ignore_missing_args(inputs.ignore_missing_args)
         .update(inputs.update)
         .numeric_ids(inputs.numeric_ids)
-        .hard_links(inputs.hard_links)
+        .hard_links_level(inputs.hard_links)
         .links(inputs.links)
         .sparse(inputs.sparse)
         .sparse_detect(inputs.sparse_detect)

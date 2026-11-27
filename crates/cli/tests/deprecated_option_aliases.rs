@@ -245,7 +245,7 @@ fn test_no_capital_h_alias_for_no_hard_links() {
     let args = parse_args(["oc-rsync", "--no-H", "src", "dest"]).unwrap();
     assert_eq!(
         args.hard_links,
-        Some(false),
+        Some(0),
         "--no-H should behave like --no-hard-links"
     );
 }

@@ -2070,6 +2070,20 @@ fn includes_hard_links_flag() {
     assert!(flags.contains('H'), "expected 'H' in flags: {flags}");
 }
 
+/// upstream: options.c:2909-2913 - a `-H` count above 1 sends `HH`.
+#[test]
+fn doubled_hard_links_send_two_letters() {
+    for (level, expected) in [(1, 1), (2, 2)] {
+        let config = ClientConfig::builder().hard_links_level(level).build();
+        let flags = sender_flag_string(&config);
+        assert_eq!(
+            flags.matches('H').count(),
+            expected,
+            "level {level}: {flags}"
+        );
+    }
+}
+
 #[test]
 fn numeric_ids_is_long_form_not_in_flag_string() {
     // upstream: numeric_ids is sent as --numeric-ids long-form arg, never as 'n' flag.

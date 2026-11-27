@@ -130,7 +130,8 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('W');
     }
 
-    if config.preserve_hard_links() {
+    // upstream: options.c:2909-2913 - `-HH` doubles the letter.
+    for _ in 0..config.preserve_hard_links_level().min(2) {
         flags.push('H');
     }
     if config.preserve_owner() {
@@ -1829,6 +1830,21 @@ mod tests {
     /// flag from each upstream `server_options()` grouping pins the full
     /// emission sequence (options.c:2795-2899) so a future edit cannot
     /// silently reorder it back out of parity.
+    /// upstream: options.c:2909-2913 - `-HH` doubles the letter in the
+    /// compact cluster; `-H` sends one and no `-H` sends none.
+    #[test]
+    fn server_flag_string_doubles_h_for_level_two() {
+        for (level, expected) in [(0, 0), (1, 1), (2, 2)] {
+            let config = ClientConfig::builder().hard_links_level(level).build();
+            let flags = build_server_flag_string(&config);
+            assert_eq!(
+                flags.matches('H').count(),
+                expected,
+                "level {level}: {flags}"
+            );
+        }
+    }
+
     #[test]
     fn server_flag_string_matches_upstream_letter_order() {
         let config = ClientConfig::builder()

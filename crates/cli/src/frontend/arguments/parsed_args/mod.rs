@@ -371,8 +371,9 @@ pub struct ParsedArgs {
     /// `--numeric-ids` / `--no-numeric-ids` - use numeric uid/gid instead of names.
     pub numeric_ids: Option<bool>,
 
-    /// `--hard-links`, `-H` / `--no-hard-links` - preserve hard links.
-    pub hard_links: Option<bool>,
+    /// `--hard-links`, `-H` / `--no-hard-links` - hard-link preservation level:
+    /// the `-H` count capped at 2, `Some(0)` after a later `--no-hard-links`.
+    pub hard_links: Option<u8>,
 
     /// `--links`, `-l` / `--no-links` - copy symlinks as symlinks.
     pub links: Option<bool>,

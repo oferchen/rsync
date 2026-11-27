@@ -239,22 +239,24 @@ fn omit_link_times_explicit_true() {
 }
 
 #[test]
-fn hard_links_defaults_to_false() {
-    assert!(
-        !compute_metadata_settings(default_inputs())
+fn hard_links_defaults_to_off() {
+    assert_eq!(
+        compute_metadata_settings(default_inputs())
             .unwrap()
-            .preserve_hard_links
+            .preserve_hard_links,
+        0
     );
 }
 
 #[test]
-fn hard_links_explicit_true() {
+fn hard_links_level_passes_through() {
     let mut inputs = default_inputs();
-    inputs.hard_links = Some(true);
-    assert!(
+    inputs.hard_links = Some(2);
+    assert_eq!(
         compute_metadata_settings(inputs)
             .unwrap()
-            .preserve_hard_links
+            .preserve_hard_links,
+        2
     );
 }
 

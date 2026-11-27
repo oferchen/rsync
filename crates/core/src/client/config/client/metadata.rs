@@ -202,6 +202,13 @@ impl ClientConfig {
     #[must_use]
     #[doc(alias = "--hard-links")]
     pub const fn preserve_hard_links(&self) -> bool {
+        self.preserve_hard_links > 0
+    }
+
+    /// Returns the `-H` count: 2 (`-HH`) doubles the `H` letter sent to a
+    /// remote peer (upstream options.c:2909-2913).
+    #[must_use]
+    pub const fn preserve_hard_links_level(&self) -> u8 {
         self.preserve_hard_links
     }
 

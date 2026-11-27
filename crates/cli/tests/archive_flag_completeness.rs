@@ -313,7 +313,7 @@ fn archive_does_not_enable_hard_links() {
     let args = parse_args(["oc-rsync", "-a", "src", "dest"]).unwrap();
     assert_ne!(
         args.hard_links,
-        Some(true),
+        Some(1),
         "-a should NOT enable hard links (requires -H)"
     );
 }
@@ -368,7 +368,7 @@ fn archive_with_hard_links() {
     assert!(args.archive);
     assert_eq!(
         args.hard_links,
-        Some(true),
+        Some(1),
         "-H should enable hard links with -a"
     );
 }

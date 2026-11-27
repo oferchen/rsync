@@ -230,7 +230,7 @@ pub struct ClientConfigBuilder {
     cow_policy: fast_io::CowPolicy,
     zero_copy_policy: fast_io::ZeroCopyPolicy,
     parallel_delta_scan: bool,
-    preserve_hard_links: bool,
+    preserve_hard_links: u8,
     preserve_symlinks: bool,
     filter_rules: Vec<FilterRuleSpec>,
     cvs_session: ::filters::CvsSession,
@@ -451,7 +451,7 @@ impl ClientConfigBuilder {
                     option2: "remove-source-files",
                 });
             }
-            if self.preserve_hard_links {
+            if self.preserve_hard_links > 0 {
                 return Err(ConfigConflict {
                     option1: "delay-symlinks",
                     option2: "hard-links",

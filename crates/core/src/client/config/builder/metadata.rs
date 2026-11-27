@@ -183,7 +183,16 @@ impl ClientConfigBuilder {
     #[must_use]
     #[doc(alias = "--hard-links")]
     pub const fn hard_links(mut self, preserve: bool) -> Self {
-        self.preserve_hard_links = preserve;
+        self.preserve_hard_links = preserve as u8;
+        self
+    }
+
+    /// Sets the `-H` count. upstream: options.c:1716-1717 counts each `-H`;
+    /// a count above 1 doubles the `H` letter sent to a remote peer
+    /// (options.c:2909-2913).
+    #[must_use]
+    pub const fn hard_links_level(mut self, level: u8) -> Self {
+        self.preserve_hard_links = level;
         self
     }
 

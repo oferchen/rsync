@@ -11,7 +11,7 @@ fn parse_args_recognises_hard_links_flags() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.hard_links, Some(true));
+    assert_eq!(parsed.hard_links, Some(1));
 
     let parsed = parse_args([
         OsString::from(RSYNC),
@@ -21,7 +21,7 @@ fn parse_args_recognises_hard_links_flags() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.hard_links, Some(false));
+    assert_eq!(parsed.hard_links, Some(0));
 
     let parsed = parse_args([
         OsString::from(RSYNC),
@@ -31,5 +31,5 @@ fn parse_args_recognises_hard_links_flags() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.hard_links, Some(true));
+    assert_eq!(parsed.hard_links, Some(1));
 }

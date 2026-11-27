@@ -1106,9 +1106,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.whole_file_raw() == Some(true) {
             flags.push('W');
         }
-        // upstream: options.c:2909-2913 - preserve_hard_links. Deviation from
-        // upstream: a single 'H' is packed; the doubled 'HH' level is not sent.
-        if self.config.preserve_hard_links() {
+        // upstream: options.c:2909-2913 - preserve_hard_links, doubled for `-HH`.
+        for _ in 0..self.config.preserve_hard_links_level().min(2) {
             flags.push('H');
         }
         // upstream: options.c:2914-2915 - preserve_uid.

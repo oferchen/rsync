@@ -99,7 +99,7 @@ pub(crate) fn compute_metadata_settings(
     let omit_link_times_setting = omit_link_times.unwrap_or(false);
     let preserve_devices = devices.unwrap_or(archive);
     let preserve_specials = specials.unwrap_or(archive);
-    let preserve_hard_links = hard_links.unwrap_or(false);
+    let preserve_hard_links = hard_links.unwrap_or(0);
     let preserve_symlinks = if let Some(value) = links {
         value
     } else {

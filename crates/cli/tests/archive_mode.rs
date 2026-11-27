@@ -45,7 +45,7 @@ fn test_archive_does_not_enable_hard_links() {
     let args = parse_args(["oc-rsync", "-a", "src", "dest"]).unwrap();
     assert_ne!(
         args.hard_links,
-        Some(true),
+        Some(1),
         "-a should NOT imply -H (preserve hard links)"
     );
 }
@@ -158,7 +158,7 @@ fn test_archive_with_xattrs() {
 fn test_archive_with_hard_links() {
     let args = parse_args(["oc-rsync", "-a", "-H", "src", "dest"]).unwrap();
     assert!(args.archive);
-    assert_eq!(args.hard_links, Some(true), "-H should enable hard links");
+    assert_eq!(args.hard_links, Some(1), "-H should enable hard links");
 }
 
 #[test]

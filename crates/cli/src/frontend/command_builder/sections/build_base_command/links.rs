@@ -44,8 +44,11 @@ pub(super) fn add_link_args(command: ClapCommand) -> ClapCommand {
                 .long("hard-links")
                 .short('H')
                 .help("Preserve hard links between files.")
-                .action(ArgAction::SetTrue)
-                .conflicts_with("no-hard-links"),
+                // upstream: options.c:704-706, :1716-1717 - `-H` is a counter
+                // (`-HH` is 2, forwarded as `HH`) and `--no-hard-links` /
+                // `--no-H` reset it to 0, so the last one wins.
+                .action(ArgAction::Count)
+                .overrides_with("no-hard-links"),
         )
         .arg(
             Arg::new("no-hard-links")
@@ -53,7 +56,7 @@ pub(super) fn add_link_args(command: ClapCommand) -> ClapCommand {
                 .visible_alias("no-H")
                 .help("Disable hard link preservation.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("hard-links"),
+                .overrides_with("hard-links"),
         )
         .arg(
             Arg::new("copy-dirlinks")

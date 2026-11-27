@@ -29,7 +29,7 @@ use engine::operand::operand_is_remote;
 use super::coerce::{parse_checksum_threads, parse_thread_count};
 use super::cow::{last_occurrence, parse_reflink_mode, resolve_cow_policy};
 use super::flags::{
-    archive_aware_flag, leveled_flag_pair, tri_state_flag_negative_first,
+    archive_aware_flag, device_class_flag, leveled_flag_pair, tri_state_flag_negative_first,
     tri_state_flag_positive_first,
 };
 use super::values::{empty_backup_suffix_error, join_os_values, strip_backup_dir_dot_prefix};
@@ -892,7 +892,7 @@ fn parsed_args_from_matches(
     let acls = tri_state_flag_positive_first(&matches, "acls", "no-acls");
     let xattrs = leveled_flag_pair(&matches, "xattrs", "no-xattrs");
     let numeric_ids = tri_state_flag_positive_first(&matches, "numeric-ids", "no-numeric-ids");
-    let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
+    let hard_links = leveled_flag_pair(&matches, "hard-links", "no-hard-links");
     let links = archive_aware_flag(&matches, "links", "no-links", archive_index, true);
     let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
     let sparse_detect = match matches.remove_one::<OsString>("sparse-detect") {
@@ -952,12 +952,8 @@ fn parsed_args_from_matches(
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let qsort = matches.get_flag("qsort");
     let copy_devices = matches.get_flag("copy-devices");
-    let archive_devices =
-        tri_state_flag_positive_first(&matches, "archive-devices", "no-archive-devices");
-    let devices = archive_aware_flag(&matches, "devices", "no-devices", archive_index, true)
-        .or(archive_devices);
-    let specials = archive_aware_flag(&matches, "specials", "no-specials", archive_index, true)
-        .or(archive_devices);
+    let devices = device_class_flag(&matches, "devices", "no-devices", archive_index);
+    let specials = device_class_flag(&matches, "specials", "no-specials", archive_index);
     let write_devices =
         tri_state_flag_positive_first(&matches, "write-devices", "no-write-devices");
     // Deliberately NOT derived from `archive_devices`: --drop-D is orthogonal to
