@@ -494,6 +494,7 @@ pub(super) fn handle_non_directory_source(
                 false,
                 0,
             )?;
+            context.complete_batch_initial()?;
         }
         context.begin_batch_file_delta()?;
         // upstream: a multi-source `--delete-during` sweep keys off the shared

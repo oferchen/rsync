@@ -40,6 +40,9 @@ impl<'a> CopyContext<'a> {
     /// - `flist.c:send_file_list()` writes the end-of-list marker after all
     ///   entries via `write_byte(f, 0)` (pre-varint) or the varint equivalent.
     pub(crate) fn finalize_batch_flist(&mut self) -> Result<(), crate::local_copy::LocalCopyError> {
+        if self.batch_streams() {
+            return self.close_batch_stream();
+        }
         if self.batch_inc_recurse() {
             return self.write_incremental_batch_flist();
         }
@@ -380,6 +383,7 @@ impl<'a> CopyContext<'a> {
             if let Some(tally) = self.wire_tally.as_mut() {
                 tally.compressed_tokens(bytes);
             }
+            self.stream_batch_record_through()?;
             return Ok(bytes);
         }
         if let Some(tally) = self.wire_tally.as_mut() {
@@ -388,6 +392,7 @@ impl<'a> CopyContext<'a> {
         if let Some(delta_file) = self.batch_delta_buf.as_mut() {
             protocol::wire::delta::write_token_literal(delta_file, chunk).map_err(io_err)?;
         }
+        self.stream_batch_record_through()?;
         Ok(chunk.len() as u64)
     }
 
@@ -432,7 +437,7 @@ impl<'a> CopyContext<'a> {
             if let Some(tally) = self.wire_tally.as_mut() {
                 tally.compressed_tokens(bytes);
             }
-            return Ok(());
+            return self.stream_batch_record_through();
         }
         if let Some(tally) = self.wire_tally.as_mut() {
             tally.block_match(block_index);
@@ -441,7 +446,7 @@ impl<'a> CopyContext<'a> {
             protocol::wire::delta::write_token_block_match(delta_file, block_index)
                 .map_err(io_err)?;
         }
-        Ok(())
+        self.stream_batch_record_through()
     }
 
     /// Appends the end-of-file token for the current file to the batch delta
@@ -497,6 +502,11 @@ impl<'a> CopyContext<'a> {
         if let Some(tally) = self.wire_tally.as_mut() {
             tally.begin_transfer();
         }
+        self.submit_batch_pending()?;
+        if let Some(stream) = self.batch_stream.as_mut() {
+            stream.direct = None;
+        }
+        self.batch_delta_head_final = false;
         // upstream: token.c:390 - send_deflated_token() reinitialises the
         // deflate context at the start of every file, so each file's token
         // stream stays independently decodable.
@@ -588,6 +598,7 @@ impl<'a> CopyContext<'a> {
         }
         if self.batch_delta_buf.is_some() {
             self.batch_delta_sum_head = head;
+            self.batch_delta_head_final = true;
         }
     }
 
@@ -765,6 +776,12 @@ impl<'a> CopyContext<'a> {
         let idx = self.batch_entry_index;
         let mut record = iflags.to_le_bytes().to_vec();
         record.extend(xattr_report.unwrap_or_default());
+        if self.batch_streams() {
+            if let Err(e) = self.stream_batch_record(idx, record, None, false) {
+                self.defer_batch_stream_error(e);
+            }
+            return;
+        }
         self.batch_delta_entries.push((idx, record));
     }
 
@@ -890,6 +907,11 @@ impl<'a> CopyContext<'a> {
         // The NDX will be written at flush time using the sort-order mapping.
         let mut data = std::mem::take(delta_file.get_mut());
         delta_file.set_position(0);
+        if self.batch_record_is_direct() {
+            // The head and body went out already; only the tail is left.
+            self.batch_report_slot = None;
+            return self.finish_batch_record_through(&data);
+        }
 
         // Patch the reserved sum_head with the geometry the body was built
         // against. Deferring it to here is what keeps the head and the tokens
@@ -915,6 +937,10 @@ impl<'a> CopyContext<'a> {
         slot.copy_from_slice(&head.encode());
 
         let idx = self.batch_current_delta_idx;
+        if self.batch_streams() {
+            self.batch_report_slot = None;
+            return self.stream_batch_record(idx, data, self.batch_delta_iflags_offset, true);
+        }
         self.batch_delta_entries.push((idx, data));
         self.batch_report_slot = self
             .batch_delta_iflags_offset
@@ -930,6 +956,21 @@ impl<'a> CopyContext<'a> {
     /// upstream: `generator.c:554-585 itemize()` sets these bits in the word
     /// `sender.c:469 write_ndx_and_attrs()` echoes into the batch.
     pub(crate) fn record_batch_transfer_report(&mut self, report: u16) {
+        if self.batch_streams() {
+            let report = report & !ITEM_REPORT_XATTR;
+            if let Some((_, data, Some(offset))) =
+                self.batch_stream.as_mut().and_then(|s| s.pending.as_mut())
+                && let Some(word) = data.get_mut(*offset..*offset + 2)
+            {
+                let iflags = u16::from_le_bytes([word[0], word[1]]) | report;
+                word.copy_from_slice(&iflags.to_le_bytes());
+            } else if self.batch_record_is_direct()
+                && let Err(e) = self.patch_batch_record_through(report)
+            {
+                self.defer_batch_stream_error(e);
+            }
+            return;
+        }
         let Some((entry, offset)) = self.batch_report_slot.take() else {
             return;
         };
@@ -1149,6 +1190,9 @@ impl<'a> CopyContext<'a> {
         if self.batch_delta_buf.is_none() {
             return Ok(());
         }
+        if self.batch_streams() {
+            return self.write_batch_ndx_done();
+        }
 
         let batch_writer_arc = match self.options.get_batch_writer() {
             Some(w) => w.clone(),
@@ -1268,6 +1312,19 @@ impl<'a> CopyContext<'a> {
         for chunk in pending_sublists {
             write_raw(&chunk, "write batch sub-list")?;
         }
+        self.write_batch_ndx_done()
+    }
+
+    /// Writes the `NDX_DONE` markers that end the delta stream.
+    fn write_batch_ndx_done(&mut self) -> Result<(), crate::local_copy::LocalCopyError> {
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+        let codec = self
+            .batch_ndx_codec
+            .as_mut()
+            .expect("batch_ndx_codec must exist when batch_delta_buf is set");
 
         // Write NDX_DONE markers for phase transitions.
         //
@@ -1530,16 +1587,7 @@ impl<'a> CopyContext<'a> {
         let mut acls = std::mem::take(&mut self.batch_pending_acls);
         // `sorted[i]` is the entry the plan indexes as `i` and
         // `sorted_to_traversal[i]` its traversal index.
-        let (plan, sorted, sorted_to_traversal) = if self.batch_plans_lists_per_scan() {
-            self.plan_batch_lists_from_scans().map_err(|e| {
-                err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    e.to_string(),
-                ))
-            })?
-        } else {
-            self.plan_batch_lists_once()
-        };
+        let (plan, sorted, sorted_to_traversal) = self.plan_batch_lists_once();
         if let Some(&orphan) = plan.orphans.first() {
             return Err(err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -1681,41 +1729,6 @@ impl<'a> CopyContext<'a> {
         (plan, sorted, sorted_to_traversal)
     }
 
-    /// Plans the held entries' lists from the directory scans the walk
-    /// recorded, each list sorted in `f_name_cmp` order; plan indices are
-    /// traversal indices.
-    ///
-    /// upstream: flist.c:send_directory() sends one directory's entries as one
-    /// sub-list, sorted by flist_sort_and_clean() (flist.c:2398-2399)
-    fn plan_batch_lists_from_scans(
-        &mut self,
-    ) -> Result<BatchListPlan, protocol::flist::SubListPlanError> {
-        let scans = std::mem::take(&mut self.batch_scans);
-        let entries = std::mem::take(&mut self.batch_pending_entries);
-        let sort_data = &self.batch_entry_sort_data;
-        let by_name = |a: &usize, b: &usize| {
-            let (name_a, dir_a) = &sort_data[*a];
-            let (name_b, dir_b) = &sort_data[*b];
-            batch_entry_compare(name_a, *dir_a, name_b, *dir_b)
-        };
-        let is_top_level = |dir: &std::path::Path| {
-            dir.as_os_str().is_empty() || dir == std::path::Path::new(".")
-        };
-        let mut initial: Vec<usize> = (0..entries.len())
-            .filter(|&i| is_top_level(entries[i].dirname().as_ref()))
-            .collect();
-        initial.sort_by(by_name);
-        let mut planner = protocol::flist::SubListPlanner::new();
-        planner.push_initial(initial.iter().map(|&i| (i, &entries[i])))?;
-        // The root's own scan is the top level of the initial list.
-        for (dir, mut listed) in scans.into_iter().filter(|(dir, _)| !is_top_level(dir)) {
-            listed.sort_by(by_name);
-            planner.push_scan(&dir, listed.iter().map(|&i| (i, &entries[i])))?;
-        }
-        let order = (0..entries.len()).collect();
-        Ok((planner.into_plan(), entries, order))
-    }
-
     /// Takes the next traversal index for a file-list entry just captured.
     pub(super) fn next_batch_flist_index(&mut self) -> i32 {
         let index = self.batch_flist_index;
@@ -1730,24 +1743,12 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Decides, once per run, how the batch file lists are built for
-    /// `operands` source operands.
+    /// `operands` source operands, and starts the stream when they stream.
     pub(crate) fn decide_batch_list_mode(&mut self, operands: usize) {
-        self.batch_list_mode = Some(crate::local_copy::batch_list_mode::batch_list_mode(
-            &self.options,
-            operands,
-        ));
-    }
-
-    /// Reports whether the incremental file lists are planned from directory
-    /// scans as the walk reads each directory.
-    pub(crate) fn batch_plans_lists_per_scan(&self) -> bool {
-        self.batch_list_mode == Some(crate::local_copy::batch_list_mode::BatchListMode::Stream)
-    }
-
-    /// Records the traversal indices the walk listed when it read directory
-    /// `dir` (relative to the transfer root, empty for the root itself).
-    pub(crate) fn record_batch_scan(&mut self, dir: &std::path::Path, listed: Vec<usize>) {
-        self.batch_scans.push((dir.to_path_buf(), listed));
+        use crate::local_copy::batch_list_mode::{BatchListMode, batch_list_mode};
+        if batch_list_mode(&self.options, operands) == BatchListMode::Stream {
+            self.batch_stream = Some(crate::local_copy::batch_order::BatchStream::new());
+        }
     }
 
     /// Records sort metadata for a batch flist entry.
@@ -1776,7 +1777,7 @@ type BatchListPlan = (
 /// 2. Files sort before directories at the same level
 /// 3. Directories are compared as if they have a trailing '/'
 /// 4. Within the same type, sort by unsigned byte comparison
-fn batch_entry_compare(
+pub(crate) fn batch_entry_compare(
     name_a: &[u8],
     is_dir_a: bool,
     name_b: &[u8],

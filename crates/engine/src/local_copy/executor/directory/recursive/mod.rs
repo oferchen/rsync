@@ -12,12 +12,14 @@ mod deletion;
 mod destination;
 mod dir_metadata;
 mod entry;
+mod listing;
+mod prescan;
 
 use std::cell::Cell;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::super::create_failure::{full_fname, report as report_generator_failure};
 use crate::local_copy::overrides::device_identifier;
@@ -29,6 +31,9 @@ use crate::local_copy::{
 pub(crate) use batch::capture_batch_file_entry;
 pub(super) use batch::ListedEntry;
 pub(crate) use checksum::prefetch_directory_checksums;
+pub(crate) use prescan::BatchPrescan;
+#[cfg(test)]
+pub(crate) use prescan::{PrescanPolicy, last_peak_listed_entries, set_prescan_policy};
 use deletion::{
     apply_during_transfer_deletions, handle_empty_directory_pruning, handle_post_transfer_deletions,
 };
@@ -41,9 +46,7 @@ use entry::process_planned_entry;
 
 use super::planner::{
     apply_pre_transfer_deletions, plan_directory_entries, reorder_hardlink_group_holders,
-    report_unstatable_entry,
 };
-use super::support::read_directory_entries_sorted_reuse;
 
 /// Maximum directory nesting depth the recursive executor descends before
 /// returning an error instead of risking a thread stack overflow.
@@ -125,6 +128,9 @@ fn copy_directory_recursive_inner(
     root_device: Option<u64>,
     force_walk_one_level: bool,
 ) -> Result<bool, LocalCopyError> {
+    // The entry itemized last is this directory: its own batch record is the
+    // one the walk produced just before entering it.
+    let own_batch_index = context.batch_entry_index();
     // Bound recursion depth before allocating this frame's locals or recursing
     // further. The planner builds each child entry's `relative` as the parent's
     // relative path plus the child name, so the component count of `relative`
@@ -243,107 +249,33 @@ fn copy_directory_recursive_inner(
             .filter(|meta| meta.file_type().is_dir())
     };
 
-    let list_start = Instant::now();
-    // upstream: flist.c:2276-2277 - the operand's directory is opened through
-    // `open_sender_source_path()`, whose held root is re-checked against the
-    // identity recorded at flist.c:302-305. A root whose identity changed -
-    // e.g. `dir/symlink/..`, which flist.c:2869 `clean_fname()` collapses to a
-    // different directory than the one stat'd - fails the scan with ELOOP
-    // (flist.c:325-329), reported through the `opendir` arm below.
-    let pinned_root_error = context.pinned_anchor_error(source);
-    let scans_operand_root = relative.is_none() && context.source_anchor() == Some(source);
-    context.set_batch_listing_dir(Some(relative.unwrap_or(Path::new("."))));
     let walks_children = context.recursive_enabled() || force_walk_one_level;
-    let (readdir_buf, scan_root) = context.readdir_buf_with_confined_anchor();
-    // Seeded here rather than at the entry loop so a failed enumeration can
-    // carry its error to the same end-of-frame re-raise the per-entry failures
-    // use.
-    let mut first_entry_io_error: Option<LocalCopyError> = None;
-    // upstream: flist.c:2376-2387 - `send_directory()` emits this directory's
-    // own entry and ACL (flist.c:2072-2083) BEFORE it opens the directory, so a
-    // failed `opendir()` is an enumeration-only failure: upstream `return`s
-    // without descending and the entry it already sent still reaches the
-    // receiver, which mkdir's the destination directory and applies its
-    // metadata and ACLs. The three arms are:
-    //   ENOENT -> `interpret_stat_error()` (flist.c:2228-2238) warns
-    //             `directory <name> has vanished` and sets IOERR_VANISHED (24);
-    //   ENOTDIR with FLAG_PERHAPS_DIR -> silent return. No counterpart here:
-    //             this frame is only entered for a source already stat'd as a
-    //             directory, so the "perhaps" flag is never set and ENOTDIR
-    //             falls through to the general arm exactly as upstream does
-    //             when the flag is clear;
-    //   otherwise -> IOERR_GENERAL (23) plus rsyserr `opendir %s failed`.
-    // Abandoning the frame here instead would skip `ensure_directory` and
-    // `apply_final_directory_metadata`, leaving an unreadable source
-    // directory's own permissions/ACLs unapplied and a stale destination ACL
-    // entry unrevoked. Continue with no children; the tail re-raises.
-    let mut enumeration_failed = false;
-    let mut unstatable = Vec::new();
-    // upstream: flist.c:3003 - a directory this frame will not walk (no
-    // recursion, not a trailing-slash or dot-dir source) is never opened, so an
-    // unreadable one is not an error.
-    let scan = if !walks_children {
-        Ok(Vec::new())
+    // A streamed batch lists directories ahead of the walk, as rsync's sender
+    // builds sub-lists ahead of file data; the walk takes the listing it would
+    // have made here.
+    let mut streamed = None;
+    let listing = if context.batch_streams() {
+        let cached =
+            prescan::take_listing(context, source, relative, root_device, walks_children)?;
+        streamed = Some(cached.outcome);
+        cached.listing
     } else {
-        match pinned_root_error {
-            Some(error) => Err(LocalCopyError::io("open directory", source, error)),
-            None => {
-                read_directory_entries_sorted_reuse(source, readdir_buf, scan_root, &mut unstatable)
-            }
-        }
+        listing::read_directory(context, source, relative, walks_children, list_only)
     };
-    let mut entries = match scan {
-        Ok(entries) => entries,
-        Err(error) => {
-            if error.is_vanished_error() {
-                eprintln!("directory has vanished: {}", full_fname(source));
-            } else {
-                let detail = match error.kind() {
-                    crate::local_copy::LocalCopyErrorKind::Io { source, .. } => {
-                        crate::local_copy::upstream_io_error(source)
-                    }
-                    _ => error.to_string(),
-                };
-                // upstream: flist.c send_directory() - `opendir %s failed`
-                // names the directory through full_fname(), so a relative
-                // operand is reported prefixed by the working directory.
-                let name = if scans_operand_root {
-                    operand_root_fname(source)
-                } else {
-                    full_fname(source)
-                };
-                eprintln!("rsync: [sender] opendir {name} failed: {detail}");
-                context.record_io_error();
-            }
-            first_entry_io_error = Some(error);
-            enumeration_failed = true;
-            Vec::new()
-        }
+    let listing::DirectoryListing {
+        entries,
+        first_error: mut first_entry_io_error,
+        enumeration_failed,
+    } = listing;
+    let streamed = match streamed {
+        Some(listing::ListingOutcome::EnterFailed(error)) => return Err(error),
+        other => other,
     };
-    for (path, error) in unstatable {
-        let name = path.file_name().map_or(path.as_path(), Path::new);
-        let entry_relative = relative.map_or_else(|| name.to_path_buf(), |dir| dir.join(name));
-        if let Some(vanished) = report_unstatable_entry(context, &path, &entry_relative, error)
-            && first_entry_io_error.is_none()
-        {
-            first_entry_io_error = Some(vanished);
-        }
-    }
-    // upstream: the file list is built once before the receiver mkdir's the
-    // destination root, so a destination created inside the source tree (e.g.
-    // `rsync -a src src/child`) never appears in the list. oc reads each source
-    // directory live, after the destination root is created, so drop the entry
-    // that IS the destination root to avoid descending into our own output.
-    // A listing creates no destination, so there is nothing to drop.
-    if !list_only {
-        let destination_root = context.destination_root().to_path_buf();
-        entries.retain(|entry| entry.path != destination_root);
-    }
-    context.record_file_list_generation(list_start.elapsed());
-    context.reserve_event_capacity(entries.len());
-    context.register_progress();
-
-    let _dir_merge_guard = context.enter_directory(source, relative)?;
+    let _dir_merge_guard = if streamed.is_some() {
+        None
+    } else {
+        Some(context.enter_directory(source, relative)?)
+    };
 
     let directory_ready = Cell::new(!destination_missing && !list_only);
     // Set once this directory's mkdir has failed and been reported.
@@ -669,20 +601,29 @@ fn copy_directory_recursive_inner(
         keep_preexisting_directory_writable(context, destination, metadata, dir_pre_transfer);
     }
 
-    let mut plan = plan_directory_entries(context, &entries, relative, root_device)?;
-    context.set_batch_listing_dir(None);
-    // upstream: hlink.c:match_gnums / generator.c:2255-2257 - the last name-sorted
-    // member of a hard-link cohort is the transferred data-holder; earlier members
-    // follow it as `hf ... => <holder>` aliases. Reorder the plan so the executor's
-    // per-inode tracker records the holder first and every alias points at it.
-    reorder_hardlink_group_holders(
-        context.options().hard_links_enabled() && !list_only,
-        !context.reference_directories().is_empty(),
-        context.sender_options().fake_super_enabled(),
-        destination,
-        &mut plan.planned_entries,
-    );
-    batch::list_batch_directory(context, relative, &mut plan.planned_entries)?;
+    let mut plan = match streamed {
+        Some(listing::ListingOutcome::Planned(plan)) => plan.attach(&entries),
+        Some(
+            listing::ListingOutcome::PlanFailed(error)
+            | listing::ListingOutcome::EnterFailed(error),
+        ) => return Err(error),
+        None => {
+            let mut plan = plan_directory_entries(context, &entries, relative, root_device)?;
+            context.set_batch_listing_dir(None);
+        // upstream: hlink.c:match_gnums / generator.c:2255-2257 - the last name-sorted
+        // member of a hard-link cohort is the transferred data-holder; earlier members
+        // follow it as `hf ... => <holder>` aliases. Reorder the plan so the executor's
+        // per-inode tracker records the holder first and every alias points at it.
+        reorder_hardlink_group_holders(
+            context.options().hard_links_enabled() && !list_only,
+            !context.reference_directories().is_empty(),
+            context.sender_options().fake_super_enabled(),
+            destination,
+            &mut plan.planned_entries,
+        );
+            plan
+        }
+    };
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
     // upstream: generator.c:1961-1964 - a non-INC_RECURSE `--delete-during`
     // sweep runs while the generator itemizes the directory entry, before it
@@ -719,7 +660,15 @@ fn copy_directory_recursive_inner(
     // a per-entry PathBuf allocation from Path::join.
     let mut target_buf = destination.to_path_buf();
 
+    // upstream: generator.c:2780-2788 - a directory's own record goes out at
+    // the gap NDX below its list, before any of its entries.
+    context.finish_batch_entry(own_batch_index)?;
     for planned in &mut plan.planned_entries {
+        let listed_index = planned.listed.as_ref().map(ListedEntry::index);
+        if let Some(index) = listed_index {
+            // upstream: sender.c:523-555 - lists go out ahead of the file.
+            prescan::list_ahead(context, index as usize)?;
+        }
         let result = process_planned_entry(
             context,
             planned,
@@ -728,6 +677,9 @@ fn copy_directory_recursive_inner(
             root_device,
         )
         .or_else(|error| error.report_commit_failure(context.destination_root()));
+        if let Some(index) = listed_index {
+            context.finish_batch_entry(index)?;
+        }
         match result {
             Ok(entry_kept) => {
                 if entry_kept {

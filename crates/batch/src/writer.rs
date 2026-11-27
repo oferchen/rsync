@@ -244,6 +244,62 @@ impl BatchWriter {
         }
     }
 
+    /// The offset in the batch file the next byte of data goes to.
+    pub fn data_position(&mut self) -> BatchResult<u64> {
+        use std::io::Seek;
+        let Some(ref mut writer) = self.batch_file else {
+            return Err(BatchError::Io(io::Error::other("Batch file not open")));
+        };
+        writer.stream_position().map_err(|e| {
+            BatchError::Io(io::Error::new(
+                e.kind(),
+                format!("Failed to read batch file position: {e}"),
+            ))
+        })
+    }
+
+    /// Overwrites bytes already written at `offset` without moving the end
+    /// of the data.
+    ///
+    /// A record's iflags word can gain report bits after the record's body
+    /// went out; this writes the final word in place.
+    pub fn patch_data(&mut self, offset: u64, data: &[u8]) -> BatchResult<()> {
+        let Some(ref mut writer) = self.batch_file else {
+            return Err(BatchError::Io(io::Error::other("Batch file not open")));
+        };
+        let wrap = |e: io::Error| {
+            BatchError::Io(io::Error::new(
+                e.kind(),
+                format!("Failed to patch batch data: {e}"),
+            ))
+        };
+        writer.flush().map_err(wrap)?;
+        let file = writer.get_mut();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            file.write_all_at(data, offset).map_err(wrap)
+        }
+        #[cfg(windows)]
+        {
+            use std::io::{Seek, SeekFrom};
+            use std::os::windows::fs::FileExt;
+            let mut done = 0;
+            while done < data.len() {
+                let n = file
+                    .seek_write(&data[done..], offset + done as u64)
+                    .map_err(wrap)?;
+                if n == 0 {
+                    return Err(wrap(io::Error::from(io::ErrorKind::WriteZero)));
+                }
+                done += n;
+            }
+            // seek_write moves the cursor; data appends at the end.
+            file.seek(SeekFrom::End(0)).map_err(wrap)?;
+            Ok(())
+        }
+    }
+
     /// Flush any buffered data to disk.
     pub fn flush(&mut self) -> BatchResult<()> {
         if let Some(ref mut writer) = self.batch_file {
@@ -379,5 +435,39 @@ mod tests {
 
         assert!(writer.finalize().is_ok());
         assert!(batch_path.exists());
+    }
+
+    /// A record's iflags word is rewritten after its body went out: the patch
+    /// must land on the recorded offset, leave every other byte alone, and
+    /// keep later writes appending at the end, with part of the data still
+    /// buffered when the patch is made.
+    #[test]
+    fn patch_data_rewrites_in_place_and_keeps_appending() {
+        let temp_dir = test_support::create_tempdir();
+        let batch_path = temp_dir.path().join("test.batch");
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            30,
+        );
+        let mut writer = BatchWriter::new(config).unwrap();
+        writer.write_header(BatchFlags::default()).unwrap();
+        writer.write_data(b"head").unwrap();
+        let at = writer.data_position().unwrap();
+        writer.write_data(b"\x00\x00").unwrap();
+        let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        writer.write_data(&body).unwrap();
+        writer.write_data(b"buffered").unwrap();
+        writer.patch_data(at, b"\x05\x80").unwrap();
+        writer.write_data(b"tail").unwrap();
+        writer.finalize().unwrap();
+
+        let bytes = fs::read(&batch_path).unwrap();
+        let at = usize::try_from(at).unwrap();
+        assert_eq!(&bytes[at - 4..at], b"head");
+        assert_eq!(&bytes[at..at + 2], b"\x05\x80");
+        assert_eq!(&bytes[at + 2..at + 2 + body.len()], &body[..]);
+        assert!(bytes.ends_with(b"bufferedtail"));
+        assert_eq!(bytes.len(), at + 2 + body.len() + b"bufferedtail".len());
     }
 }

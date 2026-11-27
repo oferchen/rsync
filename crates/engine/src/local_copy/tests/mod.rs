@@ -1073,3 +1073,4 @@ include!("link_stat_operand_name.rs");
 include!("change_dir_operand.rs");
 include!("destination_root.rs");
 include!("batch_flist_io_error.rs");
+include!("batch_stream_prescan.rs");

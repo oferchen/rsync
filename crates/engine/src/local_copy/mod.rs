@@ -50,6 +50,7 @@
 //! ```
 
 mod batch_list_mode;
+mod batch_order;
 pub mod buffer_pool;
 pub mod clonefile;
 mod context;

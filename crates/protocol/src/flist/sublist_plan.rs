@@ -222,6 +222,8 @@ impl SubListPlan {
 #[derive(Clone, Debug)]
 pub struct SubListLookahead {
     used: Vec<usize>,
+    /// Entries in each list and every list before it.
+    prefix: Vec<usize>,
     file_total: usize,
     file_old_total: usize,
     current: usize,
@@ -240,8 +242,16 @@ impl SubListLookahead {
             used.push(0);
         }
         let initial = used[0];
+        let prefix = used
+            .iter()
+            .scan(0, |total, &n| {
+                *total += n;
+                Some(*total)
+            })
+            .collect();
         Self {
             used,
+            prefix,
             file_total: initial,
             file_old_total: initial,
             current: 0,
@@ -264,6 +274,8 @@ impl SubListLookahead {
     pub fn push_list(&mut self, used: usize) {
         debug_assert!(!self.closed, "a closed lookahead knows every list");
         self.used.push(used);
+        let through = self.prefix.last().copied().unwrap_or(0) + used;
+        self.prefix.push(through);
     }
 
     /// Marks every list as known.
@@ -282,7 +294,7 @@ impl SubListLookahead {
         let list = list.min(self.used.len() - 1);
         if list != self.current {
             self.current = list;
-            self.file_old_total = self.used[..=list].iter().sum();
+            self.file_old_total = self.prefix[list];
         }
         loop {
             let wants_more =
@@ -299,6 +311,20 @@ impl SubListLookahead {
                 return None;
             }
         }
+    }
+
+    /// Whether [`try_serve`](Self::try_serve) for `list` would return `None`,
+    /// without sending anything: the lookahead is open and the lists known so
+    /// far hold fewer than [`MIN_FILECNT_LOOKAHEAD`] entries past `list`.
+    #[must_use]
+    pub fn waits_for_lists(&self, list: usize) -> bool {
+        if self.closed {
+            return false;
+        }
+        let Some(&through) = self.prefix.get(list) else {
+            return true;
+        };
+        self.prefix.last().copied().unwrap_or(0) < through + MIN_FILECNT_LOOKAHEAD
     }
 
     /// Sends what the sender sends before handling a request from `list`, and
@@ -320,6 +346,36 @@ impl SubListLookahead {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    proptest::proptest! {
+        /// `waits_for_lists` says exactly when `try_serve` would wait, and
+        /// sends nothing itself.
+        #[test]
+        fn waits_for_lists_predicts_try_serve(
+            sizes in proptest::collection::vec(0usize..700, 1..40),
+            known in 1usize..40,
+            close in proptest::bool::ANY,
+            requests in proptest::collection::vec(0usize..45, 0..20),
+        ) {
+            let known = known.min(sizes.len());
+            let mut lookahead = SubListLookahead::open(sizes[0]);
+            for &size in &sizes[1..known] {
+                lookahead.push_list(size);
+            }
+            if close {
+                lookahead.close();
+            }
+            for &list in &requests {
+                for probe in 0..known + 2 {
+                    let sent = lookahead.sent();
+                    let waits = lookahead.waits_for_lists(probe);
+                    proptest::prop_assert_eq!(waits, lookahead.clone().try_serve(probe).is_none());
+                    proptest::prop_assert_eq!(lookahead.sent(), sent);
+                }
+                let _ = lookahead.try_serve(list);
+            }
+        }
+    }
     use crate::flist::sort_file_list;
 
     fn tree(paths: &[(&str, bool)]) -> Vec<FileEntry> {

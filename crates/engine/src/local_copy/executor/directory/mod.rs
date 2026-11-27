@@ -8,6 +8,9 @@ mod parallel_checksum;
 mod parallel_planner;
 
 pub(crate) use parallel_checksum::{ChecksumCache, pair_checksums_match};
+pub(crate) use recursive::BatchPrescan;
+#[cfg(test)]
+pub(crate) use recursive::{PrescanPolicy, last_peak_listed_entries, set_prescan_policy};
 pub(crate) use recursive::capture_batch_file_entry;
 pub(crate) use recursive::copy_directory_recursive;
 pub(crate) use recursive::copy_directory_walk_one_level;

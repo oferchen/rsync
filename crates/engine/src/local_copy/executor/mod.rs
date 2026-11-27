@@ -20,9 +20,11 @@ pub(crate) use create_failure::report_mknod_failure;
 pub(crate) use create_failure::{full_fname, report as report_generator_failure};
 pub(crate) use create_failure::{report_link_failure, report_symlink_failure};
 pub(crate) use directory::ChecksumCache;
+#[cfg(test)]
+pub(crate) use directory::{PrescanPolicy, last_peak_listed_entries, set_prescan_policy};
 pub(crate) use directory::ScanRoot;
 pub(crate) use directory::{
-    capture_batch_file_entry, copy_directory_recursive, copy_directory_walk_one_level, is_device,
+    BatchPrescan, capture_batch_file_entry, copy_directory_recursive, copy_directory_walk_one_level, is_device,
     is_fifo, wire_order_key,
 };
 #[cfg(test)]

@@ -37,6 +37,11 @@ pub(crate) enum WholeRunReason {
     /// upstream: flist.c:send_implied_dirs() puts the implied directories in
     /// the initial list and replays the deeper levels per directory.
     RelativeImpliedDirs,
+    /// `-H`: a group's data goes under its sorted-last member, which the
+    /// walk knows only once the whole group is listed.
+    ///
+    /// upstream: hlink.c:113-208 match_gnums()
+    HardLinkGroups,
 }
 
 /// How the batch file lists are built.
@@ -65,16 +70,28 @@ pub(crate) fn batch_list_mode(options: &LocalCopyOptions, operands: usize) -> Ba
                     .contains(protocol::CompatibilityFlags::INC_RECURSE)
             })
     });
-    classify(inc_recurse, operands, options.relative_paths_enabled())
+    classify(
+        inc_recurse,
+        operands,
+        options.relative_paths_enabled(),
+        options.hard_links_enabled(),
+    )
 }
 
-const fn classify(inc_recurse: bool, operands: usize, relative: bool) -> BatchListMode {
+const fn classify(
+    inc_recurse: bool,
+    operands: usize,
+    relative: bool,
+    hard_links: bool,
+) -> BatchListMode {
     if !inc_recurse {
         BatchListMode::ListFirst(ListFirstReason::IncRecurseOff)
     } else if operands > 1 {
         BatchListMode::ListFirst(ListFirstReason::MultipleOperands)
     } else if relative {
         BatchListMode::WholeRun(WholeRunReason::RelativeImpliedDirs)
+    } else if hard_links {
+        BatchListMode::WholeRun(WholeRunReason::HardLinkGroups)
     } else {
         BatchListMode::Stream
     }
@@ -89,7 +106,7 @@ mod tests {
     fn a_batch_without_inc_recurse_lists_first() {
         for (operands, relative) in [(1, false), (2, false), (1, true)] {
             assert_eq!(
-                classify(false, operands, relative),
+                classify(false, operands, relative, false),
                 BatchListMode::ListFirst(ListFirstReason::IncRecurseOff)
             );
         }
@@ -101,7 +118,7 @@ mod tests {
     fn several_operands_list_first() {
         for relative in [false, true] {
             assert_eq!(
-                classify(true, 2, relative),
+                classify(true, 2, relative, false),
                 BatchListMode::ListFirst(ListFirstReason::MultipleOperands)
             );
         }
@@ -112,7 +129,7 @@ mod tests {
     #[test]
     fn a_relative_operand_waits_for_the_whole_run() {
         assert_eq!(
-            classify(true, 1, true),
+            classify(true, 1, true, false),
             BatchListMode::WholeRun(WholeRunReason::RelativeImpliedDirs)
         );
     }
@@ -121,7 +138,17 @@ mod tests {
     /// whether `.` heads the initial list), streams.
     #[test]
     fn a_single_operand_streams() {
-        assert_eq!(classify(true, 1, false), BatchListMode::Stream);
+        assert_eq!(classify(true, 1, false, false), BatchListMode::Stream);
+    }
+
+    /// `-H` waits for the whole run: a group's data goes under its last
+    /// member.
+    #[test]
+    fn hard_links_wait_for_the_whole_run() {
+        assert_eq!(
+            classify(true, 1, false, true),
+            BatchListMode::WholeRun(WholeRunReason::HardLinkGroups)
+        );
     }
 
     /// Classified from the options' batch header: a writer that records

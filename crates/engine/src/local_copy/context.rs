@@ -520,13 +520,14 @@ pub(crate) struct CopyContext<'a> {
     /// entry is matched to its transfer; delta and itemize records go out
     /// under it.
     batch_entry_index: i32,
-    /// Directory scans in walk order, each the traversal indices the walk
-    /// listed when it read the directory, for a batch whose incremental file
-    /// lists are planned as the walk reads each directory.
-    batch_scans: Vec<(PathBuf, Vec<usize>)>,
-    /// How the batch file lists are built; decided once the operands are
-    /// known, `None` before that.
-    batch_list_mode: Option<super::batch_list_mode::BatchListMode>,
+    /// The streamed incremental file lists and their records, when the run's
+    /// list mode streams.
+    batch_stream: Option<super::batch_order::BatchStream>,
+    /// Directories a streamed batch listed ahead of the walk.
+    batch_prescan: Option<crate::local_copy::BatchPrescan>,
+    /// Whether the current file's sum_head is final: the delta path has
+    /// recorded its basis geometry.
+    batch_delta_head_final: bool,
     /// Zero-based file-list index counter for batch NDX framing.
     /// Incremented in `capture_batch_file_entry()` for every entry (dirs,
     /// files, symlinks, etc.) to match the upstream flist numbering.
@@ -947,6 +948,7 @@ include!("context_impl/options/transfer.rs");
 include!("context_impl/options/dirs.rs");
 include!("context_impl/options/filter.rs");
 include!("context_impl/options/batch.rs");
+include!("context_impl/options/batch_stream.rs");
 include!("context_impl/data_mover.rs");
 include!("context_impl/wire_tally.rs");
 include!("context_impl/transfer.rs");
@@ -1053,6 +1055,15 @@ impl DirectoryFilterHandles {
             layers: Rc::new(RefCell::new(vec![Vec::new(); layer_count])),
             ephemeral: Rc::new(RefCell::new(Vec::new())),
             dynamic: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// An independent stack in this one's current state.
+    pub(crate) fn detached_copy(&self) -> Self {
+        Self {
+            layers: Rc::new(RefCell::new(self.layers.borrow().clone())),
+            ephemeral: Rc::new(RefCell::new(self.ephemeral.borrow().clone())),
+            dynamic: Rc::new(RefCell::new(self.dynamic.borrow().clone())),
         }
     }
 }

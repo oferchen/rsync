@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use super::{DirectoryTree, FileEntry, SubList, SubListPlan};
+use super::{DirectoryTree, FileEntry};
 
 /// One file list released by a [`SubListPlanner`], in send order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +182,19 @@ impl SubListPlanner {
         }
     }
 
+    /// The directory whose scan the next list in send order waits for: the
+    /// caller's id for it and its path. `None` before the initial list is
+    /// released, when the next list is ready, and when none is left.
+    #[must_use]
+    pub fn next_unscanned(&self) -> Option<(usize, &Path)> {
+        if !self.initial_released {
+            return None;
+        }
+        let (_, slot, path) = self.tree.peek()?;
+        let (owner, members) = &self.slots[slot];
+        members.is_none().then_some((*owner, path))
+    }
+
     /// Releases the next list in send order, if every list before it and its
     /// own scan are known.
     pub fn pop_ready(&mut self) -> Option<StreamedList> {
@@ -219,27 +232,6 @@ impl SubListPlanner {
         for (_, members) in &mut self.slots {
             members.get_or_insert_with(Vec::new);
         }
-    }
-
-    /// Ends the walk and returns every list as a one-shot plan whose indices
-    /// are the caller's ids, for a writer that releases nothing before the
-    /// walk is over.
-    #[must_use]
-    pub fn into_plan(mut self) -> SubListPlan {
-        debug_assert!(!self.initial_released, "a list was released already");
-        self.end_walk();
-        let mut plan = SubListPlan::default();
-        while let Some(list) = self.pop_ready() {
-            match list.parent.zip(list.parent_dir_ndx) {
-                Some((parent, parent_dir_ndx)) => plan.sublists.push(SubList {
-                    parent_dir_ndx,
-                    parent,
-                    members: list.members,
-                }),
-                None => plan.initial = list.members,
-            }
-        }
-        plan
     }
 
     /// Whether every list has been released: the initial list is out and the
@@ -450,7 +442,44 @@ mod tests {
                     .push_scan(dir, kids.iter().map(|&i| (i, &entries[i])))
                     .expect("scan");
             }
-            prop_assert_eq!(planner.into_plan(), SubListPlan::new(&entries));
+            planner.end_walk();
+            let mut lists = Vec::new();
+            while let Some(list) = planner.pop_ready() {
+                lists.push(list);
+            }
+            prop_assert!(planner.finished());
+            prop_assert_eq!(lists, planned(&entries));
+        }
+
+        /// A walk that scans whatever `next_unscanned` names, in that order,
+        /// releases every list, the same lists a one-shot plan gives.
+        #[test]
+        fn scanning_what_next_unscanned_names_releases_every_list(paths in paths()) {
+            let entries = tree_from(&paths);
+            let scans: BTreeMap<PathBuf, Vec<usize>> = walk_scans(&entries)
+                .into_iter()
+                .map(|(dir, kids)| (dir.to_path_buf(), kids))
+                .collect();
+            let mut planner = SubListPlanner::new();
+            planner
+                .push_initial(top_level(&entries).into_iter().map(|i| (i, &entries[i])))
+                .expect("initial list");
+            prop_assert_eq!(planner.next_unscanned(), None);
+            let mut lists = vec![planner.pop_ready().expect("initial list")];
+            while let Some((owner, dir)) = planner.next_unscanned() {
+                prop_assert_eq!(entries[owner].path().as_path(), dir);
+                let dir = dir.to_path_buf();
+                let kids = scans.get(&dir).cloned().unwrap_or_default();
+                planner
+                    .push_scan(&dir, kids.iter().map(|&i| (i, &entries[i])))
+                    .expect("scan");
+                prop_assert_eq!(planner.next_unscanned(), None);
+                while let Some(list) = planner.pop_ready() {
+                    lists.push(list);
+                }
+            }
+            prop_assert!(planner.finished());
+            prop_assert_eq!(lists, planned(&entries));
         }
 
         /// Scans in any order a walk can produce (each directory after its

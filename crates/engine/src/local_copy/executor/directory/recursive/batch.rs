@@ -269,13 +269,19 @@ pub(crate) struct ListedEntry {
     entry: Option<protocol::flist::FileEntry>,
 }
 
+impl ListedEntry {
+    /// The entry's traversal index.
+    pub(crate) const fn index(&self) -> i32 {
+        self.index
+    }
+}
+
 /// Lists every entry of a directory the walk just read in the batch file
 /// list, before any of them is transferred, and records the directory's scan
 /// for the incremental planner. Each listed entry keeps its [`ListedEntry`]
 /// for the itemize half its transfer runs.
 ///
-/// A no-op unless the batch plans its incremental lists per directory scan
-/// (`batch_plans_lists_per_scan`).
+/// A no-op unless the batch file lists stream (`batch_streams`).
 ///
 /// upstream: flist.c:send_directory() - the sender lists a whole directory
 /// (make_file() and send_file_name() per entry) before the generator itemizes
@@ -285,7 +291,7 @@ pub(crate) fn list_batch_directory(
     dir_relative: Option<&Path>,
     planned: &mut [PlannedEntry<'_>],
 ) -> Result<(), LocalCopyError> {
-    if context.batch_writer().is_none() || !context.batch_plans_lists_per_scan() {
+    if context.batch_writer().is_none() || !context.batch_streams() {
         return Ok(());
     }
     #[cfg(unix)]
@@ -319,8 +325,34 @@ pub(crate) fn list_batch_directory(
         scan.push(listed.index as usize);
         planned.listed = Some(listed);
     }
-    context.record_batch_scan(dir_relative.unwrap_or(Path::new("")), scan);
-    Ok(())
+    context.stream_batch_scan(dir_relative.unwrap_or(Path::new("")), scan)
+}
+
+/// Puts a directory's planned entries in the order of its file list, so the
+/// walk handles each entry in NDX order: the directory's files, then each
+/// subdirectory, depth-first.
+///
+/// upstream: generator.c:2259-2283 - the generator walks every list in NDX
+/// order; flist.c:f_name_cmp() orders a list with files before directories.
+pub(crate) fn order_for_batch_stream(planned: &mut Vec<PlannedEntry<'_>>) {
+    let mut keyed: Vec<(Vec<u8>, bool, PlannedEntry<'_>)> = planned
+        .drain(..)
+        .map(|entry| {
+            let raw = entry.relative.as_os_str().as_encoded_bytes();
+            let name = if std::path::MAIN_SEPARATOR == '/' {
+                raw.to_vec()
+            } else {
+                raw.iter()
+                    .map(|&b| if b == b'\\' { b'/' } else { b })
+                    .collect()
+            };
+            (name, entry.metadata().is_dir(), entry)
+        })
+        .collect();
+    keyed.sort_by(|(a, dir_a, _), (b, dir_b, _)| {
+        crate::local_copy::context::batch_entry_compare(a, *dir_a, b, *dir_b)
+    });
+    planned.extend(keyed.into_iter().map(|(_, _, entry)| entry));
 }
 
 /// The list half of a batch capture: encodes the entry into the batch file
@@ -389,10 +421,14 @@ fn list_batch_entry(
     };
     context.record_batch_entry_sort_data(&wire_name, metadata.is_dir());
 
-    Ok(ListedEntry {
-        index: context.next_batch_flist_index(),
-        entry: kept,
-    })
+    let index = context.next_batch_flist_index();
+    if relative_path
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+    {
+        context.note_batch_top_entry(index as usize);
+    }
+    Ok(ListedEntry { index, entry: kept })
 }
 
 /// The itemize half of a batch capture, run when the entry is transferred:
