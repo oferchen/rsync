@@ -136,6 +136,7 @@ pub fn classify_operand(path: &OsStr) -> OperandKind {
 /// classify as local on every platform.
 fn classify_hostspec(bytes: &[u8]) -> OperandKind {
     let mut i = 0;
+    let mut host_start = 0;
     while i < bytes.len() {
         match bytes[i] {
             b':' => {
@@ -151,18 +152,28 @@ fn classify_hostspec(bytes: &[u8]) -> OperandKind {
             // returns NULL). '\' is oc-rsync's cross-platform path separator.
             b'/' | b'\\' => return OperandKind::Local,
             // 'user@host': '@' resets the host start but is not a terminator.
-            b'@' => i += 1,
+            b'@' => {
+                i += 1;
+                host_start = i;
+            }
             // '[ipv6]': the inner ':' are address bytes, not host terminators.
+            // upstream: options.c:3354-3360 - the '[' must open the host, the
+            // brackets must hold something, and only ':' or '/' (or the end)
+            // may follow the ']'; anything else is a local path.
             b'[' => {
+                if i != host_start {
+                    return OperandKind::Local;
+                }
                 i += 1;
                 while i < bytes.len() && bytes[i] != b']' && bytes[i] != b'/' {
                     i += 1;
                 }
-                if i < bytes.len() && bytes[i] == b']' {
-                    i += 1;
-                } else {
+                let empty = i == host_start + 1;
+                let follows_ok = bytes.get(i + 1).is_none_or(|&b| b == b':' || b == b'/');
+                if bytes.get(i) != Some(&b']') || empty || !follows_ok {
                     return OperandKind::Local;
                 }
+                i += 1;
             }
             _ => i += 1,
         }
@@ -210,6 +221,13 @@ mod tests {
         ("host:path", OperandKind::Remote, false),
         ("user@host:path", OperandKind::Remote, false),
         ("[::1]:path", OperandKind::Remote, false),
+        ("[::1]::module", OperandKind::Daemon, false),
+        ("user@[::1]:path", OperandKind::Remote, false),
+        // Malformed brackets are local paths, as parse_hostspec() returns NULL.
+        ("[::1]x:path", OperandKind::Local, false),
+        ("a[::1]:path", OperandKind::Local, false),
+        ("[]:path", OperandKind::Local, false),
+        ("[::1]", OperandKind::Local, false),
         ("rsync://h/m", OperandKind::Daemon, false),
         ("host::module", OperandKind::Daemon, false),
         // Plain local paths.

@@ -6,10 +6,11 @@
 
 use std::ffi::{OsStr, OsString};
 
-use rsync_io::ssh::parse_ssh_operand;
+use rsync_io::ssh::{RemoteOperand, parse_ssh_operand};
 
 use super::super::super::config::ClientConfig;
-use super::super::super::error::{ClientError, remote_operand_error};
+use super::super::super::error::{ClientError, invalid_argument_error, remote_operand_error};
+use super::super::hostspec::check_operand_host;
 use super::super::invocation::{RemoteInvocationBuilder, RemoteOperands, RemoteRole};
 
 /// SSH invocation result containing args, host, optional user, optional port, and stdin args.
@@ -27,17 +28,35 @@ pub(super) type SshInvocationResult = (
     Vec<OsString>,
 );
 
+/// The path a remote-shell operand sends: `.` for an empty one.
+///
+/// upstream: main.c:1559 and :1606 turn an empty remote arg into a dot dir.
+fn remote_path(operand: &RemoteOperand) -> &OsStr {
+    match operand.path() {
+        path if path.is_empty() => OsStr::new("."),
+        path => path,
+    }
+}
+
+/// Parses a `[USER@]HOST:PATH` operand after checking its host token.
+fn parse_operand(operand: &OsStr) -> Result<RemoteOperand, ClientError> {
+    // The dash-led host refusal (main.c:1640-1643) comes first, as in 3.5.2.
+    let parsed = parse_ssh_operand(operand)
+        .map_err(|e| remote_operand_error("invalid remote operand", &e))?;
+    check_operand_host(operand).map_err(|text| invalid_argument_error(text, 1))?;
+    Ok(parsed)
+}
+
 /// Parses a single remote operand and builds the invocation args.
 pub(in crate::client::remote) fn parse_single_remote(
     operand: &OsStr,
     config: &ClientConfig,
     role: RemoteRole,
 ) -> Result<SshInvocationResult, ClientError> {
-    let operand = parse_ssh_operand(operand)
-        .map_err(|e| remote_operand_error("invalid remote operand", &e))?;
+    let operand = parse_operand(operand)?;
 
     let invocation_builder = RemoteInvocationBuilder::new(config, role);
-    let secluded = invocation_builder.build_secluded(&[operand.path()]);
+    let secluded = invocation_builder.build_secluded(&[remote_path(&operand)]);
 
     Ok((
         secluded.command_line_args,
@@ -57,14 +76,12 @@ pub(in crate::client::remote) fn parse_remote_operands(
     match remote_operands {
         RemoteOperands::Single(operand) => parse_single_remote(operand, config, role),
         RemoteOperands::Multiple(operands) => {
-            let first_operand = parse_ssh_operand(&operands[0])
-                .map_err(|e| remote_operand_error("invalid remote operand", &e))?;
+            let first_operand = parse_operand(&operands[0])?;
 
             let mut paths: Vec<OsString> = Vec::new();
             for operand in operands {
-                let parsed = parse_ssh_operand(operand)
-                    .map_err(|e| remote_operand_error("invalid remote operand", &e))?;
-                paths.push(parsed.path().to_os_string());
+                let parsed = parse_operand(operand)?;
+                paths.push(remote_path(&parsed).to_os_string());
             }
 
             let invocation_builder = RemoteInvocationBuilder::new(config, role);
@@ -102,9 +119,7 @@ pub(in crate::client::remote) fn remote_operand_source_paths(
     operand_list
         .iter()
         .map(|operand| {
-            parse_ssh_operand(operand)
-                .map(|parsed| parsed.path().to_string_lossy().into_owned())
-                .map_err(|e| remote_operand_error("invalid remote operand", &e))
+            parse_operand(operand).map(|parsed| remote_path(&parsed).to_string_lossy().into_owned())
         })
         .collect()
 }

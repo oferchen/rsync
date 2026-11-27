@@ -35,10 +35,10 @@ pub(crate) fn handle_batch_read(
 
     // upstream: main.c:1542-1547 - only the destination (`argv[argc-1]`) is
     // checked; every earlier operand is dropped unread.
-    let has_remote_dest = config.transfer_args().last().is_some_and(|arg| {
-        let s = arg.to_string_lossy();
-        s.starts_with("rsync://") || s.contains("::") || remote::operand_is_remote(arg)
-    });
+    let has_remote_dest = config
+        .transfer_args()
+        .last()
+        .is_some_and(|arg| remote::operand_is_remote(arg) || remote::is_daemon_operand(arg));
     if has_remote_dest {
         return Some(Err(ClientError::new(
             super::super::FEATURE_UNAVAILABLE_EXIT_CODE,

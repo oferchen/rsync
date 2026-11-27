@@ -10,10 +10,11 @@ use std::net::SocketAddr;
 use protocol::ProtocolVersion;
 
 use super::super::{AddressMode, ClientError, TcpFastOpenMode};
-use super::parsing::{parse_host_port, split_daemon_host_module, strip_prefix_ignore_ascii_case};
+use super::parsing::{parse_host_port, strip_prefix_ignore_ascii_case};
 use super::types::DaemonAddress;
 #[cfg(feature = "quic")]
 use super::types::Transport;
+use crate::client::remote::hostspec::{double_colon_split, operand_bytes};
 
 /// Specification describing a daemon module listing request parsed from CLI operands.
 ///
@@ -85,15 +86,17 @@ impl ModuleListRequest {
             return Self::parse_daemon_url(rest, default_port, super::types::Transport::default());
         }
 
-        if let Some((host_part, module_part)) = split_daemon_host_module(&text)? {
-            if module_part.is_empty() {
-                let target = parse_host_port(host_part, default_port)?;
-                return Ok(Some(Self::new(target.address, target.username)));
+        // upstream: main.c:1480 - a `HOST::` operand with an empty path lists
+        // the daemon's modules.
+        let bytes = operand_bytes(operand);
+        match double_colon_split(operand) {
+            Some((host_end, path_start)) if path_start == bytes.len() => {
+                let target =
+                    parse_host_port(&String::from_utf8_lossy(&bytes[..host_end]), default_port)?;
+                Ok(Some(Self::new(target.address, target.username)))
             }
-            return Ok(None);
+            _ => Ok(None),
         }
-
-        Ok(None)
     }
 
     /// Parses the authority (`[user@]host[:port]`) of a daemon URL after its
