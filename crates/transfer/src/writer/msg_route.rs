@@ -51,6 +51,23 @@ impl MessageRoute {
         }
     }
 
+    /// The route a `--stderr=MODE` value selects, or `None` for an unknown
+    /// mode. Any non-empty prefix of a mode name selects it.
+    ///
+    /// upstream: options.c:2061-2075 - `errors` sets 2, `all` 1, `client` 0,
+    /// each matched with `strncmp(name, arg, strlen(arg))`.
+    #[must_use]
+    pub fn from_stderr_mode(mode: &str) -> Option<Self> {
+        [
+            ("errors", Self::ErrorsToStderr),
+            ("all", Self::AllToStderr),
+            ("client", Self::Frames),
+        ]
+        .into_iter()
+        .find(|(name, _)| !mode.is_empty() && name.starts_with(mode))
+        .map(|(_, route)| route)
+    }
+
     /// The route a server uses once the protocol is known: the requested one,
     /// or the default - framed below protocol 29, where the client may not
     /// have set up a stderr for the server, errors to stderr otherwise.
@@ -176,5 +193,23 @@ mod tests {
             Some(MessageRoute::Frames)
         );
         assert_eq!(MessageRoute::from_server_flag("--stderr=all"), None);
+    }
+
+    /// options.c:2061-2075 - each mode name, or any non-empty prefix of it.
+    #[test]
+    fn from_stderr_mode_reads_names_and_their_prefixes() {
+        for (mode, route) in [
+            ("errors", MessageRoute::ErrorsToStderr),
+            ("e", MessageRoute::ErrorsToStderr),
+            ("all", MessageRoute::AllToStderr),
+            ("a", MessageRoute::AllToStderr),
+            ("client", MessageRoute::Frames),
+            ("cli", MessageRoute::Frames),
+        ] {
+            assert_eq!(MessageRoute::from_stderr_mode(mode), Some(route), "{mode}");
+        }
+        for mode in ["", "x", "allx", "errorsx"] {
+            assert_eq!(MessageRoute::from_stderr_mode(mode), None, "{mode}");
+        }
     }
 }

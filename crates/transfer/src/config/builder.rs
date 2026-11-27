@@ -677,6 +677,7 @@ impl ServerConfigBuilder {
             trust_sender: self.trust_sender,
             stop_at: self.stop_at,
             qsort: self.qsort,
+            no_inc_recurse: false,
             has_partial_dir: self.has_partial_dir,
             partial_dir: self.partial_dir.clone(),
             backup_dir: self.backup_dir.clone(),

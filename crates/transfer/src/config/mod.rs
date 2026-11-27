@@ -646,6 +646,15 @@ pub struct ServerConfig {
     /// - `flist.c:2178`: `if (use_qsort) qsort(...); else fsort_tmp(...);`
     /// - `options.c:849`: `--qsort` flag definition
     pub qsort: bool,
+    /// Whether `--no-inc-recursive` turned incremental recursion off.
+    ///
+    /// Default is false: upstream's `allow_inc_recurse` starts at 1.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:634-637`: `--inc-recursive` / `--no-inc-recursive` set it.
+    /// - `compat.c:171-172`: `set_allow_inc_recurse()` only ever clears it.
+    pub no_inc_recurse: bool,
     /// Whether `--partial-dir` is configured.
     ///
     /// Together with `--delay-updates`, which implies a partial dir, this is the
@@ -929,6 +938,7 @@ impl Default for ServerConfig {
             trust_sender: false,
             stop_at: None,
             qsort: false,
+            no_inc_recurse: false,
             has_partial_dir: false,
             partial_dir: None,
             backup_dir: None,
@@ -1014,7 +1024,8 @@ impl ServerConfig {
     /// Reports whether this side's options permit incremental recursion,
     /// mirroring upstream `set_allow_inc_recurse()`.
     ///
-    /// Recursion must be on and `--qsort` off, and a receiver additionally
+    /// `--no-inc-recursive` must be absent, recursion on and `--qsort` off,
+    /// and a receiver additionally
     /// refuses it under `--delete-before`, `--delete-after`, `--delay-updates`
     /// or `--prune-empty-dirs`, all of which need the complete file list up
     /// front. Upstream's server-only `client_info` `'i'` clause is not part of
@@ -1028,7 +1039,7 @@ impl ServerConfig {
     ///   rejects aborts with `RERR_SYNTAX`.
     #[must_use]
     pub fn allows_inc_recurse(&self) -> bool {
-        if !self.flags.recursive || self.qsort {
+        if self.no_inc_recurse || !self.flags.recursive || self.qsort {
             return false;
         }
         self.role == ServerRole::Generator
@@ -1156,6 +1167,18 @@ mod builder_tests;
 mod tests {
     use super::*;
     use std::ffi::OsString;
+
+    /// options.c:634-637 - a forwarded `--no-inc-recursive` keeps a recursive
+    /// sender from offering incremental recursion (compat.c:171-172).
+    #[test]
+    fn no_inc_recurse_refuses_incremental_recursion() {
+        let mut config =
+            ServerConfig::from_flag_string_and_args(ServerRole::Generator, "-r".to_owned(), vec![])
+                .expect("valid flag string");
+        assert!(config.allows_inc_recurse());
+        config.no_inc_recurse = true;
+        assert!(!config.allows_inc_recurse());
+    }
 
     #[test]
     fn from_flag_string_and_args_with_valid_flags() {

@@ -638,6 +638,25 @@ where
     if let Some(specials) = long_flags.specials {
         config.flags.specials = specials;
     }
+    if let Some(devices) = long_flags.devices {
+        config.flags.devices = devices;
+    }
+    // upstream: options.c:700-701 - a remote-shell server munges symlinks
+    // only when told to; flist.c:499-502 and :1521-1524 apply it.
+    if let Some(munge) = long_flags.munge_symlinks {
+        config.munge_symlinks = munge;
+    }
+    // upstream: flist.c:1225-1226 / :1970-1971 - each `--chmod` value joins
+    // `chmod_modes`, tweaking every received or sent entry's mode.
+    for spec in &long_flags.chmod {
+        if let Ok(modifiers) = ::metadata::ChmodModifiers::parse(spec) {
+            match config.chmod.as_mut() {
+                Some(chmod) => chmod.extend(modifiers),
+                None => config.chmod = Some(modifiers),
+            }
+        }
+    }
+    config.no_inc_recurse = long_flags.no_inc_recurse;
     // upstream: options.c:63 keeps `drop_devices` in its own variable, and
     // `generator.c:2031` gates creation on `!drop_devices && (...)`. It is not
     // in a last-one-wins relationship with `-D` / `--specials`: it beats them
@@ -880,6 +899,17 @@ where
                     program_brand,
                     format!("invalid compression algorithm '{name}': {e}"),
                 );
+                return 1;
+            }
+        }
+    }
+    // upstream: options.c:784-785 - `--compress-threads` sizes the sender's
+    // compression worker pool.
+    if let Some(threads) = &long_flags.compress_threads {
+        match super::super::execution::parse_compress_threads(std::ffi::OsStr::new(threads)) {
+            Ok(threads) => config.connection.compression_threads = threads,
+            Err(msg) => {
+                write_server_error(stderr, program_brand, msg.text().to_owned());
                 return 1;
             }
         }

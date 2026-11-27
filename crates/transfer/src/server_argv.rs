@@ -7,6 +7,10 @@
 
 use std::ffi::{OsStr, OsString};
 
+mod long_options;
+
+pub use long_options::{LongOption, long_option};
+
 /// The bare `--` that ends option processing.
 ///
 /// upstream: options.c:1515 - the server runs the same popt parser as the
@@ -97,6 +101,12 @@ impl ArgvRefusal {
 ///   string, in argv order, each `-F` already expanded to its rule. Those ahead
 ///   of `--server` are kept twice: upstream's restarted pass parses them again
 ///   without clearing `filter_list` or `F_option_cnt`.
+/// - A long option of 3.5.2's table ([`long_option`]) that names a short
+///   switch joins the flag string as that letter; a `--no-` negation of one
+///   removes the letter; `--block-size` and `--rsh` are read as `-B` and
+///   `-e`; `--chown` becomes the `--usermap` / `--groupmap` it implies. Any
+///   other value-taking long option is joined to its value, so every later
+///   pass reads one `--opt=VALUE` token.
 ///
 /// Tokens after the `--` marker are operands and pass through untouched. The
 /// rewrite is idempotent, so it can run again over a secluded-args list.
@@ -115,6 +125,7 @@ pub fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, ArgvRef
     let mut first_cluster_at: Option<usize> = None;
     let mut after_server = false;
     let mut filters: Vec<ArgvFilter> = Vec::new();
+    let mut id_maps = IdMaps::default();
     let mut tokens = options.iter().enumerate();
     while let Some((index, arg)) = tokens.next() {
         let text = arg.to_string_lossy();
@@ -168,8 +179,58 @@ pub fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, ArgvRef
             check_remote_option(value, after_server)?;
             continue;
         }
-        if text.starts_with("--") {
-            kept.push(arg.clone());
+        if let Some(rest) = text.strip_prefix("--") {
+            let (name, joined) = match rest.split_once('=') {
+                Some((name, value)) => (name, Some(value)),
+                None => (rest, None),
+            };
+            let kind = long_option(name);
+            // popt binds a value-taking option's value from the next token
+            // when it is not joined; join it so every later pass reads one.
+            let mut token = arg.clone();
+            if kind.is_some_and(LongOption::takes_value) && joined.is_none() {
+                let (_, value) = tokens
+                    .next()
+                    .ok_or_else(|| ArgvRefusal::popt(&text, "missing argument", after_server))?;
+                token = OsString::from(format!("{text}="));
+                token.push(value);
+            }
+            let value = || {
+                let token = token.to_string_lossy();
+                token
+                    .split_once('=')
+                    .map_or_else(String::new, |(_, v)| v.to_owned())
+            };
+            match kind {
+                Some(LongOption::Letter(letter)) if joined.is_none() => {
+                    first_cluster_at.get_or_insert(kept.len());
+                    letters.push(letter);
+                }
+                Some(LongOption::Clears(letter)) if joined.is_none() => {
+                    clear_letter(&mut letters, letter);
+                }
+                Some(LongOption::ValueLetter(letter)) => {
+                    let value = value();
+                    match letter {
+                        'e' => rsh = Some(value),
+                        _ => kept.push(OsString::from(format!("-{letter}{value}"))),
+                    }
+                }
+                _ if name == "chown" => {
+                    let value = value();
+                    kept.extend(id_maps.chown(&value, &mut letters, after_server)?);
+                }
+                _ if name == "usermap" || name == "groupmap" => {
+                    let side = if name == "usermap" {
+                        IdSide::User
+                    } else {
+                        IdSide::Group
+                    };
+                    id_maps.map(side, &mut letters, after_server)?;
+                    kept.push(token);
+                }
+                _ => kept.push(token),
+            }
             continue;
         }
         first_cluster_at.get_or_insert(kept.len());
@@ -274,6 +335,149 @@ fn rsync_filter_rule(count: usize) -> Option<String> {
         1 => Some("--filter=: /.rsync-filter".to_owned()),
         2 => Some("--filter=- .rsync-filter".to_owned()),
         _ => None,
+    }
+}
+
+/// The letters `-a` sets, each in its own variable.
+///
+/// upstream: options.c:1686-1702 `case 'a'`.
+const ARCHIVE_LETTERS: &str = "rlptgoD";
+
+/// Resets what every earlier `letter` set, as a `--no-` option does.
+///
+/// A `-a` is expanded first when it set `letter`: popt sets each of its
+/// variables separately, so `-a --no-p` keeps the rest of the archive set.
+fn clear_letter(letters: &mut String, letter: char) {
+    if ARCHIVE_LETTERS.contains(letter) && letters.contains('a') {
+        *letters = letters.replace('a', ARCHIVE_LETTERS);
+    }
+    letters.retain(|set| set != letter);
+}
+
+/// Which id map an option sets.
+#[derive(Clone, Copy)]
+enum IdSide {
+    User,
+    Group,
+}
+
+impl IdSide {
+    const fn option(self) -> &'static str {
+        match self {
+            Self::User => "--usermap",
+            Self::Group => "--groupmap",
+        }
+    }
+
+    /// Sets `preserve_uid` / `preserve_gid`, a switch, so a letter already
+    /// in the flag string is not repeated.
+    fn preserve(self, letters: &mut String) {
+        let letter = match self {
+            Self::User => 'o',
+            Self::Group => 'g',
+        };
+        if !letters.contains(letter) {
+            letters.push(letter);
+        }
+    }
+}
+
+/// upstream's `usermap` / `groupmap` and their `_via_chown` flags, as the
+/// pass has set them so far: `None` while unset, else whether `--chown` set
+/// it.
+#[derive(Default)]
+struct IdMaps {
+    user: Option<bool>,
+    group: Option<bool>,
+}
+
+impl IdMaps {
+    fn slot(&mut self, side: IdSide) -> &mut Option<bool> {
+        match side {
+            IdSide::User => &mut self.user,
+            IdSide::Group => &mut self.group,
+        }
+    }
+
+    /// upstream: options.c:1929-1959 `case OPT_USERMAP` / `OPT_GROUPMAP` - a
+    /// second map is refused, and the map sets `preserve_uid` / `_gid`.
+    fn map(
+        &mut self,
+        side: IdSide,
+        letters: &mut String,
+        after_server: bool,
+    ) -> Result<(), ArgvRefusal> {
+        let option = side.option();
+        let text = match *self.slot(side) {
+            Some(true) => Some(format!("{option} conflicts with prior --chown.")),
+            Some(false) => Some(format!("You can only specify {option} once.")),
+            None => None,
+        };
+        refuse(text, after_server)?;
+        *self.slot(side) = Some(false);
+        side.preserve(letters);
+        Ok(())
+    }
+
+    /// upstream: options.c:1961-2000 `case OPT_CHOWN` - the part before the
+    /// first `:` becomes `usermap = "*:USER"` when non-empty, the part after
+    /// it `groupmap = "*:GROUP"`; each refuses a map set before it and sets
+    /// `preserve_uid` / `_gid`. Returns the `--usermap` / `--groupmap` tokens
+    /// the long-option pass reads.
+    fn chown(
+        &mut self,
+        spec: &str,
+        letters: &mut String,
+        after_server: bool,
+    ) -> Result<Vec<OsString>, ArgvRefusal> {
+        let (user, group) = match spec.split_once(':') {
+            Some((user, group)) => (user, Some(group)),
+            None => (spec, None),
+        };
+        let mut maps = Vec::new();
+        if !user.is_empty() {
+            self.chown_side(IdSide::User, user, letters, after_server, &mut maps)?;
+        }
+        if let Some(group) = group.filter(|group| !group.is_empty()) {
+            self.chown_side(IdSide::Group, group, letters, after_server, &mut maps)?;
+        }
+        Ok(maps)
+    }
+
+    fn chown_side(
+        &mut self,
+        side: IdSide,
+        name: &str,
+        letters: &mut String,
+        after_server: bool,
+        maps: &mut Vec<OsString>,
+    ) -> Result<(), ArgvRefusal> {
+        let option = side.option();
+        let affecting = match side {
+            IdSide::User => "user",
+            IdSide::Group => "group",
+        };
+        let text = match *self.slot(side) {
+            Some(false) => Some(format!("--chown conflicts with prior {option}.")),
+            Some(true) => Some(format!(
+                "You can only specify a {affecting}-affecting --chown once."
+            )),
+            None => None,
+        };
+        refuse(text, after_server)?;
+        *self.slot(side) = Some(true);
+        side.preserve(letters);
+        maps.push(OsString::from(format!("{option}=*:{name}")));
+        Ok(())
+    }
+}
+
+/// rsync's own refusal of `text`, if any: no `on remote machine: ` prefix
+/// (options.c:907-918 `option_error()`).
+fn refuse(text: Option<String>, after_server: bool) -> Result<(), ArgvRefusal> {
+    match text {
+        Some(text) => Err(ArgvRefusal { text, after_server }),
+        None => Ok(()),
     }
 }
 
