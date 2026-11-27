@@ -90,10 +90,15 @@ mod tests {
     /// refused symlink would abort a transfer upstream completes.
     #[test]
     fn only_the_symlink_refusal_counts_as_a_refusal() {
-        let refusal = io::Error::from_raw_os_error(libc::ELOOP);
+        let refusal = io::Error::from_raw_os_error(fast_io::errno::ELOOP);
         assert!(is_refusal(&refusal), "ELOOP is the walk's security refusal");
 
-        for other in [libc::ENOENT, libc::EACCES, libc::ENOTDIR, libc::EIO] {
+        for other in [
+            fast_io::errno::ENOENT,
+            fast_io::errno::EACCES,
+            fast_io::errno::ENOTDIR,
+            fast_io::errno::EIO,
+        ] {
             let error = io::Error::from_raw_os_error(other);
             assert!(
                 !is_refusal(&error),
