@@ -28,8 +28,9 @@ fn build_full_daemon_args(
 }
 
 mod protect_args_daemon_tests {
-    use super::super::arguments::build_minimal_daemon_args;
+    use super::super::arguments::send_daemon_arguments;
     use super::*;
+    use crate::client::config::IconvSetting;
 
     fn test_daemon_request() -> DaemonTransferRequest {
         DaemonTransferRequest {
@@ -41,65 +42,105 @@ mod protect_args_daemon_tests {
         }
     }
 
-    // upstream: clientserver.c:443-450 - phase 1 wire emits sargs[0..NULL].
-    // Upstream's phase 1 NEVER contains a standalone `.` (which only enters
-    // sargs after server_options() returns, AFTER the NULL marker at
-    // options.c:2985-2986). Upstream's phase 1 also never contains a bare `-s`:
-    // the `s` is embedded in the compact flag string `argstr` at
-    // options.c:2795-2796. We mirror that shape by emitting only the role
-    // markers + `--secluded-args` (the long-form alias of `-s` per
-    // options.c:818) so the merged daemon arg list does not carry a stray
-    // `.` that would short-circuit `apply_long_form_args`' dot_position
-    // bound, nor a bare `-s` that would shadow phase 2's real compact flag
-    // string in the daemon's first-short-form-arg picker.
-    #[test]
-    fn build_minimal_args_receiver_excludes_dot_and_bare_short_flag() {
-        let config = ClientConfig::default();
-        let args = build_minimal_daemon_args(&config, false);
-        assert_eq!(args, vec!["--server", "--secluded-args"]);
-        assert!(
-            !args.iter().any(|a| a == "."),
-            "phase 1 must not emit a standalone `.` - upstream's wire never does",
-        );
-        assert!(
-            !args.iter().any(|a| a == "-s"),
-            "phase 1 must not emit a bare `-s` - the daemon's flag-string \
-             picker would shadow the real compact flag string from phase 2",
-        );
+    /// Sends the daemon argv for `config` and splits the wire into its two
+    /// phases: NUL-terminated args, each phase ended by an empty arg.
+    fn wire_phases(config: &ClientConfig, is_sender: bool) -> (Vec<String>, Vec<String>) {
+        let mut wire = Vec::new();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        send_daemon_arguments(
+            &mut wire,
+            config,
+            &test_daemon_request(),
+            protocol,
+            is_sender,
+        )
+        .expect("send daemon args");
+        let mut fields = wire
+            .split(|&byte| byte == 0)
+            .map(|field| String::from_utf8_lossy(field).into_owned());
+        let phase1 = fields.by_ref().take_while(|f| !f.is_empty()).collect();
+        let phase2 = fields.take_while(|f| !f.is_empty()).collect();
+        (phase1, phase2)
     }
 
-    #[test]
-    fn build_minimal_args_sender_excludes_dot_and_bare_short_flag() {
-        let config = ClientConfig::default();
-        let args = build_minimal_daemon_args(&config, true);
-        assert_eq!(args, vec!["--server", "--sender", "--secluded-args"]);
-        assert!(!args.iter().any(|a| a == "."));
-        assert!(!args.iter().any(|a| a == "-s"));
+    /// The compact flag string for `config` with `prefix` letters right after
+    /// the `-`; the option and capability letters (per platform) come from
+    /// the builders the argument list uses.
+    fn flag_string(config: &ClientConfig, is_sender: bool, prefix: &str) -> String {
+        let letters = crate::client::remote::flags::build_server_flag_string(config);
+        let suffix = transfer::setup::build_capability_string_suffix(
+            crate::client::remote::pull_inc_recurse::advertise_inc_recurse(config, !is_sender),
+        );
+        format!("-{prefix}{}{suffix}", &letters[1..])
     }
 
-    // upstream: options.c:2232-2237 - `need_unsorted_flist = 1` fires only
-    // while `protect_args != 2`, i.e. during phase 1's parse
-    // (`clientserver.c:1160-1163` forces `protect_args = 2` only after phase
-    // 1 returns). `--iconv` must therefore travel in phase 1, alongside
-    // `--secluded-args`, or a real upstream daemon combining `-s` with
-    // `--iconv` never enables `need_unsorted_flist`.
-    #[test]
-    fn build_minimal_args_includes_iconv_when_configured() {
-        let config = ClientConfig::builder()
-            .iconv(crate::client::config::IconvSetting::Explicit {
+    fn utf8_to_latin1(protect_args: bool) -> ClientConfig {
+        ClientConfig::builder()
+            .protect_args(Some(protect_args))
+            .iconv(IconvSetting::Explicit {
                 local: "UTF-8".to_owned(),
-                remote: Some("LATIN1".to_owned()),
+                remote: Some("ISO-8859-1".to_owned()),
             })
-            .build();
-        let args = build_minimal_daemon_args(&config, false);
-        assert_eq!(args, vec!["--server", "--secluded-args", "--iconv=LATIN1"]);
+            .build()
+    }
+
+    /// upstream: options.c:2850-2986 server_options() - under `-s` the args
+    /// before the `NULL` are `--server`, `--sender`, the flag string carrying
+    /// the `s` and `--iconv`; clientserver.c:443-450 sends exactly those in
+    /// phase 1. The daemon is sent the LOCAL charset because the client's
+    /// setup_iconv() truncates `iconv_opt` at the comma first
+    /// (clientserver.c:171-172, rsync.c:119-123).
+    #[test]
+    fn protected_pull_sends_flags_and_local_iconv_in_phase_one() {
+        let config = utf8_to_latin1(true);
+        let (phase1, _) = wire_phases(&config, true);
+        assert_eq!(
+            phase1,
+            [
+                "--server",
+                "--sender",
+                &flag_string(&config, true, "s"),
+                "--iconv=UTF-8"
+            ]
+        );
+    }
+
+    /// rsync.c:284-296 send_protected_args() sends `rsync` and only the args
+    /// after the `NULL`. A repeated `--server` makes an rsync 3.5.2 daemon
+    /// clear `iconv_opt` (options.c:1535-1547) and close the module `charset`
+    /// converters (clientserver.c:1279-1289), so the list goes unconverted.
+    #[test]
+    fn protected_pull_repeats_nothing_from_phase_one_in_phase_two() {
+        let (_, phase2) = wire_phases(&utf8_to_latin1(true), true);
+        assert_eq!(phase2, ["rsync", ".", "test/"]);
     }
 
     #[test]
-    fn build_minimal_args_omits_iconv_when_unconfigured() {
-        let config = ClientConfig::default();
-        let args = build_minimal_daemon_args(&config, false);
-        assert!(!args.iter().any(|a| a.starts_with("--iconv")));
+    fn protected_push_phase_one_has_no_sender_or_iconv_when_unconfigured() {
+        let config = ClientConfig::builder().protect_args(Some(true)).build();
+        let (phase1, phase2) = wire_phases(&config, false);
+        assert_eq!(phase1, ["--server", &flag_string(&config, false, "s")]);
+        assert_eq!(phase2, ["rsync", ".", "test/"]);
+    }
+
+    /// options.c:2975-2983 - without `-s`, `--iconv` still directly follows
+    /// the flag string and names the local charset.
+    #[test]
+    fn unprotected_pull_sends_local_iconv_after_the_flag_string() {
+        let config = utf8_to_latin1(false);
+        let (phase1, phase2) = wire_phases(&config, true);
+        assert_eq!(
+            phase1,
+            [
+                "--server",
+                "--sender",
+                &flag_string(&config, true, ""),
+                "--iconv=UTF-8",
+                ".",
+                "test/"
+            ]
+        );
+        assert!(phase2.is_empty());
     }
 
     #[test]
