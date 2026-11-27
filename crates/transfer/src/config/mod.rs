@@ -296,6 +296,10 @@ pub struct ConnectionConfig {
     pub cvs_session: filters::CvsSession,
     /// Optional filename encoding converter for `--iconv` support.
     pub iconv: Option<FilenameConverter>,
+    /// Whether the session runs under `--protect-args` / `--secluded-args`
+    /// (upstream `protect_args`). A server learns it from the client's `-s`;
+    /// a client takes it from its own resolved option.
+    pub protect_args: bool,
     /// Optional compression level for zlib compression (0-9).
     pub compression_level: Option<CompressionLevel>,
     /// Explicit compression algorithm from `--compress-choice`.
@@ -442,6 +446,26 @@ impl ConnectionConfig {
         } else {
             None
         }
+    }
+
+    /// The converter that transcodes a `--files-from` list carried over the
+    /// connection, or `None` when the list travels verbatim.
+    ///
+    /// This is upstream's `filesfrom_convert`: it is set only under
+    /// `protect_args` with an open iconv handle. The side test upstream adds
+    /// (`filesfrom_host` on the sender, `!filesfrom_host` on the receiver)
+    /// always holds where this is consulted - a sender reading the list off
+    /// the wire, or a receiver forwarding a list it opened locally.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:820-827` - `if (protect_args && files_from)` gates
+    ///   `filesfrom_convert`
+    /// - `io.c:502` - `forward_filesfrom_data()` converts only under it
+    /// - `flist.c:2766` - `send_file_list()` adds `RL_CONVERT` only under it
+    #[must_use]
+    pub fn files_from_converter(&self) -> Option<&FilenameConverter> {
+        self.iconv.as_ref().filter(|_| self.protect_args)
     }
 }
 

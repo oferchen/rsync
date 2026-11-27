@@ -1393,7 +1393,11 @@ impl ReceiverContext {
         // kernel drains it while `recv_file_list` reads back from f_in.
         let from0 = self.config.file_selection.from0;
         let mut staged = Vec::with_capacity(4096);
-        protocol::forward_files_from(&mut reader, &mut staged, from0, None)?;
+        // upstream: compat.c:825 - `filesfrom_convert = !filesfrom_host &&
+        // ic_recv != -1` under protect_args, so io.c:502 converts each name
+        // with ic_send before it is forwarded.
+        let iconv = self.config.connection.files_from_converter();
+        protocol::forward_files_from(&mut reader, &mut staged, from0, iconv)?;
 
         // upstream: io.c:1405-1407 start_filesfrom_forwarding - below protocol 31 the
         // names are forwarded un-multiplexed (MPLX_TO_BUFFERED), so on a
@@ -1659,6 +1663,11 @@ mod files_from_forwarding_framing_tests {
     /// `path`, then forwards it through a freshly multiplexed [`ServerWriter`],
     /// returning the captured wire bytes.
     fn forward(proto: u8, path: &str) -> Vec<u8> {
+        forward_with(proto, path, |_| {})
+    }
+
+    /// [`forward`] with `configure` applied to the receiver's config first.
+    fn forward_with(proto: u8, path: &str, configure: impl FnOnce(&mut ServerConfig)) -> Vec<u8> {
         let mut config = ServerConfig {
             role: ServerRole::Receiver,
             protocol: ProtocolVersion::try_from(proto).unwrap(),
@@ -1668,6 +1677,7 @@ mod files_from_forwarding_framing_tests {
         // Server-side receiver with a real local files-from path (not "-").
         config.connection.client_mode = false;
         config.file_selection.files_from_path = Some(path.to_owned());
+        configure(&mut config);
 
         let hs = handshake(proto);
         let ctx = ReceiverContext::new_for_test(&hs, config);
@@ -1741,6 +1751,37 @@ mod files_from_forwarding_framing_tests {
         assert_eq!(len as usize, expected.len(), "framed length mismatch");
         assert_eq!(bytes[3], MSG_DATA_TAG, "high byte must be the MSG_DATA tag");
         assert_eq!(&bytes[4..], expected.as_slice(), "framed payload mismatch");
+    }
+
+    /// Forwards an ISO-8859-1 list naming `café` at protocol 29 (raw wire)
+    /// from a receiver whose local charset is ISO-8859-1.
+    #[cfg(feature = "iconv")]
+    fn forward_latin1_list(protect_args: bool) -> Vec<u8> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("list");
+        std::fs::write(&path, b"caf\xE9\n").expect("write list");
+        forward_with(29, &path.to_string_lossy(), |config| {
+            config.connection.iconv = Some(
+                protocol::iconv::FilenameConverter::new("ISO-8859-1", "UTF-8").expect("converter"),
+            );
+            config.connection.protect_args = protect_args;
+        })
+    }
+
+    /// upstream: compat.c:820-827 - without protect_args `filesfrom_convert`
+    /// stays clear, so the names leave exactly as the list holds them.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn forwards_names_unconverted_without_protect_args() {
+        assert_eq!(forward_latin1_list(false), b"caf\xE9\0\0");
+    }
+
+    /// upstream: io.c:502 - under protect_args each name is converted with
+    /// ic_send before it is forwarded.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn forwards_names_converted_under_protect_args() {
+        assert_eq!(forward_latin1_list(true), b"caf\xC3\xA9\0\0");
     }
 }
 

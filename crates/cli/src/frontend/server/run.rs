@@ -858,6 +858,9 @@ where
             }
         }
     }
+    // upstream: main.c:1960-1962 - a server that saw `-s` reads its args off
+    // stdin with protect_args set, which compat.c:820 then consults.
+    config.connection.protect_args = secluded_args;
 
     // upstream: options.c:3059-3064 - `--compress-choice`, `--new-compress`, and
     // `--old-compress` carry the explicit codec when the negotiated algorithm is

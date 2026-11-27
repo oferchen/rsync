@@ -392,8 +392,9 @@ impl GeneratorContext {
             // list as NUL-separated entries with a double-NUL terminator.
             // upstream: main.c:694 - filesfrom_fd = STDIN_FILENO
             // upstream: io.c:read_line(RL_CONVERT) - wire bytes are UTF-8 and
-            // must be transcoded to the local charset via ic_recv when
-            // protect_args && --iconv are both in effect (compat.c:811-818).
+            // are transcoded to the local charset via ic_recv only when
+            // protect_args && --iconv are both in effect (compat.c:820-827);
+            // otherwise the names are looked up as sent.
             // UTS-V3.D defensive timeout: cap the receiver-side wait at
             // FILES_FROM_RECV_DEFAULT_DEADLINE (30 s) so a client-side
             // resolver regression surfaces as ETIMEDOUT instead of the 300 s
@@ -401,7 +402,7 @@ impl GeneratorContext {
             // docs/design/uts-v3-d-files-from-hang-audit.md.
             protocol::read_files_from_stream_with_deadline(
                 reader,
-                self.config.connection.iconv.as_ref(),
+                self.config.connection.files_from_converter(),
                 protocol::FILES_FROM_RECV_DEFAULT_DEADLINE,
             )?
         } else {

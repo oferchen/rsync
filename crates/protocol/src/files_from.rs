@@ -123,13 +123,10 @@ fn write_filesfrom_entry<W: Write>(
     entry: &[u8],
     iconv: Option<&FilenameConverter>,
 ) -> io::Result<()> {
+    // upstream: io.c:505 - ICB_INCLUDE_BAD converts what it can and copies
+    // each unconvertible byte through verbatim (rsync.c:262).
     let bytes: Cow<'_, [u8]> = match iconv {
-        Some(converter) => match converter.local_to_remote(entry) {
-            Ok(cow) => cow,
-            // upstream io.c uses ICB_INCLUDE_BAD: bad bytes are passed through
-            // verbatim rather than aborting the forward.
-            Err(_) => Cow::Borrowed(entry),
-        },
+        Some(converter) => converter.local_to_remote_lossy(entry).output,
         None => Cow::Borrowed(entry),
     };
     writer.write_all(&bytes)?;
@@ -256,12 +253,11 @@ fn read_files_from_stream_inner<R: Read>(
 /// dropped. Empty entries are skipped, matching the double-NUL / collapsed-run
 /// handling upstream applies to filenames.
 fn push_decoded_filename(out: &mut Vec<Vec<u8>>, raw: &[u8], iconv: Option<&FilenameConverter>) {
+    // upstream: io.c:1462 - read_line(RL_CONVERT) uses ICB_INCLUDE_BAD, which
+    // converts what it can and copies each unconvertible byte through
+    // verbatim (rsync.c:262).
     let bytes: Cow<'_, [u8]> = match iconv {
-        Some(converter) => match converter.remote_to_local(raw) {
-            Ok(cow) => cow,
-            // upstream: ICB_INCLUDE_BAD - keep the bad bytes rather than abort.
-            Err(_) => Cow::Borrowed(raw),
-        },
+        Some(converter) => converter.remote_to_local_lossy(raw).output,
         None => Cow::Borrowed(raw),
     };
     if !bytes.is_empty() {
@@ -549,5 +545,35 @@ mod tests {
             files,
             vec!["café".as_bytes().to_vec(), "naïve".as_bytes().to_vec()]
         );
+    }
+
+    /// A name holding one invalid byte must still have its valid characters
+    /// converted, with only the bad byte copied through. Upstream's
+    /// ICB_INCLUDE_BAD works byte by byte (rsync.c:262); keeping the whole
+    /// name raw would make a sender look up the wire spelling of `é` and miss
+    /// a file 3.5.2 finds.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn read_converts_around_an_invalid_byte() {
+        let converter = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("converter");
+        let wire: &[u8] = b"caf\xC3\xA9\xFF\0\0";
+
+        let files = read_files_from_stream(&mut Cursor::new(wire), Some(&converter)).unwrap();
+
+        assert_eq!(files, vec![b"caf\xE9\xFF".to_vec()]);
+    }
+
+    /// The forwarding side mirrors io.c:505: convert what converts, copy the
+    /// invalid byte, never substitute U+FFFD and never keep the whole name raw.
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn forward_converts_around_an_invalid_byte() {
+        let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("converter");
+        let input: &[u8] = b"caf\xC3\xA9\xFF\n";
+        let mut wire = Vec::new();
+
+        forward_files_from(&mut Cursor::new(input), &mut wire, false, Some(&converter)).unwrap();
+
+        assert_eq!(wire, b"caf\xE9\xFF\0\0");
     }
 }
