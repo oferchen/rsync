@@ -318,6 +318,20 @@ fn long_option_rewrite_is_idempotent() {
         ".",
         "d/",
     ]);
+    assert_eq!(
+        once,
+        [
+            "rsync",
+            "--server",
+            "-rltgoDvp",
+            "-B1024",
+            "--usermap=*:u",
+            "--groupmap=*:g",
+            "--log-file-format=%o",
+            ".",
+            "d/"
+        ]
+    );
     let once: Vec<OsString> = once.into_iter().map(OsString::from).collect();
     assert_eq!(normalize_server_argv(&once).unwrap(), once);
 }
@@ -366,7 +380,15 @@ fn id_map_conflicts_follow_upstream() {
     );
     // A user part and a group part of separate --chown options do not meet.
     assert_eq!(
-        normalized(&["rsync", "--server", "-r", "--chown=u", "--chown=:g", ".", "d/"]),
+        normalized(&[
+            "rsync",
+            "--server",
+            "-r",
+            "--chown=u",
+            "--chown=:g",
+            ".",
+            "d/"
+        ]),
         [
             "rsync",
             "--server",
@@ -500,9 +522,9 @@ fn derive_rows(entries: &[Entry]) -> Vec<(String, LongOption)> {
             let is_val = entry.arg_info == "POPT_ARG_VAL";
             let kind = match (special, entry.short) {
                 (Some(&(_, kind)), _) => kind,
-                _ if matches!(entry.arg_info.as_str(), "POPT_ARG_STRING" | "POPT_ARG_INT") => {
-                    entry.short.map_or(LongOption::Value, LongOption::ValueLetter)
-                }
+                _ if matches!(entry.arg_info.as_str(), "POPT_ARG_STRING" | "POPT_ARG_INT") => entry
+                    .short
+                    .map_or(LongOption::Value, LongOption::ValueLetter),
                 (None, Some(letter)) => LongOption::Letter(letter),
                 _ if is_val && entry.val == "0" => match (case_letter, letter_of(&entry.var)) {
                     (Some(&(_, letter)), _) | (None, Some((letter, _))) => {
@@ -554,6 +576,9 @@ fn table_is_derived_from_upstream_options_c() {
             .iter()
             .map(|(name, kind)| format!("    (\"{name}\", LongOption::{kind:?}),\n"))
             .collect();
-        panic!("LONG_OPTIONS differs from {}; derived rows:\n{rows}", path.display());
+        panic!(
+            "LONG_OPTIONS differs from {}; derived rows:\n{rows}",
+            path.display()
+        );
     }
 }

@@ -203,7 +203,10 @@ fn refusals_keep_3_5_2_wording() {
         popt("--delete=x: option does not take an argument")
     );
     assert_eq!(refusal("--bogus"), popt("--bogus: unknown option"));
-    assert_eq!(refusal("--write-batch=b"), popt("--write-batch=b: unknown option"));
+    assert_eq!(
+        refusal("--write-batch=b"),
+        popt("--write-batch=b: unknown option")
+    );
     assert_eq!(
         refusal("--stderr=bogus"),
         own("--stderr mode \"bogus\" is not one of errors, all, or client")
@@ -245,7 +248,10 @@ fn forwarded_long_options_set_the_server_fields() {
     assert_eq!(flags(&["--no-devices"]).devices, Some(false));
     assert_eq!(flags(&["--munge-links"]).munge_symlinks, Some(true));
     assert_eq!(flags(&["--no-munge-links"]).munge_symlinks, Some(false));
-    assert_eq!(flags(&["--fake-super", "--no-super"]).fake_super, Some(false));
+    assert_eq!(
+        flags(&["--fake-super", "--no-super"]).fake_super,
+        Some(false)
+    );
     assert_eq!(flags(&["--fake-super", "--super"]).fake_super, Some(false));
     assert_eq!(flags(&["--iconv=utf8", "--no-iconv"]).iconv, None);
     assert_eq!(flags(&["--bwlimit=10", "--no-bwlimit"]).bwlimit, None);
@@ -259,7 +265,10 @@ fn forwarded_long_options_set_the_server_fields() {
         flags(&["--compress-threads=3"]).compress_threads.as_deref(),
         Some("3")
     );
-    assert_eq!(flags(&["--out-format=%n"]).log_format.as_deref(), Some("%n"));
+    assert_eq!(
+        flags(&["--out-format=%n"]).log_format.as_deref(),
+        Some("%n")
+    );
     assert_eq!(flags(&["--time-limit=5"]).stop_after.as_deref(), Some("5"));
     assert_eq!(flags(&["--cc=md5"]).checksum_choice.as_deref(), Some("md5"));
     assert_eq!(flags(&["--zl=3"]).compression_level.as_deref(), Some("3"));
@@ -267,18 +276,13 @@ fn forwarded_long_options_set_the_server_fields() {
         flags(&["--stderr=all"]).msgs2stderr,
         Some(core::server::writer::MessageRoute::AllToStderr)
     );
-    assert_eq!(
-        flags(&["--chown=u:g"]).usermap.as_deref(),
-        Some("*:u")
-    );
+    assert_eq!(flags(&["--chown=u:g"]).usermap.as_deref(), Some("*:u"));
 }
 
 /// A long switch lands in the compact flag string the transfer reads.
 #[test]
 fn long_switches_reach_the_flag_string() {
-    let (flag_string, _) = parse_server_flag_string_and_args(&server_argv(&[
-        "--no-p",
-        "--hard-links",
-    ]));
+    let (flag_string, _) =
+        parse_server_flag_string_and_args(&server_argv(&["--no-p", "--hard-links"]));
     assert_eq!(flag_string, "-logDtrHe.iLsfxCIvu");
 }

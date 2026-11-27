@@ -197,7 +197,9 @@ pub fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, ArgvRef
             }
             let value = || {
                 let token = token.to_string_lossy();
-                token.split_once('=').map_or_else(String::new, |(_, v)| v.to_owned())
+                token
+                    .split_once('=')
+                    .map_or_else(String::new, |(_, v)| v.to_owned())
             };
             match kind {
                 Some(LongOption::Letter(letter)) if joined.is_none() => {
