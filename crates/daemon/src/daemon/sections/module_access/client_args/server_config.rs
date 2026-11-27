@@ -86,9 +86,7 @@ fn apply_forwarded_output_words(client_args: &[String], max_verbosity: i32) -> b
     // likewise fixed before the clamp.
     let deletions_requested = logging::info_gte(logging::InfoFlag::Del, 1)
         || logging::info_gte(logging::InfoFlag::Name, 1);
-    if let Ok(level) = u8::try_from(max_verbosity) {
-        logging::limit_output_verbosity(level);
-    }
+    logging::limit_output_verbosity(max_verbosity);
     deletions_requested
 }
 /// Applies module directives that force transfer-time behavior onto the

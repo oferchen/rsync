@@ -135,7 +135,9 @@ fn find_status_in_columns(columns: &[&str]) -> Option<String> {
     let known_statuses = [
         "Fixed",
         "Mostly fixed",
+        "Partially fixed",
         "Mitigated",
+        "Unverified",
         "Not vulnerable",
         "Not applicable",
     ];
@@ -265,6 +267,66 @@ mod tests {
         assert!(message.contains("CVE-2026-29518"));
         assert!(message.contains("Fixed"));
         assert!(message.contains("Mitigated"));
+    }
+
+    /// SECURITY.md defines `Partially fixed` and `Unverified` as statuses.
+    /// A body row carrying one was not recognised and so never compared,
+    /// letting a release claim a status SECURITY.md does not back.
+    #[test]
+    fn validate_partially_fixed_and_unverified_mismatch_fails() {
+        let dir = test_support::create_tempdir();
+        let security = r#"
+| CVE | Severity | Upstream issue | Status | Evidence |
+|-----|----------|----------------|--------|----------|
+| CVE-2026-53796 | MEDIUM | chdir not confined | Partially fixed | one path open |
+| CVE-2026-70461 | HIGH | heap write | Unverified | not established |
+"#;
+        fs::write(dir.path().join("SECURITY.md"), security).unwrap();
+        let body = r#"
+| CVE | Description | Status | Cite |
+|-----|-------------|--------|------|
+| CVE-2026-53796 | chdir not confined | Unverified | SEC-1 |
+| CVE-2026-70461 | heap write | Partially fixed | SEC-2 |
+"#;
+        let body_path = dir.path().join("body.md");
+        fs::write(&body_path, body).unwrap();
+        let options = ValidateOptions {
+            body: Some(body_path),
+        };
+        let message = execute(dir.path(), options).unwrap_err().to_string();
+        assert!(message.contains(
+            "CVE-2026-53796: release body says 'Unverified' but SECURITY.md says 'Partially fixed'"
+        ));
+        assert!(message.contains(
+            "CVE-2026-70461: release body says 'Partially fixed' but SECURITY.md says 'Unverified'"
+        ));
+    }
+
+    /// A SECURITY.md row in either status is found, so a body claiming
+    /// `Fixed` is reported as a status mismatch rather than a missing CVE.
+    #[test]
+    fn validate_fixed_body_against_partially_fixed_row_reports_the_status() {
+        let dir = test_support::create_tempdir();
+        let security = r#"
+| CVE | Severity | Upstream issue | Status | Evidence |
+|-----|----------|----------------|--------|----------|
+| CVE-2026-53796 | MEDIUM | chdir not confined | Partially fixed | one path open |
+"#;
+        fs::write(dir.path().join("SECURITY.md"), security).unwrap();
+        let body = r#"
+| CVE | Description | Status | Cite |
+|-----|-------------|--------|------|
+| CVE-2026-53796 | chdir not confined | Fixed | SEC-1 |
+"#;
+        let body_path = dir.path().join("body.md");
+        fs::write(&body_path, body).unwrap();
+        let options = ValidateOptions {
+            body: Some(body_path),
+        };
+        let message = execute(dir.path(), options).unwrap_err().to_string();
+        assert!(message.contains(
+            "CVE-2026-53796: release body says 'Fixed' but SECURITY.md says 'Partially fixed'"
+        ));
     }
 
     #[test]
