@@ -47,6 +47,8 @@ const CASES: &[(&[&str], &[&str])] = &[
     (&["-rl", "--specials"], &[]),
     (&["-r", "--info=nonreg0"], &[]),
     (&["-r", "-q"], &[]),
+    // upstream: generator.c:1675-1681 - a listing returns before the skip.
+    (&["-r", "--list-only"], &[]),
 ];
 
 fn oc_binary() -> PathBuf {

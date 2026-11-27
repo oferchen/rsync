@@ -466,8 +466,15 @@ impl ReceiverContext {
 
     /// Whether any file-list entry can reach the non-regular skip, so a
     /// transfer that preserves every non-regular type skips the pass.
+    ///
+    /// upstream: generator.c:1675-1681 - under `list_only` recv_generator()
+    /// lists the entry and returns before every skip branch, so a listing
+    /// never prints the line. Dry-run carries on to it.
     fn may_skip_non_regular(&self) -> bool {
         let flags = &self.config.flags;
+        if flags.list_only {
+            return false;
+        }
         !flags.links
             || flags.drop_devices
             || !flags.devices
