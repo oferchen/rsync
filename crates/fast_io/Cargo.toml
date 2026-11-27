@@ -203,6 +203,14 @@ iouring-data-writes = ["io_uring"]
 mmap-free-basis = []
 block2 = ["dep:block2"]
 
+# Test-only: compiles `fast_io::test_seams`, which lets a test make the owner
+# walk judge a planted symlink as another uid's without root. Enable it ONLY
+# from a [dev-dependencies] table; tools/ci/test_seam_gate.py fails CI if a
+# production dependency table or another [features] entry enables it, or if
+# non-test code names the module. Inert even when compiled in: nothing but a
+# direct Rust call arms it.
+test-seams = []
+
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support;
 # Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);

@@ -197,6 +197,11 @@ pub mod source_prefetch;
 pub mod source_roots;
 /// Cross-platform temporary file strategy abstraction.
 pub mod temp_file_strategy;
+/// Test-only: make the owner walk judge a named symlink as another uid's.
+/// Exists only under `cfg(test)` or the `test-seams` feature, which crates
+/// enable from `[dev-dependencies]` alone (`tools/ci/test_seam_gate.py`).
+#[cfg(all(unix, any(test, feature = "test-seams")))]
+pub mod test_seams;
 /// Core traits for file I/O abstraction.
 pub mod traits;
 /// Non-blocking transfer transports with a readiness wait (upstream perform_io's poll).

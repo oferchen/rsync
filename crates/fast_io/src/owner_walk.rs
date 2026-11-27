@@ -116,27 +116,14 @@ pub fn symlink_owner_is_trusted(uid: u32) -> bool {
     uid == 0 || uid == trusted_uid()
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Test-only: a symlink component with this name is judged as owned by
-    /// this uid, so a cell can plant a "foreign-owned" link without root.
-    static SYMLINK_OWNER_OVERRIDE: std::cell::RefCell<Option<(std::ffi::OsString, u32)>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// The owner the walk judges a symlink component by: its real owner, or in
-/// tests the injected one for a matching component name.
+/// The owner the walk judges a symlink component by: its real owner, or in a
+/// test build the one armed through [`crate::test_seams`] for that name.
 fn judged_symlink_owner(name: &std::ffi::OsStr, uid: u32) -> u32 {
-    #[cfg(test)]
-    if let Some(owner) = SYMLINK_OWNER_OVERRIDE.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .filter(|(planted, _)| planted.as_os_str() == name)
-            .map(|(_, owner)| *owner)
-    }) {
+    #[cfg(any(test, feature = "test-seams"))]
+    if let Some(owner) = crate::test_seams::judged_owner(name) {
         return owner;
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-seams")))]
     let _ = name;
     uid
 }
@@ -2054,7 +2041,7 @@ pub fn operator_basis_entry(path: &Path) -> io::Result<OperatorBasisEntry> {
 mod tests {
     use super::AbsPathTracker;
     use super::{
-        SYMLINK_OWNER_OVERRIDE, operator_open_append, operator_open_basis_read, operator_open_read,
+        operator_open_append, operator_open_basis_read, operator_open_read,
         operator_read_to_string, symlink_owner_is_trusted, trusted_uid,
     };
     use crate::confinement::PathKind;
@@ -2769,9 +2756,10 @@ mod tests {
         let foreign = (1..=8u32)
             .find(|candidate| *candidate != trusted_uid())
             .expect("at least one of uids 1..=8 differs from the euid");
-        SYMLINK_OWNER_OVERRIDE.with(|cell| cell.replace(Some(("alt".into(), foreign))));
-        let refused = operator_open_basis_read(&through_link);
-        SYMLINK_OWNER_OVERRIDE.with(|cell| cell.replace(None));
+        let refused = {
+            let _owner = crate::test_seams::judge_symlink_owner("alt", foreign);
+            operator_open_basis_read(&through_link)
+        };
 
         let error = refused.expect_err("a foreign-owned parent symlink must be refused");
         assert_eq!(error.raw_os_error(), Some(libc::ELOOP));

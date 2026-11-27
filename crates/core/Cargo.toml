@@ -132,6 +132,7 @@ daemon-seccomp = []
 tracing = ["dep:tracing"]
 
 [dev-dependencies]
+fast_io = { path = "../fast_io", default-features = false, features = ["test-seams"] }
 toml = { workspace = true }
 filetime = { workspace = true }
 notify = { workspace = true }
