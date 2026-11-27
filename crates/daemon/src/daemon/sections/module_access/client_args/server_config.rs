@@ -555,7 +555,10 @@ fn build_server_config(
             // upstream: clientserver.c:1165-1167 - `-s` in the first arg pass
             // sets protect_args, which compat.c:820 consults. Only option args
             // count: everything after the `.` marker is a path.
-            let option_args = client_args.split(|arg| arg == ".").next().unwrap_or_default();
+            let option_args = client_args
+                .split(|arg| arg == ".")
+                .next()
+                .unwrap_or_default();
             cfg.connection.protect_args = has_secluded_args_flag(option_args);
 
             // upstream: `use_secure_symlinks = am_daemon && (!am_chrooted ||

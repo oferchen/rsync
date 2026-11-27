@@ -13,7 +13,11 @@
 //! (`OC_RSYNC_UPSTREAM_BIN_3_5_2`, required under
 //! `OC_RSYNC_UPSTREAM_COMPAT=1`), each cell also runs 3.5.2 at both ends and
 //! with one end each, and all results must be equal.
-#![cfg(unix)]
+//!
+//! The fixture stores an ISO-8859-1 name on disk. APFS and HFS+ refuse a
+//! name that is not valid UTF-8 (`EILSEQ`), so the cells cannot be built on
+//! Apple filesystems and the file is compiled out there.
+#![cfg(all(unix, not(target_vendor = "apple")))]
 
 use std::fs;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
