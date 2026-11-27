@@ -502,7 +502,7 @@ fn batch_xattr_report(
     // upstream: generator.c:618 - an absent destination compares against an
     // empty list (xattr_diff(file, NULL, 1)).
     let dest = ::metadata::read_xattrs_for_wire(destination, &dest_opts).unwrap_or_default();
-    let report = protocol::xattr::xattr_diff(&list, &dest, 0).then(|| {
+    protocol::xattr::xattr_diff(&list, &dest, 0).then(|| {
         let mut request = list.clone();
         let mut todo = Vec::new();
         for (index, value) in request.entries_mut().iter_mut().enumerate() {
