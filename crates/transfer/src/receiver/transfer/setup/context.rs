@@ -18,7 +18,7 @@ use protocol::filters::{FilterRuleWireFormat, read_filter_list};
 use filters::FilterChain;
 
 use crate::flist_banner::{FlistBanner, FlistSide, with_client_stream};
-use crate::receiver::dest_root::{DestRoot, ensure_dest_root};
+use crate::receiver::dest_root::{DestRoot, EnteredRoot, Entry, ensure_dest_root};
 use crate::receiver::{
     PHASE1_CHECKSUM_LENGTH, PipelineSetup, ReceiverContext, dest_arg_has_trailing_slash,
 };
@@ -27,7 +27,7 @@ use crate::transfer_state::TransferPhase;
 
 #[cfg(unix)]
 use super::sandbox::{
-    open_operator_destination, open_sandbox_for_dest, open_sandbox_for_dest_anchored,
+    confinement_opted_out, open_sandbox_for_dest, open_sandbox_for_dest_anchored,
     pin_operator_destination,
 };
 use super::wire_filters::parse_wire_filters_for_receiver;
@@ -785,8 +785,13 @@ impl ReceiverContext {
         // /new/` leaves `/new/` absent. `do_server_recv()` calls
         // `get_local_name()` unconditionally (main.c:1248-1249), so the gate
         // is client-side only.
-        let dest_root = if self.is_empty_client_flist(file_count) {
-            DestRoot::Present
+        //
+        // upstream: util1.c:1363-1392 change_dir() - each change_dir#N there
+        // enters through the ownership walk, so a foreign-owned symlink is
+        // refused at the step that names it. The walked descriptor is pinned
+        // below. The daemon server keeps its anchored arm instead.
+        let entered = if self.is_empty_client_flist(file_count) {
+            EnteredRoot::unentered(DestRoot::Present)
         } else {
             ensure_dest_root(
                 &dest_dir,
@@ -794,9 +799,11 @@ impl ReceiverContext {
                 trailing_slash,
                 self.config.flags.skip_dest_writes(),
                 self.config.flags.mkpath,
+                self.destination_entry(),
             )
             .map_err(|e| self.dest_root_refusal(e, &dest_dir, trailing_slash))?
         };
+        let dest_root = entered.root;
 
         // upstream: main.c:818-845 get_local_name() - single-file rename
         // semantics. When the transfer is exactly one non-directory entry,
@@ -851,80 +858,23 @@ impl ReceiverContext {
         // with a raw `println!`. See that method for the upstream citation and
         // the `INFO_GTE(NAME, 1) || stdout_format_has_i` gate.
 
-        // UTS-SLDB: when the dest root is a symlink that resolved to a real
-        // directory via the stat path in ensure_dest_root_exists, lock the
-        // canonical target in here so every downstream open (DirSandbox,
-        // per-entry `*at` syscalls) operates on the resolved directory.
-        // Upstream `main.c:770` reaches the same state by calling
-        // `change_dir(dest_path, CD_NORMAL)` after `S_ISDIR` succeeds: the
-        // kernel resolves the link once and every subsequent syscall is
-        // relative to the resolved cwd. We mirror that by canonicalizing
-        // here instead of relying on chdir.
-        //
-        // Skipped only in the daemon SERVER process: there `dest_dir` is
-        // `<module root>/<peer tail>` and `open_sandbox_for_dest_anchored`
-        // gives each half its own resolve policy. Canonicalizing first would
-        // mask a symlinked tail and let the anchored walk succeed against the
-        // already-resolved target. Every other receiver - local, SSH, and the
-        // CLIENT half of an `rsync://` pull - is `am_daemon == 0` upstream and
-        // gets `change_dir()`'s ordinary resolution (see the
-        // `symlink-dirlink-basis` test).
-        //
-        // The probe runs on the operand with its trailing separators trimmed.
-        // `lstat("dest/")` resolves the link - the kernel reads a trailing
-        // separator as a directory reference - so probing the operand verbatim
-        // reports a directory for exactly the shape that needs resolving, and
-        // `oc-rsync -a rsync://h/m/ DEST/` then carried the link path into the
-        // metadata apply and failed it. Upstream never meets the distinction:
-        // `change_dir()` chdir's through both spellings alike.
-        // `Components::as_path` trims separators without collapsing `.` or
-        // `..`, so nothing else about the operand moves.
-        // upstream: util1.c change_dir() - a non-daemon receiver enters the
-        // destination through the ownership walk before it resolves anything
-        // else, so an untrusted symlink is refused here. The daemon server is
-        // the anchored arm below and is not walked.
-        #[cfg(unix)]
-        let anchor = match self.config.connection.served_module_root() {
-            Some(_) => None,
-            None => open_operator_destination(&dest_dir)?,
-        };
-        let probe = dest_dir.components().as_path().to_path_buf();
-        let dest_dir = if !self.config.flags.skip_dest_writes()
-            && self.config.connection.served_module_root().is_none()
-            && probe
-                .symlink_metadata()
-                .is_ok_and(|m| m.file_type().is_symlink())
-        {
-            match std::fs::canonicalize(&probe) {
-                Ok(resolved) => {
-                    debug_log!(
-                        Recv,
-                        2,
-                        "resolved symlinked destination root {} -> {}",
-                        dest_dir.display(),
-                        resolved.display()
-                    );
-                    resolved
-                }
-                Err(err) => {
-                    debug_log!(
-                        Recv,
-                        1,
-                        "canonicalize({}) failed: {err}; keeping link path",
-                        dest_dir.display()
-                    );
-                    dest_dir
-                }
-            }
-        } else {
-            dest_dir
-        };
         // The walked descriptor is pinned under the spelling every later open
-        // uses, so a destination swapped after the walk cannot redirect them.
+        // uses, oc's form of upstream's fchdir() into it (util1.c:1385-1392):
+        // a symlinked destination resolves once, in the walk, and a component
+        // swapped after it cannot redirect the transfer.
         #[cfg(unix)]
         if self.config.connection.served_module_root().is_none() {
-            pin_operator_destination(&dest_dir, anchor)?;
+            let step = entered.step;
+            pin_operator_destination(&dest_dir, entered.anchor).map_err(|cause| {
+                crate::receiver::DestRootSelectError::into_io(
+                    step,
+                    self.get_local_name_fname(&dest_dir, false),
+                    cause,
+                )
+            })?;
         }
+        #[cfg(not(unix))]
+        let _ = (entered.anchor, entered.step);
         // SEC-1.e: open the destination root as a sandboxed dirfd carrier.
         // The carrier rides through every per-entry operation so the
         // SEC-1.f-j cutover sites can replace path-based syscalls with
@@ -1170,6 +1120,20 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// How this receiver enters its destination.
+    ///
+    /// upstream: util1.c:1351-1392 change_dir() - a non-daemon receiver walks
+    /// unless `--insecure-links` restores the plain chdir. The daemon server's
+    /// destination is anchored by its own confined walk, so it is searched
+    /// here and not walked.
+    fn destination_entry(&self) -> Entry {
+        #[cfg(unix)]
+        if self.config.connection.served_module_root().is_none() && !confinement_opted_out() {
+            return Entry::Walked;
+        }
+        Entry::Searched
+    }
+
     /// Renders `path` for a get_local_name() line the way upstream's
     /// `full_fname()` does, with `slash` restoring the operand's trailing
     /// slash.
@@ -1226,6 +1190,13 @@ impl ReceiverContext {
             Ok(DestRootFailure::ChangeDir1(cause)) => DestRootSelectError::into_io(
                 SelectStep::ChangeDir1,
                 self.get_local_name_fname(dest_dir, trailing_slash),
+                cause,
+            ),
+            // upstream: main.c:809-810 lops the slash before the mkdir, so
+            // change_dir#2 (main.c:836-840) names the directory without it.
+            Ok(DestRootFailure::ChangeDir2(cause)) => DestRootSelectError::into_io(
+                SelectStep::ChangeDir2,
+                self.get_local_name_fname(dest_dir, false),
                 cause,
             ),
             // upstream: main.c:865-869 - change_dir#3 names the parent, whose

@@ -36,7 +36,7 @@ use std::sync::Arc;
 ///   module's `insecure links` for a daemon and `--insecure-links` otherwise;
 ///   `fast_io::confinement::session_optout_allowed` is oc's port of it.
 #[cfg(unix)]
-fn confinement_opted_out() -> bool {
+pub(super) fn confinement_opted_out() -> bool {
     fast_io::confinement::session_optout_allowed()
 }
 
@@ -99,36 +99,6 @@ pub(super) fn open_sandbox_for_dest(dest_dir: &Path) -> Option<Arc<fast_io::DirS
     }
 }
 
-/// Enter a non-daemon receiver's destination the way upstream's
-/// `change_dir()` does: through the ownership walk.
-///
-/// A component symlink owned by neither root nor the euid is refused - the
-/// walk prints upstream's actionable diagnostic - and the transfer fails with
-/// `RERR_FILESELECT`. The returned descriptor is handed to
-/// [`pin_operator_destination`] once the receiver knows the spelling it will
-/// name the root by.
-///
-/// A destination that does not exist is not an error: there is nothing to
-/// enter yet, and nothing to pin. `--insecure-links` restores upstream's plain
-/// `chdir()` and opens nothing.
-///
-/// # Upstream Reference
-///
-/// - `rsync-3.5.2/util1.c:1363-1393` and `:1450-1466` - the
-///   `!am_chrooted && !am_sender && !insecure_links` arms of `change_dir()`.
-/// - `rsync-3.5.2/main.c:778-781` - a failed `change_dir()` exits
-///   `RERR_FILESELECT`.
-#[cfg(unix)]
-pub(super) fn open_operator_destination(dest_dir: &Path) -> io::Result<Option<OwnedFd>> {
-    if confinement_opted_out() {
-        return Ok(None);
-    }
-    match fast_io::operator_open_destination(dest_dir) {
-        Ok(anchor) => Ok(Some(anchor)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(destination_access_error(dest_dir, &err)),
-    }
-}
 /// Pin `anchor` as the destination root `spelling` names, or clear any pin an
 /// earlier transfer in this process left when there is nothing to pin.
 ///
@@ -144,21 +114,6 @@ pub(super) fn pin_operator_destination(spelling: &Path, anchor: Option<OwnedFd>)
         return Ok(());
     };
     fast_io::confinement::pin_destination_root(spelling, anchor)
-        .map_err(|err| destination_access_error(spelling, &err))
-}
-/// The fatal error for a destination the receiver cannot enter.
-///
-/// `ErrorKind::PermissionDenied` is what `ExitCode::from_io_error` maps to
-/// `RERR_FILESELECT`; the text matches the local-copy arm's.
-#[cfg(unix)]
-fn destination_access_error(dest: &Path, err: &io::Error) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        format!(
-            "failed to access destination directory '{}': {err}",
-            dest.display()
-        ),
-    )
 }
 /// Open a daemon receiver's destination as an operator anchor plus a
 /// confined peer tail.

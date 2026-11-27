@@ -72,6 +72,9 @@ pub enum SelectStep {
     /// The destination directory exists but cannot be entered.
     /// upstream: main.c:776-781 - `change_dir#1 %s failed`.
     ChangeDir1,
+    /// The destination directory this run creates could not be entered.
+    /// upstream: main.c:836-840 - `change_dir#2 %s failed`.
+    ChangeDir2,
     /// A lone non-directory's destination parent could not be entered.
     /// upstream: main.c:865-869 - `change_dir#3 %s failed`.
     ChangeDir3,
@@ -135,6 +138,7 @@ impl fmt::Display for DestRootSelectError {
         match self.step {
             SelectStep::Stat => write!(f, "ERROR: cannot stat destination {}: {cause}", self.fname),
             SelectStep::ChangeDir1 => write!(f, "change_dir#1 {} failed: {cause}", self.fname),
+            SelectStep::ChangeDir2 => write!(f, "change_dir#2 {} failed: {cause}", self.fname),
             SelectStep::ChangeDir3 => write!(f, "change_dir#3 {} failed: {cause}", self.fname),
         }
     }
@@ -160,6 +164,9 @@ pub(in crate::receiver) enum DestRootFailure {
     Mkdir { cause: io::Error, slash_kept: bool },
     /// The existing destination directory could not be entered.
     ChangeDir1(io::Error),
+    /// The destination directory this run creates could not be entered, or
+    /// its parent was refused before the mkdir.
+    ChangeDir2(io::Error),
     /// The destination's parent could not be entered.
     ChangeDir3 { cause: io::Error, parent: PathBuf },
 }
@@ -170,6 +177,7 @@ impl DestRootFailure {
             Self::Stat(cause)
             | Self::Mkdir { cause, .. }
             | Self::ChangeDir1(cause)
+            | Self::ChangeDir2(cause)
             | Self::ChangeDir3 { cause, .. } => cause,
         }
     }
@@ -310,22 +318,113 @@ pub fn ensure_dest_root_exists(
     dry_run: bool,
     mkpath: bool,
 ) -> io::Result<bool> {
-    ensure_dest_root(dest_root, file_total, trailing_slash, dry_run, mkpath)
-        .map(|root| root == DestRoot::Created)
+    ensure_dest_root(
+        dest_root,
+        file_total,
+        trailing_slash,
+        dry_run,
+        mkpath,
+        Entry::Searched,
+    )
+    .map(|entered| entered.root == DestRoot::Created)
 }
 
-/// Checks that the receiver could enter the existing destination directory.
+/// How the receiver enters the destination, standing in for upstream's
+/// `change_dir()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::receiver) enum Entry {
+    /// Through the ownership walk, which refuses a symlink owned by neither
+    /// root nor the euid and yields the directory's descriptor.
+    ///
+    /// upstream: util1.c:1363-1392 change_dir() - the `!am_chrooted &&
+    /// !am_sender && !insecure_links` arm, `open_no_attacker_symlinks_dirfd()`
+    /// then `fchdir()`.
+    Walked,
+    /// A search-permission check on `<dir>/.`, which fails with the errno a
+    /// plain `chdir()` would. oc never chdirs, so nothing is entered.
+    ///
+    /// upstream: util1.c:1393-1402 change_dir() - the plain `chdir()` arm
+    /// (`--insecure-links`). A daemon module's destination is anchored by its
+    /// own confined walk instead.
+    Searched,
+}
+
+/// The walked descriptor of the directory the receiver entered.
+#[cfg(unix)]
+pub(in crate::receiver) type Anchor = std::os::fd::OwnedFd;
+
+/// No platform but Unix walks the destination, so there is never an anchor.
+#[cfg(not(unix))]
+pub(in crate::receiver) type Anchor = std::convert::Infallible;
+
+/// What [`ensure_dest_root`] found and entered.
+#[derive(Debug)]
+pub(in crate::receiver) struct EnteredRoot {
+    /// Whether the root was present, created, or left absent by a dry run.
+    pub(in crate::receiver) root: DestRoot,
+    /// The walked descriptor of the directory entered, when one was walked.
+    pub(in crate::receiver) anchor: Option<Anchor>,
+    /// The get_local_name() step that entered it, which names a later failure
+    /// to pin it.
+    pub(in crate::receiver) step: SelectStep,
+}
+
+impl EnteredRoot {
+    pub(in crate::receiver) const fn unentered(root: DestRoot) -> Self {
+        Self {
+            root,
+            anchor: None,
+            step: SelectStep::ChangeDir1,
+        }
+    }
+}
+
+/// Enters `dir` the way `entry` says.
 ///
-/// upstream: main.c:776-781 get_local_name() - `change_dir(dest_path)` into an
-/// existing directory, `RERR_FILESELECT` when it fails, even under
-/// `--dry-run`. oc never chdirs, so a stat of `<dest>/.` stands in for it:
-/// like `chdir` it needs search permission, not read permission.
-fn enter_dest_root(dest_root: &Path) -> io::Result<()> {
-    dest_root
-        .join(".")
-        .metadata()
-        .map(drop)
-        .map_err(|cause| DestRootFailure::ChangeDir1(cause).into_io())
+/// upstream: util1.c:1385-1389 - after the walk, `fchdir()` needs search
+/// permission, which the walk's `O_PATH` open does not; the stat of `<dir>/.`
+/// checks it.
+fn enter(dir: &Path, entry: Entry) -> io::Result<Option<Anchor>> {
+    #[cfg(unix)]
+    if entry == Entry::Walked {
+        let anchor = fast_io::operator_open_destination(dir)?;
+        searchable(dir)?;
+        return Ok(Some(anchor));
+    }
+    #[cfg(not(unix))]
+    let _ = entry;
+    searchable(dir).map(|()| None)
+}
+
+fn searchable(dir: &Path) -> io::Result<()> {
+    dir.join(".").metadata().map(drop)
+}
+
+/// Whether `error` is the ownership walk refusing a foreign-owned symlink.
+///
+/// The walk prints upstream's refusal line and fails with `ELOOP`; upstream
+/// reports the same refusal from the `change_dir()` that follows its mkdir.
+fn is_refusal(entry: Entry, error: &io::Error) -> bool {
+    entry == Entry::Walked && fast_io::is_symlink_refusal(error)
+}
+
+/// Creates the destination root, refusing a foreign-owned symlink among its
+/// leading directories before anything is created.
+///
+/// Deliberate deviation: upstream's `do_mkdir()` (main.c:817) follows such a
+/// symlink, creates the directory wherever it points, and only the
+/// `change_dir#2` that follows (main.c:836-840) refuses it. Here the parent is
+/// reached through the ownership walk first, so nothing is left behind; the
+/// refusal keeps upstream's `change_dir#2` line and exit code.
+fn create_root(path: &Path, entry: Entry) -> io::Result<()> {
+    const ACCESSPERMS: u32 = 0o777;
+    #[cfg(unix)]
+    if entry == Entry::Walked {
+        return fast_io::operator_mkdir(path, ACCESSPERMS);
+    }
+    #[cfg(not(unix))]
+    let _ = (entry, ACCESSPERMS);
+    std::fs::create_dir(path)
 }
 
 /// What [`ensure_dest_root`] found at the destination root.
@@ -349,7 +448,8 @@ pub(in crate::receiver) fn ensure_dest_root(
     trailing_slash: bool,
     dry_run: bool,
     mkpath: bool,
-) -> io::Result<DestRoot> {
+    entry: Entry,
+) -> io::Result<EnteredRoot> {
     let made_root = |created: bool| {
         if created {
             DestRoot::Created
@@ -363,13 +463,25 @@ pub(in crate::receiver) fn ensure_dest_root(
     let mut made = 0;
     if mkpath && stat.is_err() && (has_separator || file_total > 1) {
         let drop_name = file_total <= 1 || trailing_slash;
-        made = make_path(dest_root, drop_name && !trailing_slash, dry_run).map_err(|cause| {
-            DestRootFailure::Mkdir {
-                cause,
-                slash_kept: true,
-            }
-            .into_io()
-        })?;
+        made = make_path(dest_root, drop_name && !trailing_slash, dry_run, entry).map_err(
+            |cause| {
+                // upstream: main.c:757-781 - make_path() follows a foreign
+                // symlink and change_dir#1 then refuses the directory it made.
+                // An absolute chain is walked before anything is made, so the
+                // refusal comes first and keeps that line; a relative one is
+                // made beneath the cwd, whose ELOOP is make_path()'s own
+                // failure (syscall.c:2306-2332).
+                if is_refusal(entry, &cause) && dest_root.is_absolute() {
+                    DestRootFailure::ChangeDir1(cause).into_io()
+                } else {
+                    DestRootFailure::Mkdir {
+                        cause,
+                        slash_kept: true,
+                    }
+                    .into_io()
+                }
+            },
+        )?;
         if made > 0 {
             stat = dest_root.metadata();
         }
@@ -377,7 +489,15 @@ pub(in crate::receiver) fn ensure_dest_root(
     let created = made > 0 && !dry_run;
     match stat {
         Ok(meta) if meta.is_dir() => {
-            return enter_dest_root(dest_root).map(|()| made_root(created));
+            // upstream: main.c:776-781 - change_dir#1 into the existing
+            // directory, RERR_FILESELECT when it fails, even under --dry-run.
+            let anchor = enter(dest_root, entry)
+                .map_err(|cause| DestRootFailure::ChangeDir1(cause).into_io())?;
+            return Ok(EnteredRoot {
+                root: made_root(created),
+                anchor,
+                step: SelectStep::ChangeDir1,
+            });
         }
         Ok(_) if file_total > 1 || trailing_slash => {
             return Err(io::Error::new(
@@ -396,7 +516,7 @@ pub(in crate::receiver) fn ensure_dest_root(
     }
     if file_total > 1 || trailing_slash {
         if dry_run {
-            return Ok(DestRoot::DryRunAbsent);
+            return Ok(EnteredRoot::unentered(DestRoot::DryRunAbsent));
         }
         // Distinguish "path absent" from "dangling symlink": if lstat
         // shows a symlink while stat says NotFound, the link target is
@@ -417,35 +537,47 @@ pub(in crate::receiver) fn ensure_dest_root(
         }
         // upstream: main.c:817 - a single do_mkdir(); an ancestor that is
         // missing fails it with ENOENT unless --mkpath made it above.
-        return std::fs::create_dir(dest_root)
-            .map(|()| DestRoot::Created)
-            .map_err(|cause| {
+        create_root(dest_root, entry).map_err(|cause| {
+            if is_refusal(entry, &cause) {
+                DestRootFailure::ChangeDir2(cause).into_io()
+            } else {
                 DestRootFailure::Mkdir {
                     cause,
                     slash_kept: false,
                 }
                 .into_io()
-            });
+            }
+        })?;
+        // upstream: main.c:836-840 - change_dir#2 into the directory made.
+        let anchor = enter(dest_root, entry)
+            .map_err(|cause| DestRootFailure::ChangeDir2(cause).into_io())?;
+        return Ok(EnteredRoot {
+            root: DestRoot::Created,
+            anchor,
+            step: SelectStep::ChangeDir2,
+        });
     }
     let Some(parent) = parent_of(dest_root) else {
-        return Ok(made_root(created));
+        return Ok(EnteredRoot::unentered(made_root(created)));
     };
     // upstream: main.c:856-864 - a dry run under --mkpath does not enter the
     // parent it would have made.
     if dry_run && mkpath && parent.metadata().is_err() {
-        return Ok(DestRoot::DryRunAbsent);
+        return Ok(EnteredRoot::unentered(DestRoot::DryRunAbsent));
     }
-    // upstream: main.c:865 change_dir(dest_path, CD_NORMAL). Stat-ing
-    // `<parent>/.` needs what the chdir needs - a directory the process may
-    // search - and fails with the same errno, without moving the process.
-    parent.join(".").metadata().map_err(|cause| {
+    // upstream: main.c:865-869 - change_dir#3 into the lone file's parent.
+    let anchor = enter(parent, entry).map_err(|cause| {
         DestRootFailure::ChangeDir3 {
             cause,
             parent: parent.to_path_buf(),
         }
         .into_io()
     })?;
-    Ok(made_root(created))
+    Ok(EnteredRoot {
+        root: made_root(created),
+        anchor,
+        step: SelectStep::ChangeDir3,
+    })
 }
 
 /// The directory part of `path`, or `None` when it has none.
@@ -462,7 +594,14 @@ fn parent_of(path: &Path) -> Option<&Path> {
 /// upstream: util1.c:210-290 make_path() - find the deepest existing
 /// directory, then make each one below it. An ancestor that exists but is not
 /// a directory fails with that step's errno.
-fn make_path(path: &Path, drop_name: bool, dry_run: bool) -> io::Result<usize> {
+///
+/// A walked entry counts the missing directories first and then builds the
+/// chain through the ownership walk, so a foreign-owned symlink among the
+/// existing ancestors is refused before anything is made (the deviation of
+/// [`create_root`]). A relative chain takes upstream's own confined arm:
+/// each component is made beneath the cwd, following in-tree symlinks and
+/// failing with `ELOOP` on one that leaves (syscall.c:2306-2332 do_mkdir_at()).
+fn make_path(path: &Path, drop_name: bool, dry_run: bool, entry: Entry) -> io::Result<usize> {
     let target = if drop_name {
         // upstream: util1.c:223-227 - no separator, or only the leading one.
         match parent_of(path) {
@@ -472,6 +611,33 @@ fn make_path(path: &Path, drop_name: bool, dry_run: bool) -> io::Result<usize> {
     } else {
         path
     };
+    #[cfg(unix)]
+    if entry == Entry::Walked && !dry_run {
+        const ACCESSPERMS: u32 = 0o777;
+        let missing = count_missing(target)?;
+        if missing > 0 {
+            if target.is_absolute() {
+                fast_io::operator_create_dir_all(target, ACCESSPERMS)?;
+            } else {
+                fast_io::make_path_beneath_cwd(target, ACCESSPERMS)?;
+            }
+        }
+        return Ok(missing);
+    }
+    #[cfg(not(unix))]
+    let _ = entry;
+    count_or_make(target, dry_run)
+}
+
+/// How many directories of `target` are missing, without making any.
+#[cfg(unix)]
+fn count_missing(target: &Path) -> io::Result<usize> {
+    count_or_make(target, true)
+}
+
+/// make_path()'s own loop: find the deepest existing directory of `target`,
+/// then make each one below it, or only count them under `dry_run`.
+fn count_or_make(target: &Path, dry_run: bool) -> io::Result<usize> {
     let mut missing = Vec::new();
     let mut made = 0;
     let mut dir = target;

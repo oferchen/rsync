@@ -18,8 +18,9 @@
 //! The operand always carries a trailing slash (`dest/sub/`), which resolves a
 //! final symlink in the kernel, so the refusal cells also prove the walk sees
 //! the bare name. Planting a symlink owned by another uid needs root; the
-//! cells use `sudo -n` when not root and report a loud skip when neither is
-//! available.
+//! cells use `sudo -n` when not root and fail when neither is available, so a
+//! host without the privilege cannot report a refusal it never exercised.
+//! Every unix CI job runs on a hosted runner with passwordless sudo.
 //!
 //! upstream: `rsync-3.5.2/util1.c:1363-1393` and `:1450-1466` `change_dir()`,
 //! `rsync-3.5.2/syscall.c:560-565` (the diagnostic), `rsync-3.5.2/main.c:778-781`
@@ -95,18 +96,40 @@ fn command(
     client_args: &[&str],
     server_args: &[&str],
 ) -> Command {
-    let bin = binary();
-    let dest = if relative {
-        PathBuf::from("dest/sub/")
-    } else {
-        base.join("dest/sub/")
-    };
     let src = format!("{}/", base.join("src").display());
+    command_to(
+        receiver,
+        base,
+        &src,
+        "dest/sub/",
+        relative,
+        client_args,
+        server_args,
+    )
+}
+
+/// As [`command`], with the source operand `src` and the destination operand
+/// `dest` (relative to `base`) spelled out.
+fn command_to(
+    receiver: Receiver,
+    base: &Path,
+    src: &str,
+    dest: &str,
+    relative: bool,
+    client_args: &[&str],
+    server_args: &[&str],
+) -> Command {
+    let bin = binary();
+    let local_dest = if relative {
+        PathBuf::from(dest)
+    } else {
+        base.join(dest)
+    };
     let mut cmd = Command::new(&bin);
     cmd.current_dir(base).arg("-rt").args(client_args);
     match receiver {
         Receiver::Local => {
-            cmd.arg(src).arg(dest);
+            cmd.arg(src).arg(local_dest);
         }
         Receiver::Push | Receiver::Pull => {
             let mut rsync_path = bin.display().to_string();
@@ -119,9 +142,9 @@ fn command(
                 .arg(format!("--rsync-path={rsync_path}"));
             if matches!(receiver, Receiver::Push) {
                 cmd.arg(src)
-                    .arg(format!("localhost:{}", base.join("dest/sub/").display()));
+                    .arg(format!("localhost:{}", base.join(dest).display()));
             } else {
-                cmd.arg(format!("localhost:{src}")).arg(dest);
+                cmd.arg(format!("localhost:{src}")).arg(local_dest);
             }
         }
     }
@@ -287,17 +310,15 @@ fn plant(base: &Path, uid: Option<u32>) -> Option<()> {
     }
 }
 
-fn skip(case: &str) {
-    eprintln!(
-        "SKIPPED {case}: planting a symlink owned by another uid needs root or passwordless sudo"
-    );
+fn missing_privilege(case: &str) -> ! {
+    panic!("{case}: planting a symlink owned by another uid needs root or passwordless sudo");
 }
 
 fn assert_refused(receiver: Receiver, relative: bool) {
     let case = format!("{receiver:?} untrusted (relative={relative})");
     let (_temp, base) = fixture(&[("f0", 64), ("f1", 64)]);
     if plant(&base, Some(UNTRUSTED_UID)).is_none() {
-        return skip(&case);
+        missing_privilege(&case);
     }
     let output = run(&mut command(receiver, &base, relative, &[], &[]));
     assert_eq!(
@@ -306,17 +327,13 @@ fn assert_refused(receiver: Receiver, relative: bool) {
         "{case}: {}",
         describe(&output)
     );
-    // The walk prints its diagnostic in the receiving process. A `--server`
-    // receiver's diagnostics are not yet relayed to the client (upstream sends
-    // them as MSG_ERROR, log.c:357), so a push shows only the fatal error the
-    // server returns; the refusal itself is the same walk either way.
-    let expected = match receiver {
-        Receiver::Push => "failed to access destination directory",
-        Receiver::Local | Receiver::Pull => REFUSAL,
-    };
+    // upstream: util1.c:1363-1392 change_dir walks the destination with
+    // open_no_attacker_symlinks_dirfd, which prints the refusal in the
+    // receiving process; a `--server` receiver relays it as MSG_ERROR
+    // (log.c:437-446 rwrite), so every leg shows it.
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(expected),
-        "{case}: expected {expected:?}: {}",
+        String::from_utf8_lossy(&output.stderr).contains(REFUSAL),
+        "{case}: expected {REFUSAL:?}: {}",
         describe(&output)
     );
     assert!(
@@ -329,7 +346,7 @@ fn assert_followed(receiver: Receiver, uid: Option<u32>, client: &[&str], server
     let case = format!("{receiver:?} uid={uid:?} client={client:?} server={server:?}");
     let (_temp, base) = fixture(&[("f0", 64), ("f1", 64)]);
     if plant(&base, uid).is_none() {
-        return skip(&case);
+        missing_privilege(&case);
     }
     let output = run(&mut command(receiver, &base, false, client, server));
     assert!(output.status.success(), "{case}: {}", describe(&output));
@@ -343,6 +360,113 @@ fn an_untrusted_destination_symlink_is_refused_by_every_receiver() {
     for receiver in RECEIVERS {
         assert_refused(receiver, false);
         assert_refused(receiver, true);
+    }
+}
+
+/// Where a network receiver below an untrusted destination symlink stops, and
+/// the line it prints. rsync 3.5.2, run per leg with `-e` set to a local shim
+/// (`rsync -r -e ./lsh --rsync-path=rsync SRC localhost:DEST` for a push,
+/// `... localhost:SRC DEST` for a pull):
+///
+/// - `dest/sub/new/` (new directory): `change_dir#2 "<base>/dest/sub/new"`,
+///   main.c:836-840, after main.c:817 created it;
+/// - `dest/sub/` (existing directory): `change_dir#1 "<base>/dest/sub/"`,
+///   main.c:777-782;
+/// - `dest/sub/f0` (single file): `change_dir#3 "<base>/dest/sub"`,
+///   main.c:865-868;
+/// - `--mkpath dest/sub/a/b/`: `change_dir#1 "<base>/dest/sub/a/b/"`, the
+///   statret=0 arm after make_path, main.c:757-782.
+///
+/// Every case exits 3. oc refuses before creating anything below the link,
+/// where 3.5.2 leaves `new` and `a/b` behind it (a deviation: the walk runs
+/// before the mkdir).
+struct Stop {
+    src: &'static str,
+    dest: &'static str,
+    args: &'static [&'static str],
+    line: &'static str,
+}
+
+const STOPS: [Stop; 4] = [
+    Stop {
+        src: "src/",
+        dest: "dest/sub/new/",
+        args: &[],
+        line: "change_dir#2 \"{base}/dest/sub/new\" failed: ",
+    },
+    Stop {
+        src: "src/",
+        dest: "dest/sub/",
+        args: &[],
+        line: "change_dir#1 \"{base}/dest/sub/\" failed: ",
+    },
+    Stop {
+        src: "src/f0",
+        dest: "dest/sub/f0",
+        args: &[],
+        line: "change_dir#3 \"{base}/dest/sub\" failed: ",
+    },
+    Stop {
+        src: "src/",
+        dest: "dest/sub/a/b/",
+        args: &["--mkpath"],
+        line: "change_dir#1 \"{base}/dest/sub/a/b/\" failed: ",
+    },
+];
+
+fn assert_stops_at(receiver: Receiver, stop: &Stop) {
+    let case = format!("{receiver:?} {} -> {} {:?}", stop.src, stop.dest, stop.args);
+    let (_temp, base) = fixture(&[("f0", 64), ("f1", 64)]);
+    if plant(&base, Some(UNTRUSTED_UID)).is_none() {
+        missing_privilege(&case);
+    }
+    let src = base.join(stop.src).display().to_string();
+    let output = run(&mut command_to(
+        receiver,
+        &base,
+        &src,
+        stop.dest,
+        false,
+        stop.args,
+        &[],
+    ));
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "{case}: {}",
+        describe(&output)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let line = format!(
+        "[Receiver] {}",
+        stop.line.replace("{base}", &base.display().to_string())
+    );
+    for expected in [REFUSAL, line.as_str()] {
+        assert!(
+            stderr.contains(expected),
+            "{case}: expected {expected:?}: {}",
+            describe(&output)
+        );
+    }
+    assert!(
+        !stderr.contains("failed to access destination directory"),
+        "{case}: {}",
+        describe(&output)
+    );
+    assert!(
+        entries(&base.join("outside")).is_empty(),
+        "{case}: created or wrote below the attacker's symlink"
+    );
+}
+
+/// (a2) A push and a pull below an untrusted destination symlink stop at the
+/// change_dir step rsync 3.5.2 stops at, with its line.
+#[test]
+fn network_receivers_stop_at_upstreams_change_dir_step() {
+    for receiver in [Receiver::Push, Receiver::Pull] {
+        for stop in &STOPS {
+            assert_stops_at(receiver, stop);
+        }
     }
 }
 
