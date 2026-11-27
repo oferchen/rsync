@@ -1086,6 +1086,26 @@ mod negation_flags {
         let parsed = parse_test_args(["--no-links", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.links, Some(false));
     }
+    /// upstream: options.c:692-695 - `-L` is independent of the
+    /// `--links`/`--no-links` pair, so rsync accepts either order of `-lL`.
+    #[test]
+    fn links_with_copy_links_keeps_both() {
+        for args in [["-lL"].as_slice(), &["-Ll"], &["-l", "-L"], &["-L", "-l"]] {
+            let parsed = parse_test_args(args.iter().chain(&["src/", "dst/"]))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert_eq!(parsed.links, Some(true), "{args:?}");
+            assert_eq!(parsed.copy_links, Some(true), "{args:?}");
+        }
+    }
+    #[test]
+    fn no_links_with_copy_links_keeps_both() {
+        for args in [["-L", "--no-links"], ["--no-links", "-L"]] {
+            let parsed = parse_test_args(args.iter().chain(&["src/", "dst/"]))
+                .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert_eq!(parsed.links, Some(false), "{args:?}");
+            assert_eq!(parsed.copy_links, Some(true), "{args:?}");
+        }
+    }
 
     #[test]
     fn no_devices_flag() {
