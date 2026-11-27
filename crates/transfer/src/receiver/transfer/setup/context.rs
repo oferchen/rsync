@@ -182,6 +182,7 @@ impl ReceiverContext {
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
 
         self.check_server_temp_dir(writer, &setup.dest_dir)?;
+        self.check_server_backup_dir(writer, &setup.dest_dir)?;
 
         // upstream: main.c:820-821 - the receiver prints `created directory
         // <dest>` right after the file list arrives, before generate_files()
@@ -255,6 +256,37 @@ impl ReceiverContext {
                     shown.display()
                 ))
             }
+        };
+        let _ = self.emit_error_line(writer, &format!("{failure}\n"));
+        Err(failure)
+    }
+
+    /// Checks a server receiver's `--backup-dir` before any file moves.
+    ///
+    /// upstream: main.c:1036-1057 do_recv() - a backup directory that is not a
+    /// directory ends the transfer with `RERR_SYNTAX`, any stat failure but
+    /// `ENOENT` with `RERR_FILEIO`; the peer prints the message. A client
+    /// receiver checked its own value before connecting.
+    fn check_server_backup_dir<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        dest_dir: &Path,
+    ) -> io::Result<()> {
+        if self.config.connection.client_mode {
+            return Ok(());
+        }
+        let Some(backup_dir) = self.config.backup_dir.as_deref() else {
+            return Ok(());
+        };
+        let Err(refusal) = crate::receiver::check_backup_dir(Path::new(backup_dir), dest_dir)
+        else {
+            return Ok(());
+        };
+        let failure = match refusal {
+            crate::receiver::BackupDirRefusal::NotDirectory(_) => {
+                protocol::syntax_violation(refusal.to_string())
+            }
+            crate::receiver::BackupDirRefusal::Stat(..) => io::Error::other(refusal.to_string()),
         };
         let _ = self.emit_error_line(writer, &format!("{failure}\n"));
         Err(failure)
