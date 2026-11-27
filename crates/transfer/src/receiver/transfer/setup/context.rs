@@ -1221,6 +1221,13 @@ impl ReceiverContext {
                     cause,
                 )
             }
+            // upstream: main.c:776-781 - the slash is still on dest_path, so
+            // full_fname() shows it.
+            Ok(DestRootFailure::ChangeDir1(cause)) => DestRootSelectError::into_io(
+                SelectStep::ChangeDir1,
+                self.get_local_name_fname(dest_dir, trailing_slash),
+                cause,
+            ),
             // upstream: main.c:865-869 - change_dir#3 names the parent, whose
             // slash was lopped at :859.
             Ok(DestRootFailure::ChangeDir3 { cause, parent }) => DestRootSelectError::into_io(

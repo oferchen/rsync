@@ -1,9 +1,12 @@
-//! The receiver refuses a destination before it transfers anything.
+//! The receiver refuses two destinations before it transfers anything.
 //!
 //! - `--backup-dir`: upstream: main.c:1036-1057 do_recv() stats the backup
 //!   directory, resolved against the destination. A path that is not a
 //!   directory exits `RERR_SYNTAX` (1), any stat failure but `ENOENT` exits
 //!   `RERR_FILEIO` (11).
+//! - An existing destination directory the receiver cannot enter: upstream:
+//!   main.c:776-781 get_local_name() reports `change_dir#1 %s failed` and exits
+//!   `RERR_FILESELECT` (3), dry run or not.
 //!
 //! Every cell asserts the rsync 3.5.2 result measured on glibc. When the 3.5.2
 //! oracle resolves (`OC_RSYNC_UPSTREAM_BIN_3_5_2`, required under
@@ -12,7 +15,7 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -138,6 +141,10 @@ impl Fixture {
             String::from_utf8_lossy(&output.stderr).into_owned(),
         )
     }
+
+    fn is_root(&self) -> bool {
+        fs::metadata(self.base()).expect("stat tempdir").uid() == 0
+    }
 }
 
 /// One refusal: the options, the legs it applies to, and what 3.5.2 does.
@@ -234,6 +241,37 @@ fn check_backup_dir(leg: Leg) {
     }
 }
 
+/// An existing destination root with mode 000 cannot be entered.
+fn check_unsearchable_root(leg: Leg, options: &[String]) {
+    for (pair, client, server) in pairs(leg) {
+        let fixture = Fixture::new();
+        if fixture.is_root() {
+            eprintln!("SKIPPED {leg:?} unsearchable root: root ignores mode 000");
+            return;
+        }
+        let out = fixture.out();
+        fs::set_permissions(&out, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+        let (code, stderr) = fixture.run(&client, &server, leg, options);
+        fs::set_permissions(&out, fs::Permissions::from_mode(0o755)).expect("chmod 755");
+        let case = format!("{leg:?} {options:?} unsearchable root / {pair}");
+        assert_eq!(code, Some(3), "{case}: {stderr}");
+        // The local copy is still worded `failed to access destination
+        // directory`; the remote receivers carry upstream's line.
+        if leg != Leg::Local {
+            let message = format!("change_dir#1 \"{}/\" failed: ", out.display());
+            assert!(
+                stderr.contains(&message),
+                "{case}: expected {message:?} in {stderr}"
+            );
+        }
+        assert_eq!(
+            fs::read(out.join("f")).expect("read destination"),
+            b"old\n",
+            "{case}: the receiver transferred into an unsearchable root"
+        );
+    }
+}
+
 #[test]
 fn a_local_copy_refuses_a_backup_dir_that_is_not_a_directory() {
     check_backup_dir(Leg::Local);
@@ -252,4 +290,24 @@ fn a_pull_refuses_a_backup_dir_that_is_not_a_directory() {
 #[test]
 fn a_daemon_push_refuses_a_backup_dir_that_is_not_a_directory() {
     check_backup_dir(Leg::DaemonPush);
+}
+
+#[test]
+fn a_local_copy_refuses_an_unsearchable_destination_root() {
+    check_unsearchable_root(Leg::Local, &[]);
+}
+
+#[test]
+fn a_push_refuses_an_unsearchable_destination_root() {
+    check_unsearchable_root(Leg::Push, &[]);
+}
+
+#[test]
+fn a_pull_refuses_an_unsearchable_destination_root() {
+    check_unsearchable_root(Leg::Pull, &[]);
+}
+
+#[test]
+fn a_dry_run_pull_refuses_an_unsearchable_destination_root() {
+    check_unsearchable_root(Leg::Pull, &["--dry-run".to_owned()]);
 }
