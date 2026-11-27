@@ -461,11 +461,12 @@ where
     // (INFO_GTE(NAME, 2), generator.c:588-589) is suppressed - exactly the
     // gap that fails the upstream `itemize` test under SSH `--server` mode,
     // where `-vv` arrives as packed `v` letters rather than `--info=name2`.
-    if config.flags.verbose_level > 0 {
-        logging::init(logging::VerbosityConfig::from_verbose_level(
-            config.flags.verbose_level,
-        ));
-    }
+    // A count of 0 still applies row 0, which sets NONREG to 1, so the
+    // receiver's `skipping non-regular file` line (generator.c:2150-2155)
+    // prints at default verbosity as it does from a 3.5.2 server.
+    logging::init(logging::VerbosityConfig::from_verbose_level(
+        config.flags.verbose_level,
+    ));
     // upstream: log.c:424-426 - a quiet server drops FINFO before framing it.
     logging::set_quiet(config.flags.quiet);
 

@@ -757,23 +757,10 @@ impl GeneratorContext {
             return Ok(Some(path));
         }
 
-        // upstream: flist.c:send_file_name() - skip unsupported file types
-        #[cfg(unix)]
-        {
-            let ft = metadata.file_type();
-            // upstream: flist.c:1648 - `--copy-devices` makes make_file() emit a
-            // block/char device as a regular file, so it is included on the wire
-            // even without `--devices`. Only skip when neither flag is active.
-            if (ft.is_block_device() || ft.is_char_device())
-                && !self.config.flags.devices
-                && !self.config.flags.copy_devices
-            {
-                return Ok(None);
-            }
-            if (ft.is_fifo() || ft.is_socket()) && !self.config.flags.specials {
-                return Ok(None);
-            }
-        }
+        // upstream: flist.c:make_file() sends a device, FIFO or socket whether
+        // or not --devices/--specials is set; only the rdev field depends on
+        // them (flist.c:759, 774). The receiver reports the entry it will not
+        // create as `skipping non-regular file` (generator.c:2150-2155).
 
         // upstream: flist.c:1814 - is_excluded() applied during make_file()
         // FilterChain evaluates per-directory scoped rules (innermost first)

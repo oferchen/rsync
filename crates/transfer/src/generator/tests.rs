@@ -2651,9 +2651,13 @@ fn create_fifo_for_test(path: &Path) {
     assert!(status.success(), "mkfifo failed");
 }
 
+/// upstream: flist.c:make_file() sends a FIFO without `--specials`; only its
+/// rdev field depends on the flag (flist.c:774). The receiver then reports it
+/// as `skipping non-regular file` (generator.c:2150-2155), which it cannot do
+/// for an entry the sender left out.
 #[cfg(unix)]
 #[test]
-fn walk_skips_fifo_when_preserve_specials_is_false() {
+fn walk_sends_fifo_when_preserve_specials_is_false() {
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
 
@@ -2673,8 +2677,8 @@ fn walk_skips_fifo_when_preserve_specials_is_false() {
     // the source basename instead of `.` plus its children.
     let count = build_file_list_for_contents(&mut ctx, base_path);
 
-    // FIFO should be skipped, "." root dir + regular file included
-    assert_eq!(count, 2);
+    // "." root dir + regular file + FIFO
+    assert_eq!(count, 3);
 }
 
 #[cfg(unix)]
