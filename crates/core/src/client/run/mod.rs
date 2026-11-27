@@ -211,8 +211,7 @@ fn receiver_working_directory(dest: &Path) -> PathBuf {
 /// Reports whether `arg` names a remote-shell or daemon peer, by the operand
 /// forms the transfer dispatch below routes away from a local copy.
 fn operand_names_peer(arg: &std::ffi::OsString) -> bool {
-    let text = arg.to_string_lossy();
-    text.starts_with("rsync://") || text.contains("::") || remote::operand_is_remote(arg)
+    remote::operand_is_remote(arg) || remote::is_daemon_operand(arg)
 }
 
 #[cfg_attr(
@@ -317,15 +316,14 @@ fn run_client_internal(
     }
 
     let has_daemon_url = config.transfer_args().iter().any(|arg| {
-        let s = arg.to_string_lossy();
-        if s.starts_with("rsync://") || s.contains("::") {
+        if remote::is_daemon_operand(arg) {
             return true;
         }
         // A `quic://` target speaks the same daemon protocol over QUIC, so it
         // routes to the daemon path (not the SSH path). Recognised only under
         // the `quic` feature; absent from a default build.
         #[cfg(feature = "quic")]
-        if remote::is_quic_url(&s) {
+        if remote::is_quic_url(&arg.to_string_lossy()) {
             return true;
         }
         false

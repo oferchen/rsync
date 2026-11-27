@@ -1,5 +1,11 @@
 use super::super::{ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, daemon_error};
 use super::DaemonAddress;
+use crate::client::remote::hostspec::check_host_literal;
+
+/// Maps a [`check_host_literal`] refusal to a daemon-address syntax error.
+fn literal_error(checked: Result<(), &'static str>) -> Result<(), ClientError> {
+    checked.map_err(|text| daemon_error(text, FEATURE_UNAVAILABLE_EXIT_CODE))
+}
 
 pub(crate) fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     if text.len() < prefix.len() {
@@ -25,6 +31,7 @@ pub(crate) fn parse_bracketed_host(
         )
     })?;
 
+    literal_error(check_host_literal(addr, true))?;
     let decoded = addr.to_owned();
 
     if remainder.is_empty() {
@@ -74,56 +81,6 @@ pub(crate) fn split_daemon_username(input: &str) -> Result<(Option<&str>, &str),
     }
 }
 
-pub(crate) fn split_daemon_host_module(input: &str) -> Result<Option<(&str, &str)>, ClientError> {
-    if !input.contains('[') {
-        let segments = input.split("::");
-        if segments.clone().count() > 2 {
-            return Err(daemon_error(
-                "IPv6 daemon addresses must be enclosed in brackets",
-                FEATURE_UNAVAILABLE_EXIT_CODE,
-            ));
-        }
-    }
-
-    let mut in_brackets = false;
-    let mut previous_colon = None;
-
-    for (idx, ch) in input.char_indices() {
-        match ch {
-            '[' => {
-                in_brackets = true;
-                previous_colon = None;
-            }
-            ']' => {
-                in_brackets = false;
-                previous_colon = None;
-            }
-            ':' if !in_brackets => {
-                if let Some(prev) = previous_colon.filter(|prev| *prev + 1 == idx) {
-                    let host = &input[..prev];
-                    if !host.contains('[') {
-                        let colon_count = host.chars().filter(|&ch| ch == ':').count();
-                        if colon_count > 1 {
-                            return Err(daemon_error(
-                                "IPv6 daemon addresses must be enclosed in brackets",
-                                FEATURE_UNAVAILABLE_EXIT_CODE,
-                            ));
-                        }
-                    }
-                    let module = &input[idx + 1..];
-                    return Ok(Some((host, module)));
-                }
-                previous_colon = Some(idx);
-            }
-            _ => {
-                previous_colon = None;
-            }
-        }
-    }
-
-    Ok(None)
-}
-
 pub(crate) struct ParsedDaemonTarget {
     pub(crate) address: DaemonAddress,
     pub(crate) username: Option<String>,
@@ -154,31 +111,19 @@ pub(crate) fn parse_host_port(
     }
 
     if let Some((host, port)) = split_host_port(input) {
-        let host_contains_colon = host.contains(':');
+        literal_error(check_host_literal(host, false))?;
         let port_is_digits = !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit());
-
-        if port_is_digits {
-            if host_contains_colon {
-                return Err(daemon_error(
-                    "IPv6 daemon addresses must be enclosed in brackets",
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                ));
-            }
-
-            let port = port
-                .parse::<u16>()
-                .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
-            let host = host.to_owned();
-            let address = DaemonAddress::new(host, port);
-            return Ok(ParsedDaemonTarget { address, username });
-        }
-
-        if !host_contains_colon {
+        if !port_is_digits {
             return Err(daemon_error(
                 "invalid daemon port",
                 FEATURE_UNAVAILABLE_EXIT_CODE,
             ));
         }
+        let port = port
+            .parse::<u16>()
+            .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
+        let address = DaemonAddress::new(host.to_owned(), port);
+        return Ok(ParsedDaemonTarget { address, username });
     }
 
     let host = input.to_owned();
@@ -350,24 +295,6 @@ mod tests {
     }
 
     #[test]
-    fn split_daemon_host_module_splits_on_double_colon() {
-        let result = split_daemon_host_module("host::module").expect("split");
-        assert_eq!(result, Some(("host", "module")));
-    }
-
-    #[test]
-    fn split_daemon_host_module_returns_none_without_double_colon() {
-        let result = split_daemon_host_module("host:port").expect("split");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn split_daemon_host_module_handles_bracketed_ipv6() {
-        let result = split_daemon_host_module("[::1]::module").expect("split");
-        assert_eq!(result, Some(("[::1]", "module")));
-    }
-
-    #[test]
     fn parse_host_port_parses_simple_host() {
         let result = parse_host_port("localhost", 873).expect("parse");
         assert_eq!(result.address.port(), 873);
@@ -396,5 +323,49 @@ mod tests {
     fn parse_host_port_uses_default_for_empty_input() {
         let result = parse_host_port("", 873).expect("parse");
         assert_eq!(result.address.port(), 873);
+    }
+
+    /// The daemon address of `rsync://` and `HOST::` operands follows the
+    /// same bracket rule as every other operand: brackets hold only an IPv6
+    /// address, and an IPv6 address always has them.
+    #[test]
+    fn parse_host_port_applies_the_bracket_rule() {
+        for (input, address) in [
+            ("[::1]:8873", Ok(("::1", 8873))),
+            ("[fe80::1%eth0]", Ok(("fe80::1%eth0", 873))),
+            ("1.2.3.4:8873", Ok(("1.2.3.4", 8873))),
+            (
+                "[1.2.3.4]",
+                Err("only an IPv6 address may be enclosed in brackets"),
+            ),
+            (
+                "[example.com]:8873",
+                Err("only an IPv6 address may be enclosed in brackets"),
+            ),
+            (
+                "[fe80::1%]",
+                Err("only an IPv6 address may be enclosed in brackets"),
+            ),
+            (
+                "::1:8873",
+                Err("IPv6 daemon addresses must be enclosed in brackets"),
+            ),
+            (
+                "fe80::1%lo",
+                Err("IPv6 daemon addresses must be enclosed in brackets"),
+            ),
+        ] {
+            match (parse_host_port(input, 873), address) {
+                (Ok(parsed), Ok((host, port))) => {
+                    assert_eq!(parsed.address.host(), host, "{input}");
+                    assert_eq!(parsed.address.port(), port, "{input}");
+                }
+                (Err(error), Err(text)) => {
+                    assert_eq!(error.exit_code(), 1, "{input}");
+                    assert!(error.to_string().contains(text), "{input}: {error}");
+                }
+                (got, _) => panic!("{input}: unexpected {:?}", got.map(|p| p.address)),
+            }
+        }
     }
 }

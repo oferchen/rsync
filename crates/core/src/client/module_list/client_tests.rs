@@ -856,12 +856,22 @@ fn daemon_address_accepts_ipv6_zone_identifier() {
 
 #[test]
 fn module_list_request_parses_ipv6_zone_identifier() {
-    let operands = vec![OsString::from("rsync://fe80::1%eth0/")];
+    let operands = vec![OsString::from("rsync://[fe80::1%eth0]/")];
     let request = ModuleListRequest::from_operands(&operands)
         .expect("parse succeeds")
         .expect("request present");
     assert_eq!(request.address().host(), "fe80::1%eth0");
     assert_eq!(request.address().port(), 873);
+
+    // RFC 3986 section 3.2.2: an IPv6 address needs its brackets.
+    let bare = vec![OsString::from("rsync://fe80::1%eth0/")];
+    let error = ModuleListRequest::from_operands(&bare).expect_err("bare IPv6 is refused");
+    assert!(
+        error
+            .to_string()
+            .contains("IPv6 daemon addresses must be enclosed in brackets"),
+        "{error}"
+    );
 
     // `%25` is NOT decoded back to `%`. The RFC 6874 spelling of a zone id is
     // not something rsync implements: upstream has no percent-decoder, so the

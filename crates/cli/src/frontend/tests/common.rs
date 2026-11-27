@@ -21,6 +21,26 @@ pub(super) fn spawn_stub_daemon_with_protocol(
     expected_protocol: &'static str,
 ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub daemon");
+    serve_stub_daemon(listener, responses, expected_protocol)
+}
+
+/// [`spawn_stub_daemon`] on the IPv6 loopback address.
+///
+/// Panics when `::1` cannot be bound, so a host without IPv6 loopback fails
+/// the test instead of skipping it.
+pub(super) fn spawn_ipv6_stub_daemon(
+    responses: Vec<&'static str>,
+) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("[::1]:0")
+        .unwrap_or_else(|error| panic!("IPv6 loopback ::1 is unavailable: {error}"));
+    serve_stub_daemon(listener, responses, "33.0")
+}
+
+fn serve_stub_daemon(
+    listener: TcpListener,
+    responses: Vec<&'static str>,
+    expected_protocol: &'static str,
+) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
     let addr = listener.local_addr().expect("local addr");
 
     let handle = thread::spawn(move || {

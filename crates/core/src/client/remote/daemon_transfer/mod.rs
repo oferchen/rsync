@@ -47,7 +47,10 @@ use super::super::module_list::{
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::build_batch_context;
-use super::hostspec::source_path;
+use super::hostspec::{is_daemon_operand, source_path};
+
+/// `URL_PREFIX` from `rsync.h`.
+const URL_PREFIX: &str = "rsync://";
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role_with_port};
 use super::operand_split::split_transfer_operands;
 use super::ssh_transfer::finished_remote_shell_exit;
@@ -88,15 +91,16 @@ fn parse_daemon_operand(
     let daemon_operand = config
         .transfer_args()
         .iter()
-        .find(|arg| {
-            let s = arg.to_string_lossy();
-            is_daemon_url(&s) || s.contains("::")
-        })
+        .find(|arg| is_daemon_url(&arg.to_string_lossy()) || is_daemon_operand(arg))
         .ok_or_else(|| invalid_argument_error("no daemon URL or host::module operand found", 1))?;
 
     let daemon_operand_str = daemon_operand.to_string_lossy();
     let default_port = ModuleListRequest::default_port(config.daemon_port(), over_remote_shell);
-    if daemon_operand_str.starts_with("rsync://") || daemon_operand_str.starts_with("RSYNC://") {
+    // upstream: options.c:3383 matches the URL prefix with strncasecmp().
+    if daemon_operand_str
+        .get(..URL_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(URL_PREFIX))
+    {
         return DaemonTransferRequest::parse_rsync_url(daemon_operand, default_port);
     }
     // A `quic://` operand is dispatched to the QUIC parser under the feature;

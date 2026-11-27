@@ -24,6 +24,7 @@ use super::super::super::module_list::Transport;
 use super::super::super::module_list::{DaemonAddress, load_daemon_password};
 use super::super::super::{CLIENT_SERVER_PROTOCOL_EXIT_CODE, PROTOCOL_INCOMPATIBLE_EXIT_CODE};
 use crate::client::error::invalid_argument_error;
+use crate::client::remote::hostspec::{double_colon_split, operand_bytes};
 
 /// Parsed daemon transfer request containing connection and path details.
 #[derive(Clone, Debug)]
@@ -54,7 +55,9 @@ impl DaemonTransferRequest {
         // path bytes are preserved by slicing the raw `OsStr` past the prefix
         // rather than routing them through the lossy `String`.
         let lossy = url.to_string_lossy();
-        if !(lossy.starts_with("rsync://") || lossy.starts_with("RSYNC://")) {
+        // upstream: options.c:3383 matches URL_PREFIX with strncasecmp().
+        let scheme = lossy.get(.."rsync://".len());
+        if !scheme.is_some_and(|scheme| scheme.eq_ignore_ascii_case("rsync://")) {
             return Err(invalid_argument_error(
                 &format!("not an rsync:// URL: {lossy}"),
                 1,
@@ -144,16 +147,19 @@ impl DaemonTransferRequest {
     ) -> Result<Self, ClientError> {
         use super::super::super::module_list::parse_host_port;
 
-        // `[user@]host` is ASCII; the `module[/path]` tail past `::` keeps its
+        // upstream: options.c:3398 - the host ends where `parse_hostspec()`
+        // stops, which skips the `[...]` of an IPv6 literal, so the `::` inside
+        // `[::1]::mod` is not the separator. The `module[/path]` tail keeps its
         // raw bytes so a non-UTF-8 path survives to the wire.
-        let (host_part, module_path) = split_operand_head(operand, b"::").ok_or_else(|| {
+        let (host_end, path_start) = double_colon_split(operand).ok_or_else(|| {
             invalid_argument_error(
                 &format!("not a daemon operand: {}", operand.to_string_lossy()),
                 1,
             )
         })?;
-
+        let host_part = String::from_utf8_lossy(&operand_bytes(operand)[..host_end]);
         let target = parse_host_port(&host_part, default_port)?;
+        let module_path = os_str_drop_prefix(operand, path_start);
 
         let (module, path) = split_module_path(&module_path);
 
@@ -167,10 +173,10 @@ impl DaemonTransferRequest {
     }
 }
 
-/// Drops the first `n` bytes (a confirmed ASCII scheme prefix) from an operand,
-/// preserving the remaining raw bytes.
+/// Drops the first `n` bytes (a confirmed ASCII scheme prefix, or a hostspec
+/// ending in `::`) from an operand, preserving the remaining raw bytes.
 ///
-/// Because the prefix is ASCII, `n` lands on a character boundary on every
+/// Because the prefix ends in ASCII, `n` lands on a character boundary on every
 /// target; the tail keeps its verbatim filesystem bytes on Unix (a non-UTF-8
 /// operand byte survives) and its exact WTF-8 on other targets, whose operands
 /// originate from Unicode argv.
