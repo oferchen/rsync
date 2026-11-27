@@ -236,7 +236,7 @@ fn every_split_value_option_is_joined() {
         if FILTER_OPTIONS.contains(&option.as_str())
             || is_two_arg_server_long_flag(&option)
             || name == "remote-option"
-            || name == "chown"
+            || matches!(name, "chown" | "usermap" | "groupmap")
         {
             continue;
         }
@@ -320,4 +320,240 @@ fn long_option_rewrite_is_idempotent() {
     ]);
     let once: Vec<OsString> = once.into_iter().map(OsString::from).collect();
     assert_eq!(normalize_server_argv(&once).unwrap(), once);
+}
+
+/// upstream: options.c:1929-2000 - a second user or group map is refused,
+/// with the wording naming which option set the first.
+#[test]
+fn id_map_conflicts_follow_upstream() {
+    let refuse = |tokens: &[&str]| {
+        let mut argv = vec!["rsync", "--server", "-r"];
+        argv.extend_from_slice(tokens);
+        argv.extend_from_slice(&[".", "d/"]);
+        normalize_server_argv(&self::argv(&argv)).unwrap_err().text
+    };
+    assert_eq!(
+        refuse(&["--usermap=a:b", "--chown=u"]),
+        "--chown conflicts with prior --usermap."
+    );
+    assert_eq!(
+        refuse(&["--groupmap=a:b", "--chown=:g"]),
+        "--chown conflicts with prior --groupmap."
+    );
+    assert_eq!(
+        refuse(&["--chown=u", "--usermap=a:b"]),
+        "--usermap conflicts with prior --chown."
+    );
+    assert_eq!(
+        refuse(&["--chown=:g", "--groupmap=a:b"]),
+        "--groupmap conflicts with prior --chown."
+    );
+    assert_eq!(
+        refuse(&["--chown=u", "--chown=v"]),
+        "You can only specify a user-affecting --chown once."
+    );
+    assert_eq!(
+        refuse(&["--chown=:g", "--chown=:h"]),
+        "You can only specify a group-affecting --chown once."
+    );
+    assert_eq!(
+        refuse(&["--usermap=a:b", "--usermap=c:d"]),
+        "You can only specify --usermap once."
+    );
+    assert_eq!(
+        refuse(&["--groupmap=a:b", "--groupmap=c:d"]),
+        "You can only specify --groupmap once."
+    );
+    // A user part and a group part of separate --chown options do not meet.
+    assert_eq!(
+        normalized(&["rsync", "--server", "-r", "--chown=u", "--chown=:g", ".", "d/"]),
+        [
+            "rsync",
+            "--server",
+            "-rog",
+            "--usermap=*:u",
+            "--groupmap=*:g",
+            ".",
+            "d/"
+        ]
+    );
+    // A forwarded map sets the owner switch it implies.
+    assert_eq!(
+        normalized(&["rsync", "--server", "-r", "--usermap=a:b", ".", "d/"]),
+        ["rsync", "--server", "-ro", "--usermap=a:b", ".", "d/"]
+    );
+}
+
+/// Entries of long_options[] the table leaves out; see the module docs.
+const OMITTED: [&str; 10] = [
+    "help",
+    "version",
+    "read-batch",
+    "write-batch",
+    "copy-as",
+    "config",
+    "daemon",
+    "dparam",
+    "detach",
+    "no-detach",
+];
+
+/// Rows whose kind the generic rule below does not give: switches the
+/// long-option pass already reads, and the `OPT_NO_D` / `OPT_NO_COMPRESS`
+/// negations, which clear a letter through a `case` rather than a variable
+/// (options.c:1708-1710, :1786-1789). `--temp-dir`, `--modify-window`,
+/// `--filter` and `--remote-option` keep the long spellings the rewrite
+/// already reads.
+const SPECIAL: [(&str, LongOption); 16] = [
+    ("relative", LongOption::Flag),
+    ("no-relative", LongOption::Flag),
+    ("no-R", LongOption::Flag),
+    ("from0", LongOption::Flag),
+    ("no-from0", LongOption::Flag),
+    ("no-r", LongOption::Flag),
+    ("no-recursive", LongOption::Flag),
+    ("no-W", LongOption::Flag),
+    ("no-whole-file", LongOption::Flag),
+    ("no-D", LongOption::Clears('D')),
+    ("no-compress", LongOption::Clears('z')),
+    ("no-z", LongOption::Clears('z')),
+    ("temp-dir", LongOption::Value),
+    ("modify-window", LongOption::Value),
+    ("filter", LongOption::Value),
+    ("remote-option", LongOption::Value),
+];
+
+/// Variables whose short entry is dispatched through `case` (its `argPtr` is
+/// 0), so their `--no-` entries name the variable but not the letter.
+const CASE_LETTERS: [(&str, char); 9] = [
+    ("verbose", 'v'),
+    ("preserve_acls", 'A'),
+    ("preserve_xattrs", 'X'),
+    ("preserve_atimes", 'U'),
+    ("preserve_hard_links", 'H'),
+    ("human_readable", 'h'),
+    ("one_file_system", 'x'),
+    ("fuzzy_basis", 'y'),
+    ("itemize_changes", 'i'),
+];
+
+/// One named long_options[] entry: name, short letter, argInfo, argPtr
+/// variable (empty when 0) and val.
+struct Entry {
+    name: String,
+    short: Option<char>,
+    arg_info: String,
+    var: String,
+    val: String,
+}
+
+/// The named entries of `long_options[]` in options.c, in order.
+fn parse_long_options(source: &str) -> Vec<Entry> {
+    let start = source
+        .find("static struct poptOption long_options[]")
+        .expect("long_options[]");
+    let table = &source[start..];
+    let table = &table[..table.find("};").expect("table end")];
+    table
+        .lines()
+        .filter_map(|line| {
+            let body = line.trim().strip_prefix("{\"")?;
+            let (name, rest) = body.split_once('"')?;
+            let fields: Vec<&str> = rest
+                .trim_start_matches(',')
+                .split(',')
+                .map(str::trim)
+                .collect();
+            let short = fields[0].strip_prefix('\'').and_then(|c| c.chars().next());
+            let var = fields[2].strip_prefix('&').unwrap_or_default().to_owned();
+            Some(Entry {
+                name: name.to_owned(),
+                short,
+                arg_info: fields[1].to_owned(),
+                var,
+                val: fields[3].to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// Derives each row's kind from its entry the way the table was built:
+/// value-taking entries are `Value` (or `ValueLetter` with a short name), a
+/// short name is `Letter`, a `POPT_ARG_VAL` of 0 on a letter's variable is
+/// `Clears`, a `POPT_ARG_VAL` equal to a letter entry's is that `Letter`,
+/// anything else is `Flag`.
+fn derive_rows(entries: &[Entry]) -> Vec<(String, LongOption)> {
+    let letter_of = |var: &str| {
+        entries.iter().find_map(|entry| match entry.short {
+            Some(letter) if !entry.var.is_empty() && entry.var == var => {
+                Some((letter, entry.val.as_str()))
+            }
+            _ => None,
+        })
+    };
+    entries
+        .iter()
+        .filter(|entry| !OMITTED.contains(&entry.name.as_str()))
+        .map(|entry| {
+            let special = SPECIAL.iter().find(|(name, _)| *name == entry.name);
+            let case_letter = CASE_LETTERS.iter().find(|(var, _)| *var == entry.var);
+            let is_val = entry.arg_info == "POPT_ARG_VAL";
+            let kind = match (special, entry.short) {
+                (Some(&(_, kind)), _) => kind,
+                _ if matches!(entry.arg_info.as_str(), "POPT_ARG_STRING" | "POPT_ARG_INT") => {
+                    entry.short.map_or(LongOption::Value, LongOption::ValueLetter)
+                }
+                (None, Some(letter)) => LongOption::Letter(letter),
+                _ if is_val && entry.val == "0" => match (case_letter, letter_of(&entry.var)) {
+                    (Some(&(_, letter)), _) | (None, Some((letter, _))) => {
+                        LongOption::Clears(letter)
+                    }
+                    _ => LongOption::Flag,
+                },
+                _ if is_val => match letter_of(&entry.var) {
+                    Some((letter, val)) if val == entry.val => LongOption::Letter(letter),
+                    _ => LongOption::Flag,
+                },
+                _ => LongOption::Flag,
+            };
+            (entry.name.clone(), kind)
+        })
+        .collect()
+}
+
+/// The table is re-derived from rsync 3.5.2's options.c and must equal it
+/// row for row. On a difference the derived rows are printed in the table's
+/// own syntax, ready to paste.
+#[test]
+fn table_is_derived_from_upstream_options_c() {
+    let Some(path) = test_support::workspace_root()
+        .map(|root| root.join("target/interop/upstream-src/rsync-3.5.2/options.c"))
+        .filter(|path| path.is_file())
+    else {
+        test_support::capability_missing(
+            "rsync 3.5.2 source not at target/interop/upstream-src/rsync-3.5.2 \
+             (fetch it with `tools/ci/run_interop.sh build-only`)",
+        );
+        return;
+    };
+    let source = std::fs::read_to_string(&path).expect("read options.c");
+    let entries = parse_long_options(&source);
+    for name in OMITTED {
+        assert!(
+            entries.iter().any(|entry| entry.name == name),
+            "omitted {name} is not in options.c"
+        );
+    }
+    let derived = derive_rows(&entries);
+    let table: Vec<(String, LongOption)> = LONG_OPTIONS
+        .iter()
+        .map(|&(name, kind)| (name.to_owned(), kind))
+        .collect();
+    if derived != table {
+        let rows: String = derived
+            .iter()
+            .map(|(name, kind)| format!("    (\"{name}\", LongOption::{kind:?}),\n"))
+            .collect();
+        panic!("LONG_OPTIONS differs from {}; derived rows:\n{rows}", path.display());
+    }
 }
