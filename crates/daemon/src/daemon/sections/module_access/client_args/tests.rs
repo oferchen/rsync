@@ -146,7 +146,9 @@ mod iconv_charset_converter_tests {
 
 #[cfg(test)]
 mod output_verbosity_limit_tests {
-    use super::{ServerConfig, ServerRole, apply_output_verbosity_limit};
+    use super::{
+        ServerConfig, ServerRole, apply_forwarded_output_words, apply_output_verbosity_limit,
+    };
     use crate::daemon::apply_verbosity;
     use logging::{InfoFlag, info_gte};
     use std::ffi::OsString;
@@ -296,6 +298,27 @@ mod output_verbosity_limit_tests {
         // loop body never run (options.c:558), leaving every limit at zero.
         let mut cfg = parse("-vvlogDtpre.iLsfxCIvu");
         assert_eq!(apply_output_verbosity_limit(&mut cfg, -1), 0);
+    }
+
+    #[test]
+    fn negative_max_verbosity_caps_the_nonreg_notice_a_zero_cap_keeps() {
+        // upstream: options.c:558 - a cap of 0 runs row 0, whose only word is
+        // `NONREG` (options.c:257), so `skipping non-regular file` survives
+        // `max verbosity = 0`. A negative cap runs no row, so it does not.
+        std::thread::spawn(|| {
+            for (max_verbosity, nonreg) in [(0, true), (-1, false)] {
+                let mut cfg = parse("-vvlogDtpre.iLsfxCIvu");
+                apply_verbosity(apply_output_verbosity_limit(&mut cfg, max_verbosity));
+                apply_forwarded_output_words(&[], max_verbosity);
+                assert_eq!(
+                    info_gte(InfoFlag::Nonreg, 1),
+                    nonreg,
+                    "max verbosity {max_verbosity}",
+                );
+            }
+        })
+        .join()
+        .expect("nonreg thread");
     }
 }
 

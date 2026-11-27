@@ -695,14 +695,21 @@ pub fn apply_info_flag(token: &str) -> Result<(), String> {
 
 /// Clamps the current context's info and debug levels to what `level` `-v`
 /// flags would set, so explicitly requested levels cannot exceed the cap.
-/// A `level` above [`MAX_VERBOSITY`](crate::MAX_VERBOSITY) applies no limit.
+/// A `level` above [`MAX_VERBOSITY`](crate::MAX_VERBOSITY) applies no limit;
+/// a negative `level` caps every info and debug level to 0, `NONREG`
+/// included.
 ///
-/// upstream: options.c:547-573 limit_output_verbosity()
-pub fn limit_output_verbosity(level: u8) {
-    if level > crate::MAX_VERBOSITY {
+/// upstream: options.c:547-573 limit_output_verbosity() - the limit rows are
+/// built by `for (j = 0; j <= level; j++)`, which runs zero times for a
+/// negative `level` and leaves every limit at its `memset` 0.
+pub fn limit_output_verbosity(level: i32) {
+    if level > i32::from(crate::MAX_VERBOSITY) {
         return;
     }
-    let limit = VerbosityConfig::from_verbose_level(level);
+    let limit = u8::try_from(level).map_or_else(
+        |_| VerbosityConfig::default(),
+        VerbosityConfig::from_verbose_level,
+    );
     current().update_verbosity(|verbosity| verbosity.limit_to(&limit));
 }
 
@@ -1171,8 +1178,22 @@ mod tests {
 
         init(VerbosityConfig::default());
         apply_debug_flag("flist4").unwrap();
-        limit_output_verbosity(crate::MAX_VERBOSITY + 1);
+        limit_output_verbosity(i32::from(crate::MAX_VERBOSITY) + 1);
         assert!(debug_gte(DebugFlag::Flist, 4));
+        init(VerbosityConfig::default());
+    }
+
+    /// upstream: options.c:558 - a negative level runs no limit rows, so even
+    /// `NONREG`, which a cap of 0 keeps at 1 (options.c:257), drops to 0.
+    #[test]
+    fn negative_limit_output_verbosity_caps_every_flag_to_zero() {
+        init(VerbosityConfig::from_verbose_level(2));
+        apply_debug_flag("flist4").unwrap();
+        limit_output_verbosity(0);
+        assert!(info_gte(InfoFlag::Nonreg, 1), "a cap of 0 keeps NONREG");
+        limit_output_verbosity(-1);
+        assert!(!info_gte(InfoFlag::Nonreg, 1));
+        assert!(!info_gte(InfoFlag::Name, 1) && !debug_gte(DebugFlag::Flist, 1));
         init(VerbosityConfig::default());
     }
 }
