@@ -402,7 +402,7 @@ fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
     (raw[start..end].to_owned(), anchored, directory_only)
 }
 
-/// Carries `--only-write-batch` onto a remote-shell PUSH sender's config.
+/// Carries `--only-write-batch` onto a PUSH sender's config.
 ///
 /// Upstream binds `f_xfer` once per `send_files()` run from the global
 /// `write_batch` (`sender.c:502`); oc's sender reads the same decision off its
@@ -411,15 +411,14 @@ fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
 /// streaming tokens at a remote receiver that `--only-write-batch=X` has just
 /// put into `dry_run` and which therefore reads none of them.
 ///
-/// Scoped to the remote-shell sender on purpose: `server_options()` emits the
-/// placeholder inside its `am_sender` block, so a pull sender-server never sees
-/// it, and the daemon path deliberately strips client-only batch flags from the
-/// module argument list - its receiver stays live and must keep reading tokens.
+/// Scoped to the push sender (remote shell and daemon) on purpose:
+/// `server_options()` emits the placeholder inside its `am_sender` block, so a
+/// pull sender-server never sees it.
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:3026-3027` - `if (write_batch < 0) "--only-write-batch=X"`
-/// - `main.c:1946` - `if (write_batch < 0) dry_run = 1`
+/// - `options.c:3091-3092` - `if (write_batch < 0) "--only-write-batch=X"`
+/// - `main.c:1950` - `if (write_batch < 0) dry_run = 1`
 pub(crate) fn apply_only_write_batch_for_sender(
     config: &ClientConfig,
     server_config: &mut ServerConfig,
