@@ -130,8 +130,8 @@ mod tests {
                 option,
                 value,
             } => {
-                assert_eq!(level, libc::IPPROTO_IP);
-                assert_eq!(option, libc::IP_TOS);
+                assert_eq!(level, fast_io::socket_options::IPPROTO_IP);
+                assert_eq!(option, fast_io::socket_options::IP_TOS);
                 assert_eq!(value, IPTOS_LOWDELAY);
             }
             _ => panic!("expected On variant"),
@@ -149,8 +149,8 @@ mod tests {
                 option,
                 value,
             } => {
-                assert_eq!(level, libc::IPPROTO_IP);
-                assert_eq!(option, libc::IP_TOS);
+                assert_eq!(level, fast_io::socket_options::IPPROTO_IP);
+                assert_eq!(option, fast_io::socket_options::IP_TOS);
                 assert_eq!(value, IPTOS_THROUGHPUT);
             }
             _ => panic!("expected On variant"),

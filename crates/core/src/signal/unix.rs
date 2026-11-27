@@ -124,7 +124,7 @@ static SIGNAL_COUNT: AtomicBool = AtomicBool::new(false);
 ///
 /// First signal: Sets graceful shutdown flag.
 /// Second signal: Sets abort flag for immediate termination.
-extern "C" fn handle_sigint(_signum: libc::c_int) {
+extern "C" fn handle_sigint(_signum: std::ffi::c_int) {
     // Also flip the low-level flag polled by the engine copy loop so an
     // in-progress single-file transfer stops promptly and finalises its
     // partial file in normal (non-signal) context.
@@ -142,7 +142,7 @@ extern "C" fn handle_sigint(_signum: libc::c_int) {
 ///
 /// First signal: Sets graceful shutdown flag.
 /// Second signal: Sets abort flag for immediate termination.
-extern "C" fn handle_sigterm(_signum: libc::c_int) {
+extern "C" fn handle_sigterm(_signum: std::ffi::c_int) {
     fast_io::signal::mark_shutdown();
     let already_signaled = SIGNAL_COUNT.swap(true, Ordering::SeqCst);
 
@@ -157,7 +157,7 @@ extern "C" fn handle_sigterm(_signum: libc::c_int) {
 ///
 /// First signal: Sets graceful shutdown flag.
 /// Second signal: Sets abort flag for immediate termination.
-extern "C" fn handle_sighup(_signum: libc::c_int) {
+extern "C" fn handle_sighup(_signum: std::ffi::c_int) {
     fast_io::signal::mark_shutdown();
     let already_signaled = SIGNAL_COUNT.swap(true, Ordering::SeqCst);
 
@@ -203,9 +203,9 @@ extern "C" fn handle_sighup(_signum: libc::c_int) {
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
     // The handlers ring the wake socket, so it must exist before them.
     fast_io::signal::arm_wake()?;
-    install_signal_handler(libc::SIGINT, handle_sigint)?;
-    install_signal_handler(libc::SIGTERM, handle_sigterm)?;
-    install_signal_handler(libc::SIGHUP, handle_sighup)?;
+    install_signal_handler(platform::signal::SIGINT, handle_sigint)?;
+    install_signal_handler(platform::signal::SIGTERM, handle_sigterm)?;
+    install_signal_handler(platform::signal::SIGHUP, handle_sighup)?;
 
     Ok(SignalHandler { installed: true })
 }
@@ -329,11 +329,11 @@ mod tests {
         SIGNAL_COUNT.store(false, Ordering::SeqCst);
         super::super::reset_for_testing();
 
-        handle_sigint(libc::SIGINT);
+        handle_sigint(platform::signal::SIGINT);
         assert!(super::super::is_shutdown_requested());
         assert!(!super::super::is_abort_requested());
 
-        handle_sigint(libc::SIGINT);
+        handle_sigint(platform::signal::SIGINT);
         assert!(super::super::is_abort_requested());
     }
 

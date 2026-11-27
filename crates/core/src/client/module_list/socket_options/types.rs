@@ -7,20 +7,20 @@ use std::io;
 pub(super) enum SocketOptionKind {
     /// Boolean toggle (0 or 1), e.g. `SO_KEEPALIVE`.
     Bool {
-        level: libc::c_int,
-        option: libc::c_int,
+        level: std::ffi::c_int,
+        option: std::ffi::c_int,
     },
     /// Integer value, e.g. `SO_SNDBUF=65536`.
     Int {
-        level: libc::c_int,
-        option: libc::c_int,
+        level: std::ffi::c_int,
+        option: std::ffi::c_int,
     },
     /// Fixed-value option (Unix only), e.g. `IPTOS_LOWDELAY`.
     #[cfg(not(target_family = "windows"))]
     On {
-        level: libc::c_int,
-        option: libc::c_int,
-        value: libc::c_int,
+        level: std::ffi::c_int,
+        option: std::ffi::c_int,
+        value: std::ffi::c_int,
     },
 }
 
@@ -35,7 +35,7 @@ pub(super) enum SocketOptionKind {
 /// SYN (e.g. `SO_SNDBUF`/`SO_RCVBUF` window scaling) take effect.
 pub(super) struct ParsedSocketOption {
     pub(super) kind: SocketOptionKind,
-    pub(super) explicit_value: Option<libc::c_int>,
+    pub(super) explicit_value: Option<std::ffi::c_int>,
     pub(super) name: &'static str,
 }
 

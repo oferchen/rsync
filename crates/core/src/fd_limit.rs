@@ -38,9 +38,9 @@ pub const FD_LIMIT_TARGET: u64 = 4096;
 /// upstream: `main.c:1824-1839`.
 #[cfg(unix)]
 pub fn raise_fd_limit() {
-    use rustix::process::{Resource, getrlimit, setrlimit};
+    use platform::resource::{nofile_limit, set_nofile_limit};
 
-    let mut limit = getrlimit(Resource::Nofile);
+    let mut limit = nofile_limit();
 
     // `None` encodes `RLIM_INFINITY`. An infinite hard limit clamps
     // nothing, mirroring C's `want > rl.rlim_max` being false there.
@@ -59,7 +59,7 @@ pub fn raise_fd_limit() {
     }
 
     limit.current = Some(want);
-    let _ = setrlimit(Resource::Nofile, limit);
+    let _ = set_nofile_limit(limit);
 }
 
 /// No-op on platforms without `RLIMIT_NOFILE`.
@@ -73,18 +73,15 @@ pub fn raise_fd_limit() {}
 #[cfg(all(test, unix))]
 mod tests {
     use super::{FD_LIMIT_TARGET, raise_fd_limit};
-    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    use platform::resource::{NofileLimit, nofile_limit, set_nofile_limit};
 
     /// Set the soft limit, leaving the hard limit alone.
     fn set_soft(current: u64) {
-        let limit = getrlimit(Resource::Nofile);
-        setrlimit(
-            Resource::Nofile,
-            Rlimit {
-                current: Some(current),
-                maximum: limit.maximum,
-            },
-        )
+        let limit = nofile_limit();
+        set_nofile_limit(NofileLimit {
+            current: Some(current),
+            maximum: limit.maximum,
+        })
         .expect("set soft RLIMIT_NOFILE");
     }
 
@@ -96,7 +93,7 @@ mod tests {
     /// nothing on the platform it runs on most often.
     #[test]
     fn raises_a_low_soft_limit_to_the_target() {
-        let original = getrlimit(Resource::Nofile);
+        let original = nofile_limit();
         let hard = original.maximum.unwrap_or(u64::MAX);
         assert!(
             hard >= FD_LIMIT_TARGET,
@@ -107,7 +104,7 @@ mod tests {
         raise_fd_limit();
 
         assert_eq!(
-            getrlimit(Resource::Nofile).current,
+            nofile_limit().current,
             Some(FD_LIMIT_TARGET),
             "a soft limit below the target must be raised to it"
         );
@@ -121,7 +118,7 @@ mod tests {
     /// low-limit test above cannot see.
     #[test]
     fn never_lowers_a_soft_limit_above_the_target() {
-        let original = getrlimit(Resource::Nofile);
+        let original = nofile_limit();
         let hard = original.maximum.unwrap_or(u64::MAX);
         let generous = FD_LIMIT_TARGET * 2;
         assert!(
@@ -133,7 +130,7 @@ mod tests {
         raise_fd_limit();
 
         assert_eq!(
-            getrlimit(Resource::Nofile).current,
+            nofile_limit().current,
             Some(generous),
             "a soft limit above the target must survive untouched"
         );
@@ -156,19 +153,16 @@ mod tests {
         let ceiling = 256;
         assert!(ceiling < FD_LIMIT_TARGET);
 
-        setrlimit(
-            Resource::Nofile,
-            Rlimit {
-                current: Some(64),
-                maximum: Some(ceiling),
-            },
-        )
+        set_nofile_limit(NofileLimit {
+            current: Some(64),
+            maximum: Some(ceiling),
+        })
         .expect("lower the hard RLIMIT_NOFILE");
 
         raise_fd_limit();
 
         assert_eq!(
-            getrlimit(Resource::Nofile).current,
+            nofile_limit().current,
             Some(ceiling),
             "the raise must clamp to the hard limit, not fail silently at 64"
         );
@@ -177,7 +171,7 @@ mod tests {
     /// An equal soft and hard limit at the target is a no-op, not a failure.
     #[test]
     fn leaves_a_soft_limit_exactly_at_the_target_alone() {
-        let original = getrlimit(Resource::Nofile);
+        let original = nofile_limit();
         let hard = original.maximum.unwrap_or(u64::MAX);
         assert!(
             hard >= FD_LIMIT_TARGET,
@@ -188,7 +182,7 @@ mod tests {
         raise_fd_limit();
 
         assert_eq!(
-            getrlimit(Resource::Nofile).current,
+            nofile_limit().current,
             Some(FD_LIMIT_TARGET),
             "an already-satisfied limit must be left as it is"
         );

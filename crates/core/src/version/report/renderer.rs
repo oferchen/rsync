@@ -1,17 +1,9 @@
 use crate::auth::SUPPORTED_DAEMON_DIGESTS;
 use crate::branding::Brand;
 use crate::version::{VersionMetadata, version_metadata, version_metadata_for_program};
-use libc::{ino_t, off_t};
+pub(crate) use platform::c_types::TimeT;
+use platform::c_types::{InoT, OffT};
 use std::borrow::Cow;
-
-/// Platform-safe `time_t` alias: `i64` on musl, `libc::time_t` elsewhere.
-///
-/// `libc::time_t` is deprecated on musl targets (musl 1.2.0+ uses 64-bit
-/// `time_t`), so naming it directly would warn on that target alone.
-#[cfg(target_env = "musl")]
-pub(crate) type TimeT = i64;
-#[cfg(not(target_env = "musl"))]
-pub(crate) type TimeT = libc::time_t;
 use std::fmt::{self, Write as FmtWrite};
 use std::mem;
 use std::string::String;
@@ -452,8 +444,8 @@ impl VersionInfoReport {
         let mut items = Vec::with_capacity(BASE_CAPACITY);
 
         items.push(InfoItem::Section("Capabilities"));
-        items.push(bits_entry::<off_t>("files"));
-        items.push(bits_entry::<ino_t>("inums"));
+        items.push(bits_entry::<OffT>("files"));
+        items.push(bits_entry::<InoT>("inums"));
         items.push(bits_entry::<TimeT>("timestamps"));
         items.push(bits_entry::<i64>("long ints"));
         items.push(capability_entry("socketpairs", config.supports_socketpairs));

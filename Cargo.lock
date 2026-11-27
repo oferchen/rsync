@@ -793,7 +793,6 @@ dependencies = [
  "libc",
  "logging",
  "metadata",
- "nix",
  "notify",
  "platform",
  "protocol",
@@ -1497,7 +1496,6 @@ version = "0.6.4"
 dependencies = [
  "fast_io",
  "globset",
- "libc",
  "logging",
  "proptest",
  "tempfile",
@@ -2844,6 +2842,7 @@ version = "0.6.4"
 dependencies = [
  "libc",
  "nix",
+ "rustix",
  "signal-hook",
  "tempfile",
  "thiserror",
@@ -4327,7 +4326,6 @@ dependencies = [
  "filetime",
  "filters",
  "getrandom 0.4.3",
- "libc",
  "logging",
  "matching",
  "metadata",

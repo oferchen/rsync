@@ -35,6 +35,38 @@ pub const DEFAULT_TCP_FASTOPEN_QLEN: i32 = 128;
 /// (low buffer bloat, no measurable throughput loss).
 pub const DEFAULT_TCP_NOTSENT_LOWAT: u32 = 64 * 1024;
 
+/// Unix socket levels and option names accepted by `--sockopts`.
+///
+/// upstream: `socket.c:799` `socket_options[]` - the table names these
+/// constants directly. Re-exported from `libc` unchanged so the option
+/// parser can resolve them without declaring an FFI crate of its own.
+#[cfg(unix)]
+pub use libc::{
+    IP_TOS, IPPROTO_IP, IPPROTO_TCP, SO_BROADCAST, SO_KEEPALIVE, SO_RCVBUF, SO_RCVTIMEO,
+    SO_REUSEADDR, SO_SNDBUF, SO_SNDTIMEO, SOL_SOCKET, TCP_NODELAY,
+};
+
+/// `SO_SNDLOWAT` / `SO_RCVLOWAT` on the targets whose `libc` defines them.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "solaris",
+    target_os = "illumos",
+    target_os = "aix",
+    target_os = "haiku",
+    target_os = "redox",
+    target_os = "fuchsia",
+    target_os = "nto",
+    target_os = "vxworks",
+    target_os = "hurd",
+    target_os = "cygwin"
+))]
+pub use libc::{SO_RCVLOWAT, SO_SNDLOWAT};
+
 /// Sets an integer-valued socket option on a connected `TcpStream`.
 ///
 /// Mirrors upstream rsync's `setsockopt(fd, level, option, &value, sizeof(int))`
@@ -1087,6 +1119,20 @@ mod tests {
         };
         assert_eq!(ret, 0, "getsockopt failed: {}", io::Error::last_os_error());
         value
+    }
+
+    /// The re-exported `--sockopts` constants must name the options the
+    /// kernel applies: setting `SO_KEEPALIVE` through them must read back on.
+    #[cfg(unix)]
+    #[test]
+    fn reexported_sockopt_constants_reach_the_kernel_option() {
+        let (stream, handle) = connected_stream();
+        set_socket_int_option(&stream, SOL_SOCKET, SO_KEEPALIVE, 1).expect("setsockopt");
+        assert_ne!(get_socket_int_option(&stream, SOL_SOCKET, SO_KEEPALIVE), 0);
+        set_socket_int_option(&stream, IPPROTO_TCP, TCP_NODELAY, 1).expect("setsockopt");
+        assert_ne!(get_socket_int_option(&stream, IPPROTO_TCP, TCP_NODELAY), 0);
+        drop(stream);
+        handle.join().expect("accept thread completes");
     }
 
     #[test]
