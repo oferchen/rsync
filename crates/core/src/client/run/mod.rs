@@ -208,31 +208,6 @@ fn receiver_working_directory(dest: &Path) -> PathBuf {
     }
 }
 
-/// Resolves an existing destination directory the way upstream's receiver
-/// `change_dir()` does before it transfers anything: through the ownership
-/// walk, so a component symlink owned by neither root nor the euid is refused
-/// (with upstream's actionable diagnostic) instead of being followed out of
-/// the tree. `--insecure-links` restores the plain `chdir`.
-///
-/// The walked descriptor is then pinned as the destination root, so every
-/// later open of the root lands in the directory the walk accepted, as
-/// upstream's `fchdir()` does, even if the path is swapped afterwards.
-///
-/// upstream: `rsync-3.5.2/util1.c:1363-1392` (absolute) and `:1456-1467`
-/// (relative, resolved as `curr_dir/dir`) - `open_no_attacker_symlinks_dirfd()`
-/// for a non-daemon receiver; `rsync-3.5.2/main.c:778-781` reports
-/// `change_dir#1` and exits `RERR_FILESELECT` when it fails.
-#[cfg(unix)]
-fn resolve_destination_like_change_dir(dest: &Path) -> Result<(), ClientError> {
-    fast_io::confinement::clear_destination_root();
-    if fast_io::confinement::session_optout_allowed() || !dest.is_dir() {
-        return Ok(());
-    }
-    fast_io::operator_open_destination(dest)
-        .and_then(|anchor| fast_io::confinement::pin_destination_root(dest, anchor))
-        .map_err(|error| super::error::destination_access_error(dest, error))
-}
-
 /// Reports whether `arg` names a remote-shell or daemon peer, by the operand
 /// forms the transfer dispatch below routes away from a local copy.
 fn operand_names_peer(arg: &std::ffi::OsString) -> bool {
@@ -546,28 +521,11 @@ fn run_client_internal(
             Err(error) => return Err(map_local_copy_error(error)),
         };
 
-    // upstream: main.c:776-781 - `get_local_name()` chdirs the receiver into
-    // an existing destination directory before any transfer runs
-    // (`change_dir(dest_path, CD_NORMAL)`), and a failure reports
-    // `change_dir#1 %s failed` and exits with RERR_FILESELECT (3). `chdir`
-    // needs search (`x`) permission, not read: a 0644 destination fails it
-    // (before any mode preservation could repair it) while an unreadable but
-    // searchable one passes, so probe traversability by stat'ing `<dest>/.`
-    // rather than reading the directory. Any other destination is resolved by
-    // the engine, which knows the file list it must hold. Under `list_only`
-    // main.c:725 returns before the chdir, so no destination is probed.
-    if !config.list_only()
-        && plan.destination().is_dir()
-        && let Err(error) = std::fs::metadata(plan.destination().join("."))
-        && error.kind() == std::io::ErrorKind::PermissionDenied
-    {
-        return Err(super::error::destination_access_error(
-            plan.destination(),
-            error,
-        ));
-    }
+    // The engine enters the destination after the file list is built, as
+    // upstream's get_local_name() does (main.c:1444); a pin left by an earlier
+    // run in this process must not answer for this one.
     #[cfg(unix)]
-    resolve_destination_like_change_dir(plan.destination())?;
+    fast_io::confinement::clear_destination_root();
 
     // upstream: main.c:1259 / main.c:1446 call `check_alt_basis_dirs()` once the
     // destination is known, so a stale `--link-dest` is reported rather than

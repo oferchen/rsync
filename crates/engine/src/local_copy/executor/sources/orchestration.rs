@@ -13,7 +13,7 @@ use protocol::flist::{FileEntry, compare_file_entries};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
-    CopyContext, CopyOutcome, DeleteTiming, DestinationConflict, LocalCopyAction,
+    CopyContext, CopyOutcome, DeleteTiming, DestinationConflict, DestinationEntry, LocalCopyAction,
     LocalCopyArgumentError, LocalCopyChangeSet, LocalCopyError, LocalCopyExecution,
     LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord, LocalCopyRecordHandler,
     SourceSpec, delete_extraneous_entries,
@@ -25,7 +25,10 @@ use super::super::refuse_populated_directory;
 use super::super::{
     emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
 };
-use super::destination::{ensure_destination_directory, query_destination_state};
+use super::destination::{
+    created_destination_entry, ensure_destination_directory, enter_destination,
+    make_single_entry_parent, query_destination_state,
+};
 use super::file_total::{FileTotal, file_total, listed_operands, parse_operand_merge_files};
 use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
@@ -590,12 +593,20 @@ pub(crate) fn copy_sources(
             parse_operand_merge_files(context, &operands)?;
             let mut destination_root_created = false;
             let mkpath = context.mkpath_enabled();
+            // upstream: main.c:1444 - get_local_name() runs only after the whole
+            // first file list is built, so every sender notice (`link_stat`,
+            // `skipping directory`) precedes a failure to enter the destination.
+            // Each such failure is held here and reported after the operand loop.
+            let mut entry_error = None;
             if plan.destination_spec().force_directory() {
-                destination_root_created |= ensure_destination_directory(
-                    destination_path,
-                    &mut destination_state,
-                    context.mode(),
-                    mkpath,
+                destination_root_created |= defer_entry_failure(
+                    create_destination_directory(
+                        destination_path,
+                        &mut destination_state,
+                        context.mode(),
+                        mkpath,
+                    ),
+                    &mut entry_error,
                 )?;
             }
 
@@ -605,8 +616,6 @@ pub(crate) fn copy_sources(
             // new directory (main.c:785-790, main.c:808-821); a single entry is
             // written under the destination's own name, from inside its parent
             // (main.c:791-796, main.c:843-868).
-            let mut single_entry_parent_error = None;
-            let mut single_entry_source = None;
             if !destination_state.is_dir && !plan.destination_spec().force_directory() {
                 match file_total(context, &operands)? {
                     FileTotal::Many => {
@@ -615,11 +624,14 @@ pub(crate) fn copy_sources(
                                 DestinationConflict::MoreThanOneFile,
                             ));
                         }
-                        destination_root_created |= ensure_destination_directory(
-                            destination_path,
-                            &mut destination_state,
-                            context.mode(),
-                            mkpath,
+                        destination_root_created |= defer_entry_failure(
+                            create_destination_directory(
+                                destination_path,
+                                &mut destination_state,
+                                context.mode(),
+                                mkpath,
+                            ),
+                            &mut entry_error,
                         )?;
                     }
                     FileTotal::AtMostOne(listed) => {
@@ -628,17 +640,32 @@ pub(crate) fn copy_sources(
                                 DestinationConflict::DirectoryOverNonDirectory,
                             ));
                         }
-                        // upstream: main.c:852-863 - `--mkpath` has already
-                        // created the parent, or under --dry-run skips entering it.
-                        if !mkpath {
-                            single_entry_parent_error =
-                                unusable_destination_parent(destination_path);
-                        }
-                        single_entry_source =
-                            listed.map(|listed| plan.sources()[listed.index].path());
+                        entry_error =
+                            enter_single_entry_parent(context, destination_path, mkpath).err();
                     }
                 }
             }
+
+            // upstream: main.c:777-781 - an existing destination directory is
+            // entered with `change_dir#1`. A dry run that only pretended to
+            // create it skips the chdir (main.c:828-835), and a listing has no
+            // destination (main.c:725).
+            if destination_state.is_dir
+                && !destination_root_created
+                && entry_error.is_none()
+                && !context.list_only_enabled()
+            {
+                entry_error = enter_destination(destination_path, DestinationEntry::Existing).err();
+            }
+            // upstream: main.c:1443 - an empty first file list never reaches
+            // get_local_name(), so nothing is entered and nothing is refused.
+            if operands.is_empty() {
+                entry_error = None;
+            }
+            let listed_sources: HashSet<&Path> = operands
+                .iter()
+                .map(|operand| plan.sources()[operand.index].path())
+                .collect();
 
             // upstream: main.c:817-828 - the pre-flight mkdir always prints
             // `created directory <dest>`, but only sets FLAG_DIR_CREATED on the
@@ -726,9 +753,8 @@ pub(crate) fn copy_sources(
             for source in &worklist {
                 // upstream: the sender's file list, with every link_stat and
                 // `skipping directory` notice, is complete before the receiver
-                // fails to enter the destination's parent.
-                if single_entry_parent_error.is_some() && single_entry_source == Some(source.path())
-                {
+                // fails to enter the destination; nothing listed is transferred.
+                if entry_error.is_some() && listed_sources.contains(source.path()) {
                     continue;
                 }
                 context.set_source_anchor(source_confinement_anchor(source));
@@ -792,7 +818,7 @@ pub(crate) fn copy_sources(
                 }
             }
 
-            if let Some(error) = single_entry_parent_error {
+            if let Some(error) = entry_error {
                 return Err(error);
             }
 
@@ -855,24 +881,73 @@ pub(crate) fn copy_sources(
     }
 }
 
-/// The error entering the parent of a single-entry destination would fail
-/// with, if any.
+/// Holds a failure to enter the destination for the end of the operand loop and
+/// passes every other result through.
+fn defer_entry_failure(
+    result: Result<bool, LocalCopyError>,
+    deferred: &mut Option<LocalCopyError>,
+) -> Result<bool, LocalCopyError> {
+    match result {
+        Err(error) if error.is_destination_entry_failure() => {
+            *deferred = Some(error);
+            Ok(false)
+        }
+        other => other,
+    }
+}
+
+/// Creates the destination directory the transfer needs and enters it.
 ///
-/// upstream: main.c:843-868 get_local_name() - `change_dir(dest_path)` on the
-/// destination's leading directories, failing `change_dir#3` with
-/// `RERR_FILESELECT`. A destination without a directory component is written
-/// in the current directory and needs no change. Statting `<parent>/.` needs
-/// the same search permission `chdir` does.
-fn unusable_destination_parent(destination: &Path) -> Option<LocalCopyError> {
-    let parent = destination
+/// upstream: main.c:757-772 - under `--mkpath`, make_path() builds the chain
+/// and the re-stat enters it as an existing directory (`change_dir#1`,
+/// main.c:777-781); otherwise do_mkdir() makes the one directory and
+/// `change_dir#2` (main.c:817-839) enters it. A dry run creates nothing and
+/// enters nothing (`CD_SKIP_CHDIR`).
+fn create_destination_directory(
+    destination: &Path,
+    state: &mut DestinationState,
+    mode: LocalCopyExecution,
+    mkpath: bool,
+) -> Result<bool, LocalCopyError> {
+    let created = ensure_destination_directory(destination, state, mode, mkpath)?;
+    if created && !mode.is_dry_run() {
+        enter_destination(destination, created_destination_entry(mkpath))?;
+    }
+    Ok(created)
+}
+
+/// Enters the parent of a single-entry destination, which the file is then
+/// written beneath under its own name.
+///
+/// upstream: main.c:843-868 get_local_name() - `change_dir#3` on the
+/// destination's leading directories. A destination without a directory
+/// component is written in the current directory and enters nothing. A dry
+/// run whose `--mkpath` parent does not exist yet skips the chdir
+/// (main.c:852-863); a real `--mkpath` run creates that parent later, while
+/// the entry is transferred.
+fn enter_single_entry_parent(
+    context: &mut CopyContext,
+    destination: &Path,
+    mkpath: bool,
+) -> Result<(), LocalCopyError> {
+    let Some(parent) = destination
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())?;
-    let error = match fs::metadata(parent.join(".")) {
-        Ok(metadata) if metadata.is_dir() => return None,
-        Ok(_) => io::Error::from(io::ErrorKind::NotADirectory),
-        Err(error) => error,
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(());
     };
-    Some(LocalCopyError::destination_parent_unusable(parent, error))
+    if mkpath && fs::metadata(parent).is_err() {
+        // upstream: main.c:757-772 - make_path(dest, MKP_DROP_NAME) builds the
+        // parent chain first; a dry run creates nothing and skips the chdir
+        // (main.c:852-863).
+        if context.mode().is_dry_run() {
+            return Ok(());
+        }
+        make_single_entry_parent(destination, parent)?;
+    }
+    enter_destination(parent, DestinationEntry::Parent)?;
+    context.record_entered_destination(parent);
+    Ok(())
 }
 
 /// Decides the exit status a run owes once every entry has been processed.

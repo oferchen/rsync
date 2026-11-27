@@ -100,8 +100,8 @@ pub use options::{
 };
 
 pub use error::{
-    DestinationConflict, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopySide,
-    upstream_io_error,
+    DestinationConflict, DestinationEntry, LocalCopyArgumentError, LocalCopyError,
+    LocalCopyErrorKind, LocalCopySide, upstream_io_error,
 };
 
 #[cfg(test)]

@@ -421,6 +421,18 @@ where
         return core::exit_code::record_exit(core::exit_code::process_latch(), code);
     };
 
+    // upstream: log.c:352-453 rwrite() writes each diagnostic when it is
+    // produced, so one printed before the run failed precedes the failure's
+    // report - e.g. the untrusted-symlink refusal (syscall.c:561-564) ahead of
+    // the `change_dir#N` line of the entry it refused (main.c:778-781).
+    let pending: Vec<_> = drain_stamped_events_for_client()
+        .into_iter()
+        .map(|stamped| stamped.into_value())
+        .collect();
+    if !pending.is_empty() {
+        let _ = render_diagnostic_events(&pending, stdout, stderr.writer_mut(), msgs_to_stderr);
+    }
+
     // upstream: cleanup.c:222-226 - after the peer's MSG_ERROR_EXIT only a
     // `--log-file` run without `--info=stats` still calls log_exit().
     let trailer =

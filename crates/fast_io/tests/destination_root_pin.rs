@@ -272,3 +272,76 @@ fn with_anchored_path_passes_an_unpinned_path_through() {
 
     assert_eq!(seen, Some(outside));
 }
+
+/// What a swap left in `base/outside`; empty when nothing followed it.
+fn outside_entries(base: &Path) -> usize {
+    fs::read_dir(base.join("outside")).expect("outside").count()
+}
+
+/// A single-file destination's confinement root is the file itself, so its
+/// temp file and final name are not beneath it. They are entries of the
+/// parent the receiver entered and pinned (upstream `change_dir#3`,
+/// `rsync-3.5.2/main.c:865-868`), and resolve from it: after that parent is
+/// swapped for the operator's own symlink - which the ownership walk would
+/// follow - the commit still lands in the parent that was entered.
+#[test]
+fn a_single_file_commit_lands_in_the_pinned_parent_after_a_swap() {
+    let (_temp, base, dest) = layout();
+    let file = dest.join("f");
+    let staged = dest.join(".f.tmp");
+    pin(&dest);
+    let entered = swap_for_symlink(&base, &dest);
+
+    drop(fast_io::confined_create_new(&file, &staged).expect("stage beside the file"));
+    fast_io::confined_rename(&file, &staged, &file, true).expect("commit the file");
+
+    assert!(
+        entered.join("f").is_file(),
+        "the commit left the entered parent"
+    );
+    assert_eq!(
+        outside_entries(&base),
+        0,
+        "the commit followed the swapped-in symlink"
+    );
+}
+
+/// The direct-write arm creates the final name itself; it resolves from the
+/// pinned parent the same way.
+#[test]
+fn a_single_file_created_in_place_lands_in_the_pinned_parent_after_a_swap() {
+    let (_temp, base, dest) = layout();
+    let file = dest.join("f");
+    pin(&dest);
+    let entered = swap_for_symlink(&base, &dest);
+
+    drop(fast_io::confined_create_new(&file, &file).expect("create the file"));
+
+    assert!(
+        entered.join("f").is_file(),
+        "the write left the entered parent"
+    );
+    assert_eq!(
+        outside_entries(&base),
+        0,
+        "the write followed the swapped-in symlink"
+    );
+}
+
+/// CONTROL for the two cells above: with nothing pinned, the same calls
+/// resolve the swapped name afresh and follow the operator's own symlink, so
+/// the cells above fail if the pinned parent is not consulted.
+#[test]
+fn an_unpinned_single_file_commit_follows_a_swapped_in_symlink() {
+    let (_temp, base, dest) = layout();
+    let file = dest.join("f");
+    let staged = dest.join(".f.tmp");
+    clear_destination_root();
+    let entered = swap_for_symlink(&base, &dest);
+
+    drop(fast_io::confined_create_new(&file, &staged).expect("stage beside the file"));
+    fast_io::confined_rename(&file, &staged, &file, true).expect("commit the file");
+
+    assert!(base.join("outside/f").is_file());
+    assert!(!entered.join("f").exists());
+}

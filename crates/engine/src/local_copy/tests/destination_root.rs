@@ -48,7 +48,11 @@ fn a_single_entry_destination_needs_an_existing_parent() {
     let error = plan.execute().expect_err("the parent cannot be entered");
 
     match error.kind() {
-        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
+        LocalCopyErrorKind::DestinationEntryFailed {
+            entry: DestinationEntry::Parent,
+            path,
+            source,
+        } => {
             assert_eq!(path, &parent);
             assert_eq!(source.kind(), io::ErrorKind::NotFound);
         }

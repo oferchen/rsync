@@ -386,6 +386,16 @@ impl<'a> CopyContext<'a> {
         false
     }
 
+    /// Records a directory entered before the transfer as a verified parent.
+    ///
+    /// upstream: main.c:865-868 - the receiver writes a single-file
+    /// destination from inside the parent `change_dir#3` entered, so that
+    /// parent is never examined again as a destination-tree level. Without
+    /// this, an operator's own symlink there would be judged an obstruction.
+    pub(in crate::local_copy) fn record_entered_destination(&mut self, directory: &Path) {
+        self.verified_parents.insert(directory.to_path_buf(), None);
+    }
+
     pub(super) fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         if parent.as_os_str().is_empty() {
             return Ok(());

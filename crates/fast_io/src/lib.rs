@@ -453,7 +453,7 @@ pub use dir_sandbox::{
     confined_create_new, confined_link_anonymous, confined_rename,
     create_dir_all_via_sandbox_or_fallback, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
     fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
-    linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
+    linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, make_path_beneath_cwd, mkdirat,
     mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
     nested_parent_anchoring_supported, open_basis_via_sandbox_or_fallback,
     open_dir_beneath_nofollow, open_inplace_output_via_sandbox_or_fallback,

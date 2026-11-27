@@ -384,6 +384,50 @@ pub fn mkdirat_via_sandbox_or_fallback(
     crate::ConfinedFallback::confined().mkdir_at(dir_path, mode)
 }
 
+/// Create every missing directory of the relative `path`, each beneath the
+/// process cwd through the confined walk, as upstream's `make_path()` does for
+/// a receiver that has not entered its destination yet.
+///
+/// Each new component is `mkdirat` against its parent, and that parent is
+/// reached with the walk that follows an in-tree relative symlink and refuses
+/// one that leaves the tree, such as an absolute target, with `ELOOP`. No
+/// ownership is judged and no refusal line is printed: that is the
+/// `secure_relpath_active()` arm of `do_mkdir_at()`, not the operator-path one.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.2/util1.c:210-280` `make_path()` - one `do_mkdir_at()` per
+///   missing component, an existing one accepted.
+/// - `rsync-3.5.2/syscall.c:2306-2332` `do_mkdir_at()` -
+///   `secure_relative_dirfd(NULL, dirpath)` then `mkdirat()`.
+/// - `rsync-3.5.2/syscall.c:3320-3324` `secure_relative_open()` - an
+///   absolute path is `EINVAL`.
+///
+/// # Errors
+///
+/// `EINVAL` for an absolute `path`, the walk's `ELOOP` for an escaping
+/// component, or the first `mkdirat` error other than `EEXIST`.
+pub fn make_path_beneath_cwd(path: &Path, mode: u32) -> io::Result<()> {
+    if path.is_absolute() {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    let mut parent = std::path::PathBuf::new();
+    for name in path.iter() {
+        let created = if parent.as_os_str().is_empty() {
+            mkdirat(rustix::fs::CWD, name, mode)
+        } else {
+            let dirfd = crate::dir_sandbox::walk_beneath(rustix::fs::CWD, &parent)?;
+            mkdirat(dirfd.as_fd(), name, mode)
+        };
+        match created {
+            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+            _ => {}
+        }
+        parent.push(name);
+    }
+    Ok(())
+}
+
 /// Create every missing directory of `dir_path`, which is
 /// `dest_dir.join(relative_dir)`, beneath the `sandbox` root.
 ///
