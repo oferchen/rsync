@@ -465,6 +465,14 @@ pub(super) fn build_full_daemon_args(
         if config.force_replacements() {
             args.push("--force".to_owned());
         }
+        // upstream: options.c:3091-3092 - `if (write_batch < 0)
+        // ADD_SERVER_ARG("--only-write-batch=X")`. The daemon receiver turns it
+        // into `dry_run = 1` (clientserver.c:1199) and reads no file data
+        // (receiver.c:1003-1009), so the module stays untouched while the
+        // local sender records the batch.
+        if config.only_write_batch() {
+            args.push(ONLY_WRITE_BATCH_PLACEHOLDER.to_owned());
+        }
 
         // upstream: options.c:3095-3096
         if config.size_only() {
@@ -848,13 +856,20 @@ fn build_module_operand(request: &DaemonTransferRequest) -> OsString {
     operand
 }
 
+/// The literal token upstream emits for `--only-write-batch` on a push.
+///
+/// upstream: options.c:3091-3092 - the `X` is a placeholder; a server never
+/// opens a batch file (main.c:1943 gates `open_batch_files()` on `!am_server`).
+const ONLY_WRITE_BATCH_PLACEHOLDER: &str = "--only-write-batch=X";
+
 /// Removes `--write-batch`, `--only-write-batch`, and `--read-batch` from a
-/// daemon-bound argument vector.
+/// daemon-bound argument vector, keeping only upstream's
+/// [`ONLY_WRITE_BATCH_PLACEHOLDER`].
 ///
 /// These are client-local flags: upstream `options.c:server_options()` never
 /// emits `--write-batch` or `--read-batch` to the server. The sole exception
 /// is `--only-write-batch`, which upstream replaces with the literal token
-/// `--only-write-batch=X` at `options.c:3026-3027` to force the server into
+/// `--only-write-batch=X` at `options.c:3091-3092` to force the server into
 /// dry-run mode; the X value carries no real path.
 ///
 /// We never construct daemon argv with batch flags today, but stripping here
@@ -888,7 +903,7 @@ fn strip_client_only_batch_flags(args: &mut Vec<String>) {
             }
             continue;
         }
-        if is_kv {
+        if is_kv && arg != ONLY_WRITE_BATCH_PLACEHOLDER {
             args.remove(i);
             continue;
         }
@@ -1442,6 +1457,16 @@ pub(super) mod tests {
         ];
         strip_client_only_batch_flags(&mut args);
         assert_eq!(args, vec!["--server", "."]);
+    }
+
+    /// The placeholder is what upstream itself forwards on a push
+    /// (options.c:3091-3092); stripping it lets the daemon receiver write the
+    /// pushed files into the module.
+    #[test]
+    fn keeps_only_write_batch_placeholder() {
+        let mut args = vec!["--server".into(), "--only-write-batch=X".into(), ".".into()];
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, vec!["--server", "--only-write-batch=X", "."]);
     }
 
     #[test]
@@ -2218,6 +2243,29 @@ mod oc_flag_forwarding_tests {
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
+    }
+
+    /// upstream options.c:3091-3092 emits the placeholder inside the
+    /// `am_sender` block only: a push puts the daemon receiver into dry-run,
+    /// while a pull leaves the daemon sender an ordinary one.
+    #[test]
+    fn only_write_batch_placeholder_rides_a_push_only() {
+        let config = ClientConfig::builder()
+            .batch_config(Some(engine::batch::BatchConfig::new(
+                engine::batch::BatchMode::OnlyWrite,
+                "batch".to_owned(),
+                32,
+            )))
+            .build();
+        let push = built_args(&config, false);
+        let pull = built_args(&config, true);
+        assert_eq!(
+            push.iter()
+                .filter(|a| a.starts_with("--only-write-batch"))
+                .collect::<Vec<_>>(),
+            ["--only-write-batch=X"]
+        );
+        assert!(!pull.iter().any(|a| a.starts_with("--only-write-batch")));
     }
 
     /// Sets every oc-invented tuning knob to a non-default value. These are

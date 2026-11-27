@@ -191,6 +191,7 @@ pub(crate) fn build_server_config_for_generator(
     // mode while local copies and pulls applied --chmod correctly. The daemon
     // module's own `incoming chmod` is applied separately on the daemon side.
     server_config.chmod = config.chmod().cloned();
+    flags::apply_only_write_batch_for_sender(config, &mut server_config);
 
     // upstream: options.c:2671-2725 / main.c:1432-1435 - the local sender
     // resolves a single files-from fd. A local file (LocalFile/Stdin, or a
@@ -310,6 +311,24 @@ mod tests {
         let server_config = build_server_config_for_generator(&config, &[], Vec::new())
             .expect("generator config builds");
         assert!(server_config.flags.prune_empty_dirs);
+    }
+
+    /// upstream `sender.c:510` diverts the sum head and tokens into the batch
+    /// under `--only-write-batch`. The daemon receiver that the forwarded
+    /// placeholder put into dry-run reads none of them (receiver.c:1003-1009),
+    /// so a sender that still streamed them would desync the wire.
+    #[test]
+    fn generator_config_carries_only_write_batch() {
+        let config = ClientConfig::builder()
+            .batch_config(Some(engine::batch::BatchConfig::new(
+                engine::batch::BatchMode::OnlyWrite,
+                "batch".to_owned(),
+                32,
+            )))
+            .build();
+        let server_config = build_server_config_for_generator(&config, &[], Vec::new())
+            .expect("generator config builds");
+        assert!(server_config.flags.only_write_batch);
     }
 
     #[test]
