@@ -400,3 +400,33 @@ fn cleared_tombstone_empty_name_is_a_noop() {
     ctx.recheck_received_implied_includes()
         .expect("a mode-0 cleared tombstone is a no-op, not an unrequested name");
 }
+
+/// CVE-2026-70461 over-match direction: `--files-from` names `a\`, and a
+/// hostile sender also offers `a/x`. rsync 3.5.2 doubles the non-wild entry's
+/// backslash before appending `/**` (exclude.c:640-646), so its rules are
+/// `/a\` and `/a\\/**`, neither of which admits `a/x`; the receiver refuses it
+/// (flist.c:1372-1375) and exits RERR_UNSUPPORTED. A single, undoubled
+/// backslash would make the `/**` rule `/a\/**`, which wildmatch reads as
+/// `/a/**`, and accept the unrequested name.
+#[test]
+fn a_name_outside_a_trailing_backslash_entry_is_refused() {
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.connection.implied_source_args = vec![b"a\\".to_vec()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_directory("a\\".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("a\\/x".into(), 1, 0o644));
+    ctx.file_list
+        .push(FileEntry::new_file("a/x".into(), 1, 0o644));
+
+    let err = ctx.recheck_received_implied_includes().unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "ERROR: rejecting unrequested file-list name: a/x"
+    );
+    assert_eq!(crate::error::rerr_for_io_error(&err), 4, "RERR_UNSUPPORTED");
+}
