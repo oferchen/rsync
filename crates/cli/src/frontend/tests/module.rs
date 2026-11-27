@@ -50,20 +50,60 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     assert!(rendered.contains("example\tvia connect program"));
 }
 
-#[test]
-fn module_list_username_prefix_legacy_syntax_is_accepted() {
-    let (addr, handle) = spawn_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
+/// Lists the modules of `user@HOST::`, with the port taken from `--port`.
+///
+/// upstream: options.c:3398 - a second `:` right after the host makes a
+/// daemon operand. `HOST:PORT::` is not one: the host ends at the first `:`,
+/// so 3.5.2 hands it to the remote shell with the path `PORT::`.
+fn list_with_legacy_syntax(host: &str, port: u16) {
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from(format!("--port={port}")),
+        OsString::from(format!("user@{host}::")),
+    ]);
 
-    let url = format!("user@[{}]:{}::", addr.ip(), addr.port());
-    let (code, stdout, stderr) = run_with_args([OsString::from(RSYNC), OsString::from(url)]);
-
-    assert_eq!(code, 0);
+    assert_eq!(code, 0, "{host}: {}", String::from_utf8_lossy(&stderr));
     assert!(stderr.is_empty());
 
     let rendered = String::from_utf8(stdout).expect("output is UTF-8");
     assert!(rendered.contains("module"));
+}
 
+#[test]
+fn module_list_username_prefix_legacy_syntax_is_accepted() {
+    let (addr, handle) = spawn_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
+    list_with_legacy_syntax(&addr.ip().to_string(), addr.port());
     handle.join().expect("server thread");
+}
+
+#[test]
+fn module_list_username_prefix_legacy_syntax_accepts_a_bracketed_ipv6_host() {
+    let (addr, handle) =
+        spawn_ipv6_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
+    list_with_legacy_syntax(&format!("[{}]", addr.ip()), addr.port());
+    handle.join().expect("server thread");
+}
+
+/// Brackets hold only an IPv6 address (RFC 3986 section 3.2.2) in every
+/// spelling, and the refusal comes before any connection is made.
+#[test]
+fn module_list_refuses_an_ipv4_address_in_brackets() {
+    for operand in [
+        "user@[127.0.0.1]:8873::",
+        "user@[127.0.0.1]::",
+        "rsync://user@[127.0.0.1]/",
+    ] {
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from(RSYNC), OsString::from(operand)]);
+        assert_eq!(code, 1, "{operand}");
+        assert!(stdout.is_empty(), "{operand}");
+        let stderr = String::from_utf8(stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr
+                .contains("Invalid remote host: only an IPv6 address may be enclosed in brackets."),
+            "{operand}: {stderr}"
+        );
+    }
 }
 
 #[test]
