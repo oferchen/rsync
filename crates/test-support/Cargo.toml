@@ -56,6 +56,11 @@ libc = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["event", "process"] }
 
+# A default ACL on a fixture directory, for oracle cells that compare
+# ACL-derived modes with rsync 3.5.2, without a setfacl binary.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+exacl = { workspace = true }
+
 # Rust port of upstream `support/lsh.sh`. Built as a workspace binary so tests
 # can resolve its path via `CARGO_BIN_EXE_lsh-stub` and drive oc-rsync's
 # remote-shell code paths locally (design section 5).

@@ -31,6 +31,9 @@ use super::perms::exacl_perms_to_rsync;
 /// (`acls.c:1466-1488`). Upstream's dry-run `ENOENT` exemption needs no
 /// counterpart: oc's callers never read a default ACL under `--dry-run`.
 ///
+/// An empty `dir` - the parent of a relative top-level name - is read as `.`,
+/// as upstream reads a NULL dirname (`acls.c:1460-1461`).
+///
 /// On platforms that do not expose POSIX default ACLs (e.g. macOS), this
 /// function returns the umask-derived default and never emits, matching the
 /// `#ifdef SUPPORT_ACLS` gating at `generator.c:1738-1741`.
@@ -43,6 +46,15 @@ use super::perms::exacl_perms_to_rsync;
 #[allow(clippy::module_name_repetitions)]
 #[must_use]
 pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
+    // upstream: acls.c:1460-1461 - a missing directory name means ".". The
+    // callers pass `file->dirname ? file->dirname : "."` (generator.c:1729,
+    // receiver.c:1201); oc's equivalent of a NULL dirname is the empty parent
+    // of a relative top-level name such as `dst`.
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
     // upstream: acls.c:1462 - perms = ACCESSPERMS & ~orig_umask
     let default_perms = 0o777u32 & !(orig_umask & 0o777);
 
