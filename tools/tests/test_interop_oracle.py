@@ -12,11 +12,13 @@ from hiding behind a stale row.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import os
 import socket
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -115,13 +117,21 @@ class FreePortTest(unittest.TestCase):
         self.assertTrue(all(p < 32768 for p in ports), ports)
     def test_bind_free_port_skips_a_port_taken_since_allocation(self):
         # The tap binds its own socket in the allocation loop, so a port taken
-        # by another socket is skipped instead of failing the cell.
+        # by another socket is skipped instead of failing the cell. The
+        # squatter takes a kernel-assigned port and the allocator's one-port
+        # range is pointed at it, so the test touches no port it does not own
+        # (a concurrent oracle run can share this run's range: the pid offset
+        # has four slots) and never computes a port past the squatter's, which
+        # may be 65535. Skipping the held port exhausts the range.
         with socket.socket() as squatter, socket.socket() as tap:
-            taken = oracle.free_port()
-            squatter.bind(("127.0.0.1", taken + 1))
-            port = oracle.bind_free_port(tap)
-            self.assertNotEqual(port, taken + 1)
-            self.assertEqual(tap.getsockname()[1], port)
+            squatter.bind(("127.0.0.1", 0))
+            taken = squatter.getsockname()[1]
+            with mock.patch.object(oracle, "_PORT_BASE", taken), \
+                    mock.patch.object(oracle, "_ports", itertools.count()), \
+                    mock.patch.object(oracle, "PORTS_PER_RUN", 1):
+                with self.assertRaisesRegex(RuntimeError, "^daemon port range exhausted$"):
+                    oracle.bind_free_port(tap)
+            self.assertEqual(tap.getsockname()[1], 0)
 
 
 class ExpectationTest(unittest.TestCase):
