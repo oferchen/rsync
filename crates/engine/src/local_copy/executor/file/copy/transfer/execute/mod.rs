@@ -890,7 +890,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             // upstream: token.c:simple_send_token() with token=-1 writes 0.
             context.finalize_batch_file_delta(source)?;
 
-            outcome
+            outcome.with_compressed_bytes(context.compressed_file_bytes(compress_enabled))
         }
         Err(error) => {
             drop(writer_for_metadata.take());

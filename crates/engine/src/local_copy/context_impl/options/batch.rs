@@ -350,73 +350,98 @@ impl<'a> CopyContext<'a> {
             })
     }
 
-    /// Appends a literal token for the current file to the batch delta buffer.
+    /// Emits a literal run's tokens for the current file and returns the bytes
+    /// they take on the wire.
     ///
     /// upstream: `token.c:1068 send_token()` dispatches on `do_compression`.
-    /// With `-z` (stream-flag bit 8, `batch.c:68`) the batch tee records
-    /// `send_deflated_token()` framing; without it, `simple_send_token()`'s
-    /// plain 4-byte length prefix. A no-op when batch mode is inactive.
+    /// Under `-z` the run's one token stream writes `send_deflated_token()`
+    /// framing, into the batch when one is recorded (stream-flag bit 8,
+    /// `batch.c:68`); without it, `simple_send_token()`'s plain 4-byte length
+    /// prefix goes to the batch.
     pub(super) fn write_batch_literal_token(
         &mut self,
         chunk: &[u8],
         path: &std::path::Path,
-    ) -> Result<(), crate::local_copy::LocalCopyError> {
-        if let Some(tally) = self.wire_tally.as_mut() {
-            tally.literal_data(chunk);
-        }
-        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
-            return Ok(());
-        };
-        if let Some(sum) = self.batch_whole_file_sum.as_mut() {
-            sum.update(chunk);
-        }
-        match self.batch_token_encoder.as_mut() {
-            Some(encoder) => encoder.send_literal(delta_file, chunk),
-            None => protocol::wire::delta::write_token_literal(delta_file, chunk),
-        }
-        .map_err(|e| {
+    ) -> Result<u64, crate::local_copy::LocalCopyError> {
+        let io_err = |e: std::io::Error| {
             crate::local_copy::LocalCopyError::io(
                 "write batch literal token",
                 path.to_path_buf(),
                 e,
             )
-        })
+        };
+        if let Some(sum) = self.batch_whole_file_sum.as_mut() {
+            sum.update(chunk);
+        }
+        if let Some(stream) = self.token_stream.as_mut() {
+            let bytes = stream
+                .literal(self.batch_delta_buf.as_mut(), chunk)
+                .map_err(io_err)?;
+            if let Some(tally) = self.wire_tally.as_mut() {
+                tally.compressed_tokens(bytes);
+            }
+            return Ok(bytes);
+        }
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.literal_data(chunk);
+        }
+        if let Some(delta_file) = self.batch_delta_buf.as_mut() {
+            protocol::wire::delta::write_token_literal(delta_file, chunk).map_err(io_err)?;
+        }
+        Ok(chunk.len() as u64)
     }
 
     /// Appends a block-match token for the current file to the batch delta
     /// buffer.
     ///
-    /// upstream: `token.c:simple_send_token()` writes `write_int(-(token+1))`;
-    /// `token.c:send_deflated_token()` emits the run-length encoded form. Under
-    /// CPRES_ZLIB the sender must also feed the matched bytes into the deflate
-    /// history (`token.c:475-510`) so the receiver's inflate dictionary stays in
-    /// sync; `see_data` carries those bytes for that purpose.
+    /// `see_data` is the matched block, which zlib `-z` feeds into the deflate
+    /// history (see [`Self::emit_block_match_token`]).
     pub(super) fn write_batch_block_match_token(
         &mut self,
         block_index: u32,
         see_data: &[u8],
         path: &std::path::Path,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
-        if let Some(tally) = self.wire_tally.as_mut() {
-            tally.block_match(block_index, Some(see_data));
-        }
-        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
-            return Ok(());
-        };
-        let result = match self.batch_token_encoder.as_mut() {
-            Some(encoder) => match encoder.send_block_match(delta_file, block_index) {
-                Ok(()) => encoder.see_token(see_data),
-                Err(e) => Err(e),
-            },
-            None => protocol::wire::delta::write_token_block_match(delta_file, block_index),
-        };
-        result.map_err(|e| {
+        self.emit_block_match_token(block_index, Some(see_data), path)
+    }
+
+    /// Emits a block-match token for the current file.
+    ///
+    /// upstream: `token.c:simple_send_token()` writes `write_int(-(token+1))`;
+    /// `token.c:send_deflated_token()` emits the run-length encoded form. Under
+    /// CPRES_ZLIB the sender must also feed the matched bytes into the deflate
+    /// history (`token.c:475-510`) so the receiver's inflate dictionary stays in
+    /// sync; `see_data` carries those bytes when the caller has them.
+    pub(super) fn emit_block_match_token(
+        &mut self,
+        block_index: u32,
+        see_data: Option<&[u8]>,
+        path: &std::path::Path,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let io_err = |e: std::io::Error| {
             crate::local_copy::LocalCopyError::io(
                 "write batch block match token",
                 path.to_path_buf(),
                 e,
             )
-        })
+        };
+        if let Some(stream) = self.token_stream.as_mut() {
+            let bytes = stream
+                .block_match(self.batch_delta_buf.as_mut(), block_index, see_data)
+                .map_err(io_err)?;
+            if let Some(tally) = self.wire_tally.as_mut() {
+                tally.compressed_tokens(bytes);
+            }
+            return Ok(());
+        }
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.block_match(block_index);
+        }
+        if let Some(delta_file) = self.batch_delta_buf.as_mut() {
+            protocol::wire::delta::write_token_block_match(delta_file, block_index)
+                .map_err(io_err)?;
+        }
+        Ok(())
     }
 
     /// Appends the end-of-file token for the current file to the batch delta
@@ -429,14 +454,13 @@ impl<'a> CopyContext<'a> {
         &mut self,
         path: &std::path::Path,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
+        if self.token_stream.is_some() {
+            return Ok(());
+        }
         let Some(delta_file) = self.batch_delta_buf.as_mut() else {
             return Ok(());
         };
-        match self.batch_token_encoder.as_mut() {
-            Some(encoder) => encoder.finish(delta_file),
-            None => protocol::wire::delta::write_token_end(delta_file),
-        }
-        .map_err(|e| {
+        protocol::wire::delta::write_token_end(delta_file).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "write batch token end marker",
                 path.to_path_buf(),
@@ -473,6 +497,12 @@ impl<'a> CopyContext<'a> {
         if let Some(tally) = self.wire_tally.as_mut() {
             tally.begin_transfer();
         }
+        // upstream: token.c:390 - send_deflated_token() reinitialises the
+        // deflate context at the start of every file, so each file's token
+        // stream stays independently decodable.
+        if let Some(stream) = self.token_stream.as_mut() {
+            stream.reset();
+        }
         let delta_file = match self.batch_delta_buf.as_mut() {
             Some(f) => f,
             None => return Ok(()),
@@ -482,13 +512,6 @@ impl<'a> CopyContext<'a> {
         delta_file.set_position(0);
         self.batch_report_slot = None;
         self.batch_whole_file_sum = None;
-
-        // upstream: token.c:390 - send_deflated_token() reinitialises the
-        // deflate context at the start of every file, so the batch's per-file
-        // token streams stay independently decodable.
-        if let Some(encoder) = self.batch_token_encoder.as_mut() {
-            encoder.reset();
-        }
 
         // NDX is remapped to sorted order at flush time; record the
         // traversal index here.
@@ -815,6 +838,7 @@ impl<'a> CopyContext<'a> {
     ) -> Result<(), crate::local_copy::LocalCopyError> {
         use std::io::{Read, Write};
 
+        self.finish_token_stream(source)?;
         if let Some(tally) = self.wire_tally.as_mut() {
             tally.end_transfer();
         }
@@ -995,19 +1019,28 @@ impl<'a> CopyContext<'a> {
         data: &[u8],
         initial_bytes: u64,
         source: &std::path::Path,
-    ) -> Result<(), crate::local_copy::LocalCopyError> {
-        if self.batch_delta_buf.is_none() || initial_bytes > 0 {
-            self.tally_whole_file_data(data);
-            return Ok(());
+    ) -> Result<u64, crate::local_copy::LocalCopyError> {
+        if self.batch_delta_buf.is_none() {
+            // Plain tokens are tallied from the file length once the copy is
+            // done; only the `-z` stream needs the bytes.
+            if self.token_stream.is_some() {
+                return self.write_batch_literal_token(data, source);
+            }
+            return Ok(data.len() as u64);
+        }
+        if initial_bytes > 0 {
+            // An append's tokens come from the capture after the copy.
+            return Ok(data.len() as u64);
         }
         if self.batch_whole_file_sum.is_none() {
             self.batch_whole_file_sum = Some(self.new_batch_file_sum());
         }
+        let mut wire_bytes = 0;
         let mut data = data;
         if run.is_empty() {
             while data.len() >= BATCH_LITERAL_CHUNK {
                 let (token, rest) = data.split_at(BATCH_LITERAL_CHUNK);
-                self.write_batch_literal_token(token, source)?;
+                wire_bytes += self.write_batch_literal_token(token, source)?;
                 data = rest;
             }
         }
@@ -1016,11 +1049,11 @@ impl<'a> CopyContext<'a> {
             run.extend_from_slice(&data[..take]);
             data = &data[take..];
             if run.len() == BATCH_LITERAL_CHUNK {
-                self.write_batch_literal_token(run, source)?;
+                wire_bytes += self.write_batch_literal_token(run, source)?;
                 run.clear();
             }
         }
-        Ok(())
+        Ok(wire_bytes)
     }
 
     /// Writes the tail of a whole-file literal run as its last token.
@@ -1028,12 +1061,13 @@ impl<'a> CopyContext<'a> {
         &mut self,
         run: &mut Vec<u8>,
         source: &std::path::Path,
-    ) -> Result<(), crate::local_copy::LocalCopyError> {
-        if !run.is_empty() {
-            self.write_batch_literal_token(run, source)?;
-            run.clear();
+    ) -> Result<u64, crate::local_copy::LocalCopyError> {
+        if run.is_empty() {
+            return Ok(0);
         }
-        Ok(())
+        let wire_bytes = self.write_batch_literal_token(run, source)?;
+        run.clear();
+        Ok(wire_bytes)
     }
 
     /// Completes a whole-file copy the read loop performed: under a batch the
@@ -1053,6 +1087,42 @@ impl<'a> CopyContext<'a> {
         } else {
             Ok(())
         }
+    }
+
+    /// Ends the current file's `-z` token stream: its tail and `END_FLAG` go to
+    /// the batch when one is recorded, and their size to the tally and the
+    /// bandwidth limiter.
+    ///
+    /// upstream: token.c:468-474 `send_deflated_token()` drains the stream and
+    /// writes `END_FLAG`.
+    fn finish_token_stream(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let Some(stream) = self.token_stream.as_mut() else {
+            return Ok(());
+        };
+        let bytes = stream.finish(self.batch_delta_buf.as_mut()).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch token end marker",
+                path.to_path_buf(),
+                e,
+            )
+        })?;
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.compressed_tokens(bytes);
+        }
+        self.register_limiter_bytes(bytes);
+        Ok(())
+    }
+
+    /// The current file's compressed size, for a copy that compresses; read
+    /// after [`Self::finalize_batch_file_delta`] ended its token stream.
+    pub(crate) fn compressed_file_bytes(&self, compress: bool) -> Option<u64> {
+        if !compress {
+            return None;
+        }
+        self.token_stream.as_ref().map(TokenStream::file_bytes)
     }
 
     fn tally_whole_file_literal(&mut self, len: u64) {

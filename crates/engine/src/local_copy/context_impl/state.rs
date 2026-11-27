@@ -33,11 +33,15 @@ impl<'a> CopyContext<'a> {
         let batch_delta_buf = build_batch_delta_buffer(&options);
         let batch_ndx_codec = build_batch_ndx_codec(&options);
         let batch_flist_writer = build_batch_flist_writer(&options);
-        let batch_token_encoder = build_batch_token_encoder(&options);
-        let adaptive_level = build_adaptive_level_controller(&options);
-        let wire_tally = options
-            .get_wire_totals()
-            .map(|totals| WireTally::new(totals, &options, mode.is_dry_run()));
+        let token_stream = build_token_stream(&options);
+        let wire_tally = options.get_wire_totals().map(|totals| {
+            let tally = WireTally::new(totals, &options, mode.is_dry_run());
+            if token_stream.is_some() {
+                tally.with_external_tokens()
+            } else {
+                tally
+            }
+        });
 
         Self {
             mode,
@@ -122,10 +126,9 @@ impl<'a> CopyContext<'a> {
             batch_current_delta_idx: 0,
             batch_flist_index: 0,
             batch_ndx_codec,
-            batch_token_encoder,
+            token_stream,
             wire_tally,
             readdir_buf: Vec::new(),
-            adaptive_level,
         }
     }
 

@@ -157,9 +157,8 @@ pub struct ClientConfig {
     pub(super) compression_level: Option<CompressionLevel>,
     pub(super) compression_setting: CompressionSetting,
     /// Worker thread count requested via `--compress-threads=N` (zstd's
-    /// `ZSTD_c_nbWorkers`). Propagated to both the local copy engine
-    /// (`ActiveCompressor`) and the wire protocol token encoder
-    /// (`CompressedTokenEncoder`) via `ServerConfig`.
+    /// `ZSTD_c_nbWorkers`). Propagated to the token encoder of both the
+    /// local copy engine and the wire protocol (`CompressedTokenEncoder`).
     ///
     /// Upstream: `options.c:93 do_compression_threads`,
     /// `token.c:752 ZSTD_c_nbWorkers`.

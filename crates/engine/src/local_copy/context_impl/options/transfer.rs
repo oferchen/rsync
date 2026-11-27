@@ -158,18 +158,6 @@ impl<'a> CopyContext<'a> {
         self.compress_enabled() && !self.options.should_skip_compress(relative)
     }
 
-    pub(super) const fn compression_level(&self) -> CompressionLevel {
-        self.options.compression_level()
-    }
-
-    pub(super) const fn compression_algorithm(&self) -> CompressionAlgorithm {
-        self.options.compression_algorithm()
-    }
-
-    pub(super) const fn compression_threads(&self) -> Option<std::num::NonZeroU8> {
-        self.options.compression_threads()
-    }
-
     pub(super) const fn block_size_override(&self) -> Option<NonZeroU32> {
         self.options.block_size_override()
     }

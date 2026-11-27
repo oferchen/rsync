@@ -116,64 +116,33 @@ fn build_batch_flist_writer(options: &LocalCopyOptions) -> Option<protocol::flis
     })
 }
 
-/// Creates the compressed-token encoder for the batch stream.
+/// Builds the run's one `-z` token stream.
 ///
-/// Returns `None` unless both `--write-batch` and compression are in effect.
-///
-/// upstream: batch.c:68 - stream-flag bit 8 records `do_compression`, and the
-/// batch file is a tee of the wire stream, so a batch written under `-z`
-/// carries `token.c:send_deflated_token()` framing. The codec is always zlib:
-/// `compat.c:414 getenv_nstr()` forces the compression list to "zlib" whenever
-/// `write_batch` is set ("When writing a batch file, we always negotiate an
-/// old-style choice"), which is also what `compat.c:194-195
-/// parse_compress_choice()` assumes on `--read-batch`.
-fn build_batch_token_encoder(
-    options: &LocalCopyOptions,
-) -> Option<protocol::wire::CompressedTokenEncoder> {
-    options.get_batch_writer().and_then(|batch_writer_arc| {
-        if !options.compress_enabled() {
-            return None;
-        }
-        let proto_version = batch_writer_arc
+/// The codec is zlib whenever a batch is written: `compat.c:414
+/// getenv_nstr()` forces the compression list to "zlib" under `write_batch`
+/// ("When writing a batch file, we always negotiate an old-style choice"),
+/// which is also what `compat.c:194-195 parse_compress_choice()` assumes on
+/// `--read-batch`. The tokens are framed for the batch header's protocol, else
+/// for the wire model's.
+fn build_token_stream(options: &LocalCopyOptions) -> Option<TokenStream> {
+    let batch_protocol = options.get_batch_writer().map(|writer| {
+        writer
             .lock()
             .expect("batch writer mutex poisoned")
             .config()
-            .protocol_version;
-        Some(protocol::wire::CompressedTokenEncoder::new(
-            options.compression_level(),
-            proto_version as u32,
-        ))
-    })
-}
-
-/// Creates the adaptive compression-level controller seeded from the
-/// configured level.
-///
-/// Returns `None` when compression or adaptive levelling is off, or when the
-/// negotiated algorithm has no controller.
-fn build_adaptive_level_controller(
-    options: &LocalCopyOptions,
-) -> Option<compress::strategy::adaptive_level::AdaptiveLevelController> {
-    if !(options.compress_enabled() && options.adaptive_compress_enabled()) {
-        return None;
-    }
-    let level_i32 = match options.compression_level() {
-        CompressionLevel::None => 0,
-        CompressionLevel::Fast => 1,
-        CompressionLevel::Default => 6,
-        CompressionLevel::Best => 9,
-        CompressionLevel::Precise(v) => i32::from(v.get()),
-        // upstream: token.c:73 - preserve zstd's negative "fast" levels.
-        CompressionLevel::PreciseSigned(v) => v,
+            .protocol_version as u32
+    });
+    let algorithm = if batch_protocol.is_some() {
+        CompressionAlgorithm::Zlib
+    } else {
+        options.compression_algorithm()
     };
-    match options.compression_algorithm() {
-        CompressionAlgorithm::Zlib => {
-            Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zlib(level_i32))
-        }
-        #[cfg(feature = "zstd")]
-        CompressionAlgorithm::Zstd => {
-            Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zstd(level_i32))
-        }
-        _ => None,
-    }
+    let protocol = batch_protocol
+        .or_else(|| {
+            options
+                .get_wire_totals()
+                .map(|totals| u32::from(totals.protocol().as_u8()))
+        })
+        .unwrap_or(u32::from(protocol::ProtocolVersion::NEWEST.as_u8()));
+    TokenStream::from_options(options, algorithm, protocol)
 }

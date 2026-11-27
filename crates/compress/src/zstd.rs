@@ -48,16 +48,6 @@ impl CountingZstdEncoder<CountingSink> {
         Self::with_sink(CountingSink, level)
     }
 
-    /// Like [`new`](Self::new) but plumbs `--compress-threads=N` through to
-    /// zstd's `ZSTD_c_nbWorkers`. `None` matches upstream's
-    /// `do_compression_threads = 0` default.
-    pub fn new_with_workers(
-        level: CompressionLevel,
-        workers: Option<NonZeroU8>,
-    ) -> io::Result<Self> {
-        Self::with_sink_workers(CountingSink, level, workers)
-    }
-
     /// Completes the stream and returns the total number of compressed bytes generated.
     pub fn finish(self) -> io::Result<u64> {
         let (_sink, bytes) = self.finish_into_inner()?;
