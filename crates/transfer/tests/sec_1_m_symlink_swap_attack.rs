@@ -491,7 +491,9 @@ fn scenario_4_interior_dir_symlink_escape_is_refused() {
         assert!(
             matches!(
                 raw,
-                Some(libc::EXDEV) | Some(libc::ELOOP) | Some(libc::ENOTDIR)
+                Some(fast_io::errno::EXDEV)
+                    | Some(fast_io::errno::ELOOP)
+                    | Some(fast_io::errno::ENOTDIR)
             ),
             "expected EXDEV/ELOOP/ENOTDIR from the RESOLVE_BENEATH parent open, got {raw:?}"
         );

@@ -24,7 +24,6 @@ tracing = { workspace = true, optional = true }
 tracing = ["dep:tracing"]
 
 [dev-dependencies]
-libc = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 test-support = { path = "../test-support" }

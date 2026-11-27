@@ -172,7 +172,7 @@ pub(super) struct StreamResult {
 fn short_read_error() -> io::Error {
     #[cfg(unix)]
     {
-        io::Error::from_raw_os_error(libc::ENODATA)
+        io::Error::from_raw_os_error(fast_io::errno::ENODATA)
     }
     #[cfg(not(unix))]
     {

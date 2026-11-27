@@ -1,6 +1,6 @@
 //! Platform-specific socket constants.
 //!
-//! On Unix, forwards directly to `libc`.
+//! On Unix, forwards to the `libc` values re-exported by `fast_io`.
 //! On Windows, provides Winsock-compatible numeric values.
 //!
 //! This is a small adapter so the rest of the module stays platform-neutral.
@@ -11,14 +11,14 @@
 /// expose them uniformly (e.g. Apple platforms omit the aliases), so the value
 /// is spelled out rather than re-exported.
 #[cfg(not(target_family = "windows"))]
-pub(super) const IPTOS_LOWDELAY: libc::c_int = 0x10;
+pub(super) const IPTOS_LOWDELAY: std::ffi::c_int = 0x10;
 
 /// IP type-of-service class selector requesting high throughput.
 ///
 /// Defined here for the same reason as [`IPTOS_LOWDELAY`]: libc does not expose
 /// the RFC 1349 aliases uniformly across Unix targets.
 #[cfg(not(target_family = "windows"))]
-pub(super) const IPTOS_THROUGHPUT: libc::c_int = 0x08;
+pub(super) const IPTOS_THROUGHPUT: std::ffi::c_int = 0x08;
 
 /// Socket-level option protocol number.
 ///
@@ -26,14 +26,14 @@ pub(super) const IPTOS_THROUGHPUT: libc::c_int = 0x08;
 /// like `SO_KEEPALIVE`, `SO_REUSEADDR`, and buffer sizes.
 ///
 /// # Platform values
-/// - Unix: Typically `1` (from `libc::SOL_SOCKET`)
+/// - Unix: Typically `1` (from `fast_io::socket_options::SOL_SOCKET`)
 /// - Windows: `0xFFFF` (Winsock `SOL_SOCKET`)
 #[cfg(not(target_family = "windows"))]
-pub const SOL_SOCKET: libc::c_int = libc::SOL_SOCKET;
+pub const SOL_SOCKET: std::ffi::c_int = fast_io::socket_options::SOL_SOCKET;
 
 /// Socket-level option protocol number (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SOL_SOCKET: libc::c_int = 0xFFFF;
+pub const SOL_SOCKET: std::ffi::c_int = 0xFFFF;
 
 /// Enable TCP keepalive probes on the connection.
 ///
@@ -44,11 +44,11 @@ pub const SOL_SOCKET: libc::c_int = 0xFFFF;
 /// # Upstream rsync
 /// Equivalent to `--sockopts=SO_KEEPALIVE`.
 #[cfg(not(target_family = "windows"))]
-pub const SO_KEEPALIVE: libc::c_int = libc::SO_KEEPALIVE;
+pub const SO_KEEPALIVE: std::ffi::c_int = fast_io::socket_options::SO_KEEPALIVE;
 
 /// Enable TCP keepalive probes (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SO_KEEPALIVE: libc::c_int = 0x0008;
+pub const SO_KEEPALIVE: std::ffi::c_int = 0x0008;
 
 /// Allow reuse of local addresses in TIME_WAIT state.
 ///
@@ -58,22 +58,22 @@ pub const SO_KEEPALIVE: libc::c_int = 0x0008;
 /// # Upstream rsync
 /// Equivalent to `--sockopts=SO_REUSEADDR`.
 #[cfg(not(target_family = "windows"))]
-pub const SO_REUSEADDR: libc::c_int = libc::SO_REUSEADDR;
+pub const SO_REUSEADDR: std::ffi::c_int = fast_io::socket_options::SO_REUSEADDR;
 
 /// Allow reuse of local addresses (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SO_REUSEADDR: libc::c_int = 0x0004;
+pub const SO_REUSEADDR: std::ffi::c_int = 0x0004;
 
 /// Allow sending broadcast messages on the socket.
 ///
 /// # Upstream rsync
 /// Equivalent to `--sockopts=SO_BROADCAST`.
 #[cfg(not(target_family = "windows"))]
-pub const SO_BROADCAST: libc::c_int = libc::SO_BROADCAST;
+pub const SO_BROADCAST: std::ffi::c_int = fast_io::socket_options::SO_BROADCAST;
 
 /// Allow sending broadcast messages (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SO_BROADCAST: libc::c_int = 0x0020;
+pub const SO_BROADCAST: std::ffi::c_int = 0x0020;
 
 /// Set the send buffer size in bytes.
 ///
@@ -83,11 +83,11 @@ pub const SO_BROADCAST: libc::c_int = 0x0020;
 /// # Upstream rsync
 /// Equivalent to `--sockopts=SO_SNDBUF=<n>`.
 #[cfg(not(target_family = "windows"))]
-pub const SO_SNDBUF: libc::c_int = libc::SO_SNDBUF;
+pub const SO_SNDBUF: std::ffi::c_int = fast_io::socket_options::SO_SNDBUF;
 
 /// Set the send buffer size (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SO_SNDBUF: libc::c_int = 0x1001;
+pub const SO_SNDBUF: std::ffi::c_int = 0x1001;
 
 /// Set the receive buffer size in bytes.
 ///
@@ -96,11 +96,11 @@ pub const SO_SNDBUF: libc::c_int = 0x1001;
 /// # Upstream rsync
 /// Equivalent to `--sockopts=SO_RCVBUF=<n>`.
 #[cfg(not(target_family = "windows"))]
-pub const SO_RCVBUF: libc::c_int = libc::SO_RCVBUF;
+pub const SO_RCVBUF: std::ffi::c_int = fast_io::socket_options::SO_RCVBUF;
 
 /// Set the receive buffer size (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SO_RCVBUF: libc::c_int = 0x1002;
+pub const SO_RCVBUF: std::ffi::c_int = 0x1002;
 
 /// Set the send timeout in seconds.
 ///
@@ -109,11 +109,11 @@ pub const SO_RCVBUF: libc::c_int = 0x1002;
 /// # Upstream rsync
 /// Equivalent to `--sockopts=SO_SNDTIMEO=<n>`.
 #[cfg(not(target_family = "windows"))]
-pub const SO_SNDTIMEO: libc::c_int = libc::SO_SNDTIMEO;
+pub const SO_SNDTIMEO: std::ffi::c_int = fast_io::socket_options::SO_SNDTIMEO;
 
 /// Set the send timeout (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SO_SNDTIMEO: libc::c_int = 0x1005;
+pub const SO_SNDTIMEO: std::ffi::c_int = 0x1005;
 
 /// Set the receive timeout in seconds.
 ///
@@ -123,22 +123,22 @@ pub const SO_SNDTIMEO: libc::c_int = 0x1005;
 /// # Upstream rsync
 /// Equivalent to `--sockopts=SO_RCVTIMEO=<n>`.
 #[cfg(not(target_family = "windows"))]
-pub const SO_RCVTIMEO: libc::c_int = libc::SO_RCVTIMEO;
+pub const SO_RCVTIMEO: std::ffi::c_int = fast_io::socket_options::SO_RCVTIMEO;
 
 /// Set the receive timeout (Windows variant).
 #[cfg(target_family = "windows")]
-pub const SO_RCVTIMEO: libc::c_int = 0x1006;
+pub const SO_RCVTIMEO: std::ffi::c_int = 0x1006;
 
 /// TCP protocol number for protocol-specific socket options.
 ///
 /// Used as the `level` argument to `setsockopt()` for TCP-specific options
 /// like `TCP_NODELAY`.
 #[cfg(not(target_family = "windows"))]
-pub const IPPROTO_TCP: libc::c_int = libc::IPPROTO_TCP;
+pub const IPPROTO_TCP: std::ffi::c_int = fast_io::socket_options::IPPROTO_TCP;
 
 /// TCP protocol number (Windows variant).
 #[cfg(target_family = "windows")]
-pub const IPPROTO_TCP: libc::c_int = 6;
+pub const IPPROTO_TCP: std::ffi::c_int = 6;
 
 /// Disable Nagle's algorithm for latency-sensitive transfers.
 ///
@@ -149,8 +149,8 @@ pub const IPPROTO_TCP: libc::c_int = 6;
 /// Equivalent to `--sockopts=TCP_NODELAY`. Often combined with
 /// `IPTOS_LOWDELAY` for latency-sensitive workloads.
 #[cfg(not(target_family = "windows"))]
-pub const TCP_NODELAY: libc::c_int = libc::TCP_NODELAY;
+pub const TCP_NODELAY: std::ffi::c_int = fast_io::socket_options::TCP_NODELAY;
 
 /// Disable Nagle's algorithm (Windows variant).
 #[cfg(target_family = "windows")]
-pub const TCP_NODELAY: libc::c_int = 0x0001;
+pub const TCP_NODELAY: std::ffi::c_int = 0x0001;

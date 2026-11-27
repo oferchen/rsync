@@ -123,6 +123,9 @@ pub mod destination_at;
 pub mod dir_sandbox;
 /// Metadata from whichever stat answered: `fstatat` or the path-based call.
 pub mod entry_metadata;
+/// Unix-only: errno values for classifying `raw_os_error()`.
+#[cfg(unix)]
+pub mod errno;
 pub use entry_metadata::{EntryFileType, EntryMetadata};
 pub mod file_times;
 pub use file_times::{accessed_filetime, modified_filetime, set_path_times};
@@ -156,6 +159,9 @@ pub mod net_reader;
 /// Receiver-side basis open with `O_NOFOLLOW` on the basename, matching
 /// upstream rsync's `do_open_at()` dirname/basename split.
 pub mod nofollow_open;
+/// Unix-only: `open(2)` flag values for `custom_flags` and `openat`.
+#[cfg(unix)]
+pub mod open_flags;
 /// Unix-only: ownership-trusted resolution for operator-supplied paths
 /// (`--backup-dir`, `--temp-dir`, alt-dests), mirroring upstream
 /// `owner_walk_parent` (`syscall.c:704`).

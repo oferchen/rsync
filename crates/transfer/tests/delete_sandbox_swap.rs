@@ -99,7 +99,7 @@ fn delete_directory_swap_to_symlink_refuses_descent() {
         .expect_err("recursive unlinkat must refuse a symlinked descent root");
     let errno = err.raw_os_error();
     assert!(
-        errno == Some(libc::ELOOP) || errno == Some(libc::ENOTDIR),
+        errno == Some(fast_io::errno::ELOOP) || errno == Some(fast_io::errno::ENOTDIR),
         "expected ELOOP or ENOTDIR (symlink not followed), got {err:?}"
     );
     assert!(
@@ -138,7 +138,7 @@ fn read_dir_swap_to_symlink_refuses_listing() {
             .expect_err("symlink at listing leaf must be refused");
     let errno = err.raw_os_error();
     assert!(
-        errno == Some(libc::ELOOP) || errno == Some(libc::ENOTDIR),
+        errno == Some(fast_io::errno::ELOOP) || errno == Some(fast_io::errno::ENOTDIR),
         "expected ELOOP or ENOTDIR (symlink not followed), got {err:?}"
     );
     assert!(
@@ -233,11 +233,9 @@ fn sandbox_off_fallback_matches_std_for_legitimate_delete() {
 /// receiver's `delete_extraneous_files` recursive branch uses.
 #[test]
 fn delete_removes_owned_read_only_directory_containing_extraneous_file() {
-    // SAFETY: geteuid(2) is a pure accessor; root bypasses every
-    // permission check, which would make this test meaningless.
-    #[allow(unsafe_code)]
-    let euid = unsafe { libc::geteuid() };
-    if euid == 0 {
+    // Root bypasses every permission check, which would make this test
+    // meaningless.
+    if rustix::process::geteuid().is_root() {
         return;
     }
 

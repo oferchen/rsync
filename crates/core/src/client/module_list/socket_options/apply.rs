@@ -103,7 +103,7 @@ pub fn apply_socket_options_reporting(
         {
             let parsed_value = value_str
                 .map(parse_socket_option_value)
-                .unwrap_or(libc::c_int::from(1));
+                .unwrap_or(std::ffi::c_int::from(1));
             parsed.push(ParsedSocketOption {
                 kind,
                 explicit_value: Some(parsed_value),

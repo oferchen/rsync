@@ -3111,7 +3111,7 @@ mod tests {
         // mid-syscall symlink swap on the leaf surfaces as ELOOP under
         // `openat2(RESOLVE_NO_SYMLINKS)` (Linux) and `openat(O_NOFOLLOW)`
         // on the path-based fallback.
-        let eloop = io::Error::from_raw_os_error(libc::ELOOP);
+        let eloop = io::Error::from_raw_os_error(fast_io::errno::ELOOP);
         let propagated = fail_loud_unlink_error(eloop)
             .expect("ELOOP must surface as Err so the receiver exits non-zero");
         assert_ne!(propagated.kind(), io::ErrorKind::PermissionDenied);
@@ -3120,7 +3120,7 @@ mod tests {
         // ENOTDIR is the macOS/BSD fail-loud class produced when the
         // sandbox finds a non-directory at the resolved path (a planted
         // file at the scan target).
-        let enotdir = io::Error::from_raw_os_error(libc::ENOTDIR);
+        let enotdir = io::Error::from_raw_os_error(fast_io::errno::ENOTDIR);
         assert!(
             fail_loud_unlink_error(enotdir).is_some(),
             "ENOTDIR must surface as Err (planted-file-where-dir trap)",
@@ -3129,7 +3129,7 @@ mod tests {
         // EOPNOTSUPP / `Unsupported` is the sandbox-anchored refusal
         // class. The fix must propagate it instead of pretending the
         // unlink succeeded.
-        let eopnotsupp = io::Error::from_raw_os_error(libc::EOPNOTSUPP);
+        let eopnotsupp = io::Error::from_raw_os_error(fast_io::errno::EOPNOTSUPP);
         assert!(
             fail_loud_unlink_error(eopnotsupp).is_some(),
             "EOPNOTSUPP must surface as Err (sandbox-anchored refusal)",
@@ -3142,7 +3142,7 @@ mod tests {
     /// unlink path.
     #[test]
     fn classify_scan_error_threads_fail_loud_class() {
-        let eloop = io::Error::from_raw_os_error(libc::ELOOP);
+        let eloop = io::Error::from_raw_os_error(fast_io::errno::ELOOP);
         let (stats, paths, worker_err) = classify_scan_error(eloop);
         assert_eq!(stats.total(), 0);
         assert!(paths.is_empty());

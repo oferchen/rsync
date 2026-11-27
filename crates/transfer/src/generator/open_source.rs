@@ -30,7 +30,9 @@ use std::sync::Arc;
 use std::os::unix::fs::OpenOptionsExt;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use libc::{EACCES, EINVAL, ENOTSUP, EPERM, EROFS, O_NOATIME};
+use fast_io::errno::{EACCES, EINVAL, ENOTSUP, EPERM, EROFS};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use fast_io::open_flags::O_NOATIME;
 
 /// The sender's per-connection source-open policy.
 ///
@@ -306,7 +308,7 @@ pub(super) fn open_source_with_noatime(path: &Path, use_noatime: bool) -> io::Re
 /// with `O_NOATIME` added when `open_noatime` is set.
 #[cfg(unix)]
 pub(super) fn open_source_nofollow(path: &Path, use_noatime: bool) -> io::Result<fs::File> {
-    let nofollow = libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let nofollow = fast_io::open_flags::O_NOFOLLOW | fast_io::open_flags::O_CLOEXEC;
     if use_noatime && let Some(extra) = noatime_flag() {
         let mut options = fs::OpenOptions::new();
         options.read(true).custom_flags(nofollow | extra);
@@ -346,7 +348,13 @@ fn noatime_flag() -> Option<i32> {
 fn noatime_retryable(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
-        Some(libc::EPERM | libc::EACCES | libc::EINVAL | libc::ENOTSUP | libc::EROFS)
+        Some(
+            fast_io::errno::EPERM
+                | fast_io::errno::EACCES
+                | fast_io::errno::EINVAL
+                | fast_io::errno::ENOTSUP
+                | fast_io::errno::EROFS
+        )
     )
 }
 
@@ -465,7 +473,7 @@ mod tests {
         let err = policy
             .open(&leaf)
             .expect_err("O_NOFOLLOW must refuse a symlinked leaf");
-        assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
+        assert_eq!(err.raw_os_error(), Some(fast_io::errno::ELOOP));
     }
 
     /// With `--copy-links` / `--copy-unsafe-links` the policy follows the
@@ -522,7 +530,7 @@ mod tests {
             .expect_err("confined open must refuse the escape");
         let code = err.raw_os_error();
         assert!(
-            code == Some(libc::EXDEV) || code == Some(libc::ELOOP),
+            code == Some(fast_io::errno::EXDEV) || code == Some(fast_io::errno::ELOOP),
             "expected EXDEV or ELOOP for a confined escape, got: {err}"
         );
     }
@@ -559,7 +567,7 @@ mod tests {
         let err = strict
             .open(&leaf)
             .expect_err("the default confined policy must refuse a leaf symlink");
-        assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
+        assert_eq!(err.raw_os_error(), Some(fast_io::errno::ELOOP));
 
         // --copy-links: the same leaf resolves, still confined.
         let following = SourceOpen::new(

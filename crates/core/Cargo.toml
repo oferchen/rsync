@@ -34,7 +34,6 @@ logging = { path = "../logging" }
 fast_io = { path = "../fast_io", default-features = false }
 thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }
-libc = { workspace = true }
 base64 = { workspace = true }
 tempfile = { workspace = true }
 socket2 = { workspace = true }
@@ -47,8 +46,6 @@ idna = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
-nix = { workspace = true, features = ["user"] }
-rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
@@ -140,6 +137,12 @@ tempfile = { workspace = true }
 test-support = { path = "../test-support", features = ["daemon"] }
 tracing-subscriber = { workspace = true }
 criterion = { workspace = true }
+# Integration tests send signals (libc::kill), set macOS creation times
+# (libc::setattrlist) and probe the effective uid (rustix::process::geteuid).
+libc = { workspace = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["process"] }
 
 [[bench]]
 name = "transfer_benchmark"

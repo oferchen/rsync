@@ -5,7 +5,7 @@ use crate::version::report::{
     default_compress_algorithms, default_daemon_auth_algorithms,
 };
 use fast_io::platform_io_capabilities;
-use libc::{ino_t, off_t};
+use platform::c_types::{InoT, OffT};
 use std::mem;
 
 fn gpl_footer(program_name: &str) -> String {
@@ -22,8 +22,8 @@ fn version_info_report_renders_default_report() {
     let report = VersionInfoReport::new(config);
     let actual = report.human_readable();
 
-    let bit_files = mem::size_of::<off_t>() * 8;
-    let bit_inums = mem::size_of::<ino_t>() * 8;
+    let bit_files = mem::size_of::<OffT>() * 8;
+    let bit_inums = mem::size_of::<InoT>() * 8;
     let bit_timestamps = mem::size_of::<TimeT>() * 8;
     let bit_long_ints = mem::size_of::<i64>() * 8;
     assert!(actual.starts_with(&format!("{PROGRAM_NAME} v{RUST_VERSION}")));

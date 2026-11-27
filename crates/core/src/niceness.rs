@@ -3,7 +3,7 @@
 //! Mirrors upstream `niceness.c` (added in rsync 3.5.2): parses `[TARGET:]SPEC[,...]`
 //! priority specifications, tracks independent local and remote settings, formats
 //! the `--nice=local:...` option forwarded to a remote peer, validates daemon
-//! client requests, and applies CPU nice via `rustix::process::setpriority_process`
+//! client requests, and applies CPU nice via `platform::priority::set_cpu_priority`
 //! and I/O priority via `platform::priority::set_io_priority`.
 
 use std::fmt;
@@ -290,7 +290,7 @@ fn parse_priority(spec: &str) -> Option<PrioritySetting> {
 }
 
 fn apply_cpu_priority(role: ProcessRole, priority: i32) -> bool {
-    match set_cpu_priority_os(priority) {
+    match platform::priority::set_cpu_priority(priority) {
         Ok(()) => {
             debug_log!(Cmd, 1, "set {role} CPU priority to {priority}");
             true
@@ -306,16 +306,6 @@ fn apply_cpu_priority(role: ProcessRole, priority: i32) -> bool {
             false
         }
     }
-}
-
-#[cfg(unix)]
-fn set_cpu_priority_os(priority: i32) -> io::Result<()> {
-    rustix::process::setpriority_process(None, priority).map_err(io::Error::from)
-}
-
-#[cfg(not(unix))]
-fn set_cpu_priority_os(_priority: i32) -> io::Result<()> {
-    Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 
 fn apply_io_priority(role: ProcessRole, io_class: IoPriorityClass) {

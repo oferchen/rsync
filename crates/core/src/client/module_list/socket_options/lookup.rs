@@ -55,8 +55,8 @@ pub(super) fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
             target_os = "cygwin"
         ))]
         "SO_SNDLOWAT" => Some(SocketOptionKind::Int {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_SNDLOWAT,
+            level: fast_io::socket_options::SOL_SOCKET,
+            option: fast_io::socket_options::SO_SNDLOWAT,
         }),
         #[cfg(any(
             target_os = "macos",
@@ -77,8 +77,8 @@ pub(super) fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
             target_os = "cygwin"
         ))]
         "SO_RCVLOWAT" => Some(SocketOptionKind::Int {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_RCVLOWAT,
+            level: fast_io::socket_options::SOL_SOCKET,
+            option: fast_io::socket_options::SO_RCVLOWAT,
         }),
         "SO_SNDTIMEO" => Some(SocketOptionKind::Int {
             level: consts::SOL_SOCKET,
@@ -94,14 +94,14 @@ pub(super) fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
         }),
         #[cfg(not(target_family = "windows"))]
         "IPTOS_LOWDELAY" => Some(SocketOptionKind::On {
-            level: libc::IPPROTO_IP,
-            option: libc::IP_TOS,
+            level: fast_io::socket_options::IPPROTO_IP,
+            option: fast_io::socket_options::IP_TOS,
             value: IPTOS_LOWDELAY,
         }),
         #[cfg(not(target_family = "windows"))]
         "IPTOS_THROUGHPUT" => Some(SocketOptionKind::On {
-            level: libc::IPPROTO_IP,
-            option: libc::IP_TOS,
+            level: fast_io::socket_options::IPPROTO_IP,
+            option: fast_io::socket_options::IP_TOS,
             value: IPTOS_THROUGHPUT,
         }),
         _ => None,
@@ -111,7 +111,7 @@ pub(super) fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
 /// Minimal, allocation-free numeric parser for socket option values.
 ///
 /// Stricter than `libc::atoi`-style parsing. Clamps into `i32` range.
-pub(super) fn parse_socket_option_value(raw: &str) -> libc::c_int {
+pub(super) fn parse_socket_option_value(raw: &str) -> std::ffi::c_int {
     let mut bytes = raw.trim_start().as_bytes().iter().copied();
 
     let mut sign = 1i64;
@@ -170,7 +170,7 @@ pub(super) fn parse_socket_option_value(raw: &str) -> libc::c_int {
                 i32::MAX
             }
         });
-    clamped as libc::c_int
+    clamped as std::ffi::c_int
 }
 
 /// Interns well-known option names into static string slices so error paths

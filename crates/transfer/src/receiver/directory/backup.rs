@@ -902,7 +902,7 @@ mod tests {
         };
         assert_eq!(
             err.raw_os_error(),
-            Some(libc::ELOOP),
+            Some(fast_io::errno::ELOOP),
             "the escape must be refused with ELOOP, got {}",
             err
         );
@@ -1040,7 +1040,7 @@ mod tests {
         let victim = dir.path().join("victim");
         let backup = dir.path().join("victim~");
         std::os::unix::fs::symlink("target", &victim).unwrap();
-        let _force = super::ForceLinkErrno::new(libc::EXDEV);
+        let _force = super::ForceLinkErrno::new(fast_io::errno::EXDEV);
         let placement = place_existing_backup(
             &victim,
             &backup,
@@ -1071,7 +1071,7 @@ mod tests {
         std::os::unix::fs::symlink("the/secret/target", &victim).unwrap();
         // ENOENT is a plain, non-cross-device failure: with an EXDEV-only
         // guard this returns Err and no backup node is created.
-        let _force = super::ForceRenameErrno::new(libc::ENOENT);
+        let _force = super::ForceRenameErrno::new(fast_io::errno::ENOENT);
         let placement = super::rename_or_copy_existing(&victim, &backup)
             .expect("a non-EXDEV rename failure must fall back to the copy tier");
         assert!(
@@ -1578,7 +1578,7 @@ mod tests {
             // A regular file's ladder ends in the copy tier, which reports the
             // type as unsupported rather than the ELOOP of the tiers before it.
             if name == "link" {
-                assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+                assert_eq!(error.raw_os_error(), Some(fast_io::errno::ELOOP));
             }
             assert!(
                 fs::symlink_metadata(dest.join("sub").join(name)).is_ok(),

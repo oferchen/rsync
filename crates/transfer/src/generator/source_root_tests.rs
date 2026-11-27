@@ -115,7 +115,7 @@ fn a_relative_operand_root_swapped_after_the_scan_is_refused_with_eloop() {
 
     swap_sub_for_escaping_symlink(&base);
     let error = read_through_sender(&ctx, &path).expect_err("swapped root must be refused");
-    assert_eq!(error.raw_os_error(), Some(libc::ELOOP), "{error}");
+    assert_eq!(error.raw_os_error(), Some(fast_io::errno::ELOOP), "{error}");
 }
 
 /// The scan already opened the root through its held descriptor, so a root

@@ -18,6 +18,13 @@
 //! and `main.c:1928` (SIGPIPE ignored).
 
 use std::io;
+
+/// Signal numbers the client installs its shutdown handlers for.
+///
+/// upstream: `main.c:1923-1925` - `SIGACTMASK(SIGINT, sig_int)`,
+/// `SIGACTMASK(SIGHUP, sig_int)`, `SIGACTMASK(SIGTERM, sig_int)`.
+#[cfg(unix)]
+pub use libc::{SIGHUP, SIGINT, SIGTERM};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -249,6 +256,28 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The exported numbers must be the ones the kernel delivers: a handler
+    /// installed under a wrong number would never run on Ctrl+C, `kill` or a
+    /// hangup, and the raised signal would kill this test process instead.
+    #[cfg(unix)]
+    #[test]
+    fn exported_signal_numbers_are_delivered_to_their_handler() {
+        use nix::sys::signal::{Signal, raise};
+        use std::sync::atomic::Ordering;
+        for (signum, signal) in [
+            (SIGINT, Signal::SIGINT),
+            (SIGTERM, Signal::SIGTERM),
+            (SIGHUP, Signal::SIGHUP),
+        ] {
+            let fired = Arc::new(AtomicBool::new(false));
+            signal_hook::flag::register(signum, Arc::clone(&fired)).expect("register");
+            raise(signal).expect("raise");
+            assert!(
+                fired.load(Ordering::SeqCst),
+                "signal {signum} reached its handler"
+            );
+        }
+    }
 
     /// The signal reaches the child and ends it the way an unhandled SIGUSR1
     /// does, so a remote shell that ignores end-of-file still goes away.

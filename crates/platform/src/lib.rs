@@ -25,6 +25,8 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+/// C ABI type aliases (`off_t`, `ino_t`, `time_t`) for the `--version` report.
+pub mod c_types;
 /// Process daemonization - fork, setsid, and stdio redirection.
 pub mod daemonize;
 /// Environment variable manipulation with RAII restoration.
@@ -52,6 +54,9 @@ pub mod peer_name;
 /// Process privilege operations - chroot and uid/gid dropping.
 pub mod priority;
 pub mod privilege;
+/// Process `RLIMIT_NOFILE` access (Unix only).
+#[cfg(unix)]
+pub mod resource;
 /// Secrets file permission validation.
 pub mod secrets;
 /// Per-connection process splitting for the daemon (Unix only).
