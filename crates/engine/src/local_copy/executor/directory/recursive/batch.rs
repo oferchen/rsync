@@ -10,6 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use super::super::super::non_empty_path;
+use super::super::planner::{EntryAction, PlannedEntry};
 use crate::local_copy::{CopyContext, LocalCopyError};
 #[cfg(unix)]
 use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
@@ -239,12 +241,99 @@ pub(crate) fn capture_batch_file_entry(
         // in the file list (flist.c:2058-2068 send_file_name()).
         let mut entry =
             build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, true);
-        let report = capture_batch_xattrs(context, destination, &mut entry, false);
+        attach_batch_xattrs(context, &mut entry, false);
+        let report = batch_xattr_report(context, destination, &entry, false);
         let wire = report.as_ref().map(XattrReport::wire_lengths);
         context.tally_flist_entry(entry, readdir_index, wire);
         return Ok(());
     }
 
+    let listed = list_batch_entry(
+        context,
+        source_path,
+        relative_path,
+        metadata,
+        is_top_dir,
+        numeric_ids,
+    )?;
+    itemize_batch_entry(context, destination, listed, readdir_index);
+    Ok(())
+}
+
+/// A batch file-list entry already recorded, waiting for its itemize half.
+pub(crate) struct ListedEntry {
+    /// The entry's traversal index.
+    index: i32,
+    /// The entry as listed, kept only when the itemize half needs it: for the
+    /// wire model or the xattr comparison.
+    entry: Option<protocol::flist::FileEntry>,
+}
+
+/// Lists every entry of a directory the walk just read in the batch file
+/// list, before any of them is transferred, and records the directory's scan
+/// for the incremental planner. Each listed entry keeps its [`ListedEntry`]
+/// for the itemize half its transfer runs.
+///
+/// A no-op unless the batch plans its incremental lists per directory scan
+/// (`batch_plans_lists_per_scan`).
+///
+/// upstream: flist.c:send_directory() - the sender lists a whole directory
+/// (make_file() and send_file_name() per entry) before the generator itemizes
+/// any of it.
+pub(crate) fn list_batch_directory(
+    context: &mut CopyContext,
+    dir_relative: Option<&Path>,
+    planned: &mut [PlannedEntry<'_>],
+) -> Result<(), LocalCopyError> {
+    if context.batch_writer().is_none() || !context.batch_plans_lists_per_scan() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    let numeric_ids = context.numeric_ids_enabled();
+    #[cfg(not(unix))]
+    let numeric_ids = true;
+    let mut scan = Vec::with_capacity(planned.len());
+    for planned in planned.iter_mut() {
+        if matches!(
+            planned.action,
+            EntryAction::SkipExcluded | EntryAction::SkipNonRegular | EntryAction::SkipMountPoint
+        ) {
+            continue;
+        }
+        let Some(relative) = non_empty_path(planned.relative.as_path()) else {
+            continue;
+        };
+        // The listing reads the source attrs the sender half stored; the
+        // transfer hands them to the context again for its own use.
+        context.set_entry_attrs(std::mem::take(&mut planned.attrs));
+        let listed = list_batch_entry(
+            context,
+            planned.entry.path.as_path(),
+            relative,
+            planned.metadata(),
+            false,
+            numeric_ids,
+        );
+        planned.attrs = context.take_entry_attrs();
+        let listed = listed?;
+        scan.push(listed.index as usize);
+        planned.listed = Some(listed);
+    }
+    context.record_batch_scan(dir_relative.unwrap_or(Path::new("")), scan);
+    Ok(())
+}
+
+/// The list half of a batch capture: encodes the entry into the batch file
+/// list (or holds it for the incremental layout) and takes its traversal
+/// index.
+fn list_batch_entry(
+    context: &mut CopyContext,
+    source_path: &Path,
+    relative_path: &Path,
+    metadata: &fs::Metadata,
+    is_top_dir: bool,
+    numeric_ids: bool,
+) -> Result<ListedEntry, LocalCopyError> {
     // The stream flags recorded in the header are what the reader configures
     // itself from, so the hardlink decision has to come from the same place.
     let (protocol_version, preserve_hard_links) =
@@ -261,12 +350,12 @@ pub(crate) fn capture_batch_file_entry(
         numeric_ids,
     );
     apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
-    let xattr_report = capture_batch_xattrs(context, destination, &mut entry, true);
-    if context.wire_tally_active() {
-        let wire = xattr_report.as_ref().map(XattrReport::wire_lengths);
-        context.tally_flist_entry(entry.clone(), readdir_index, wire);
-    }
-    context.set_batch_xattr_report(xattr_report.map(|report| report.sender));
+    attach_batch_xattrs(context, &mut entry, true);
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    let compares_xattrs = context.batch_preserve_xattrs();
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
+    let compares_xattrs = false;
+    let kept = (context.wire_tally_active() || compares_xattrs).then(|| entry.clone());
     let acl = if context.batch_preserve_acls() {
         batch_source_acl(context, source_path, &entry)
     } else {
@@ -300,12 +389,36 @@ pub(crate) fn capture_batch_file_entry(
     };
     context.record_batch_entry_sort_data(&wire_name, metadata.is_dir());
 
-    // Increment the flist index counter. This assigns each captured entry
-    // a sequential index matching upstream's flist numbering. Regular files
-    // use (batch_flist_index - 1) as their NDX in the delta stream.
-    context.increment_batch_flist_index();
+    Ok(ListedEntry {
+        index: context.next_batch_flist_index(),
+        entry: kept,
+    })
+}
 
-    Ok(())
+/// The itemize half of a batch capture, run when the entry is transferred:
+/// compares its xattrs with the destination, counts it in the wire model,
+/// and names it as the entry the following delta or itemize record is for.
+///
+/// upstream: generator.c:571-582 itemize() - the xattr comparison is made
+/// against the destination as the generator reaches the entry.
+pub(crate) fn itemize_batch_entry(
+    context: &mut CopyContext,
+    destination: &Path,
+    listed: ListedEntry,
+    readdir_index: u32,
+) {
+    let report = listed
+        .entry
+        .as_ref()
+        .and_then(|entry| batch_xattr_report(context, destination, entry, true));
+    if context.wire_tally_active()
+        && let Some(entry) = listed.entry
+    {
+        let wire = report.as_ref().map(XattrReport::wire_lengths);
+        context.tally_flist_entry(entry, readdir_index, wire);
+    }
+    context.set_batch_xattr_report(report.map(|report| report.sender));
+    context.set_batch_entry_index(listed.index);
 }
 
 /// Puts the xattrs the sender half read into the entry's batch flist entry
@@ -327,12 +440,11 @@ pub(crate) fn capture_batch_file_entry(
 /// `batch` selects whose `-X` applies: the batch header's for an entry the
 /// batch writer records, the options' for one only the wire model counts.
 #[cfg(all(any(unix, windows), feature = "xattr"))]
-fn capture_batch_xattrs(
+fn batch_xattr_list(
     context: &CopyContext,
-    destination: &Path,
-    entry: &mut protocol::flist::FileEntry,
+    entry: &protocol::flist::FileEntry,
     batch: bool,
-) -> Option<XattrReport> {
+) -> Option<protocol::xattr::XattrList> {
     let options = context.options();
     let preserve = if batch {
         context.batch_preserve_xattrs()
@@ -348,7 +460,29 @@ fn capture_batch_xattrs(
     if !preserve || !readable {
         return None;
     }
-    let list = context.entry_attrs().xattrs.clone()?;
+    context.entry_attrs().xattrs.clone()
+}
+
+/// Puts the sender half's xattr list into the entry's file-list record.
+#[cfg(all(any(unix, windows), feature = "xattr"))]
+fn attach_batch_xattrs(context: &CopyContext, entry: &mut protocol::flist::FileEntry, batch: bool) {
+    if let Some(list) = batch_xattr_list(context, entry, batch)
+        && !list.is_empty()
+    {
+        entry.set_xattr_list(list);
+    }
+}
+
+/// The `ITEM_REPORT_XATTR` value block for an entry whose xattrs differ from
+/// the destination's; `None` when they match.
+#[cfg(all(any(unix, windows), feature = "xattr"))]
+fn batch_xattr_report(
+    context: &CopyContext,
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    batch: bool,
+) -> Option<XattrReport> {
+    let list = batch_xattr_list(context, entry, batch)?;
     let receiver_filter = context
         .filter_program()
         .filter(|program| program.has_xattr_rules())
@@ -392,19 +526,24 @@ fn capture_batch_xattrs(
         protocol::xattr::send_sender_xattr_response(&mut sender, &mut request)
             .expect("writing to a Vec cannot fail");
         XattrReport { generator, sender }
-    });
-    if !list.is_empty() {
-        entry.set_xattr_list(list);
-    }
-    report
+    })
 }
 
-/// No xattrs are captured in a build without xattr support.
+/// No xattrs are listed in a build without xattr support.
 #[cfg(not(all(any(unix, windows), feature = "xattr")))]
-fn capture_batch_xattrs(
+const fn attach_batch_xattrs(
+    _context: &CopyContext,
+    _entry: &mut protocol::flist::FileEntry,
+    _batch: bool,
+) {
+}
+
+/// No xattrs are compared in a build without xattr support.
+#[cfg(not(all(any(unix, windows), feature = "xattr")))]
+const fn batch_xattr_report(
     _context: &CopyContext,
     _destination: &Path,
-    _entry: &mut protocol::flist::FileEntry,
+    _entry: &protocol::flist::FileEntry,
     _batch: bool,
 ) -> Option<XattrReport> {
     None

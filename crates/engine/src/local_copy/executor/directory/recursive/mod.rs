@@ -27,6 +27,7 @@ use crate::local_copy::{
 };
 
 pub(crate) use batch::capture_batch_file_entry;
+pub(super) use batch::ListedEntry;
 pub(crate) use checksum::prefetch_directory_checksums;
 use deletion::{
     apply_during_transfer_deletions, handle_empty_directory_pruning, handle_post_transfer_deletions,
@@ -681,6 +682,7 @@ fn copy_directory_recursive_inner(
         destination,
         &mut plan.planned_entries,
     );
+    batch::list_batch_directory(context, relative, &mut plan.planned_entries)?;
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
     // upstream: generator.c:1961-1964 - a non-INC_RECURSE `--delete-during`
     // sweep runs while the generator itemizes the directory entry, before it
@@ -887,6 +889,7 @@ mod tests {
                 action: EntryAction::CopyFile,
                 metadata_override: None,
                 attrs: Default::default(),
+                listed: None,
             },
             PlannedEntry {
                 entry: &entries[1],
@@ -894,6 +897,7 @@ mod tests {
                 action: EntryAction::CopyFile,
                 metadata_override: None,
                 attrs: Default::default(),
+                listed: None,
             },
             PlannedEntry {
                 entry: &entries[2],
@@ -901,6 +905,7 @@ mod tests {
                 action: EntryAction::CopyDirectory,
                 metadata_override: None,
                 attrs: Default::default(),
+                listed: None,
             },
         ];
 
@@ -935,6 +940,7 @@ mod tests {
             action: EntryAction::CopyFile,
             metadata_override: None,
             attrs: Default::default(),
+            listed: None,
         }];
 
         let plan = DirectoryPlan {
@@ -968,6 +974,7 @@ mod tests {
             action: EntryAction::CopyFile,
             metadata_override: None,
             attrs: Default::default(),
+            listed: None,
         }];
 
         let plan = DirectoryPlan {
@@ -1001,6 +1008,7 @@ mod tests {
             action: EntryAction::CopyFile,
             metadata_override: None,
             attrs: Default::default(),
+            listed: None,
         }];
 
         let plan = DirectoryPlan {
@@ -1061,6 +1069,7 @@ mod tests {
             action: EntryAction::CopyFile,
             metadata_override: None,
             attrs: Default::default(),
+            listed: None,
         }];
 
         let plan = DirectoryPlan {
@@ -1107,6 +1116,7 @@ mod tests {
             action: EntryAction::CopyFile,
             metadata_override: None,
             attrs: Default::default(),
+            listed: None,
         }];
 
         let plan = DirectoryPlan {

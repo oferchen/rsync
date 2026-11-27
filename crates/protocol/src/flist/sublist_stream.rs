@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use super::{DirectoryTree, FileEntry};
+use super::{DirectoryTree, FileEntry, SubList, SubListPlan};
 
 /// One file list released by a [`SubListPlanner`], in send order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,6 +210,36 @@ impl SubListPlanner {
             ndx_start,
             members,
         })
+    }
+
+    /// Marks the walk as over: a directory it never scanned, because it could
+    /// not be read or was not descended into, has an empty sub-list, as the
+    /// one-shot plan over the listed entries gives it.
+    pub fn end_walk(&mut self) {
+        for (_, members) in &mut self.slots {
+            members.get_or_insert_with(Vec::new);
+        }
+    }
+
+    /// Ends the walk and returns every list as a one-shot plan whose indices
+    /// are the caller's ids, for a writer that releases nothing before the
+    /// walk is over.
+    #[must_use]
+    pub fn into_plan(mut self) -> SubListPlan {
+        debug_assert!(!self.initial_released, "a list was released already");
+        self.end_walk();
+        let mut plan = SubListPlan::default();
+        while let Some(list) = self.pop_ready() {
+            match list.parent.zip(list.parent_dir_ndx) {
+                Some((parent, parent_dir_ndx)) => plan.sublists.push(SubList {
+                    parent_dir_ndx,
+                    parent,
+                    members: list.members,
+                }),
+                None => plan.initial = list.members,
+            }
+        }
+        plan
     }
 
     /// Whether every list has been released: the initial list is out and the
@@ -404,6 +434,23 @@ mod tests {
                 wire_ndx(&entries, &lists),
                 SubListPlan::new(&entries).wire_ndx(&entries)
             );
+        }
+
+        /// A walk that never scans its empty directories still plans what the
+        /// one-shot plan gives them: an empty sub-list each.
+        #[test]
+        fn ended_walk_gives_unscanned_directories_empty_lists(paths in paths()) {
+            let entries = tree_from(&paths);
+            let mut planner = SubListPlanner::new();
+            planner
+                .push_initial(top_level(&entries).into_iter().map(|i| (i, &entries[i])))
+                .expect("initial list");
+            for (dir, kids) in walk_scans(&entries).iter().filter(|(_, kids)| !kids.is_empty()) {
+                planner
+                    .push_scan(dir, kids.iter().map(|&i| (i, &entries[i])))
+                    .expect("scan");
+            }
+            prop_assert_eq!(planner.into_plan(), SubListPlan::new(&entries));
         }
 
         /// Scans in any order a walk can produce (each directory after its

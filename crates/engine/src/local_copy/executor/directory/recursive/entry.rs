@@ -14,7 +14,7 @@ use crate::local_copy::{
 use super::super::super::non_empty_path;
 use super::super::super::transcode_filename_component;
 use super::super::planner::{EntryAction, PlannedEntry};
-use super::batch::capture_batch_file_entry;
+use super::batch::{ListedEntry, capture_batch_file_entry, itemize_batch_entry};
 use super::copy_directory_recursive;
 
 /// Processes a single planned entry during directory recursion.
@@ -33,6 +33,7 @@ pub(super) fn process_planned_entry(
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
     let attrs = std::mem::take(&mut planned.attrs);
+    let listed = planned.listed.take();
     let planned = &*planned;
     let entry_metadata = planned.metadata();
     let record_relative = non_empty_path(planned.relative.as_path());
@@ -86,6 +87,7 @@ pub(super) fn process_planned_entry(
     let result = dispatch_copy_action(
         context,
         planned,
+        listed,
         target_buf,
         entry_metadata,
         record_relative,
@@ -101,9 +103,11 @@ pub(super) fn process_planned_entry(
 /// Dispatches the copy action for a planned entry after the target path
 /// has been pushed onto `target_buf`. Extracted so that the caller can
 /// unconditionally pop the buffer regardless of success or failure.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_copy_action(
     context: &mut CopyContext,
     planned: &PlannedEntry<'_>,
+    listed: Option<ListedEntry>,
     target_buf: &mut Path,
     entry_metadata: &std::fs::Metadata,
     record_relative: Option<&Path>,
@@ -129,7 +133,9 @@ fn dispatch_copy_action(
     // All copy actions share: ensure parent directory exists + capture to batch
     ensure_directory(context)?;
     let source = planned.entry.path.as_path();
-    if let Some(rel_path) = record_relative {
+    if let Some(listed) = listed {
+        itemize_batch_entry(context, target_buf, listed, planned.entry.readdir_index);
+    } else if let Some(rel_path) = record_relative {
         capture_batch_file_entry(
             context,
             source,

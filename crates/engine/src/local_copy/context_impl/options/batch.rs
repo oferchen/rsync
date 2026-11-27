@@ -515,7 +515,7 @@ impl<'a> CopyContext<'a> {
 
         // NDX is remapped to sorted order at flush time; record the
         // traversal index here.
-        self.batch_current_delta_idx = self.batch_flist_index - 1;
+        self.batch_current_delta_idx = self.batch_entry_index;
 
         // upstream: rsync.c:384 - write iflags (u16 LE) for protocol >= 29.
         // ITEM_TRANSFER (0x8000) indicates delta data follows.
@@ -704,11 +704,9 @@ impl<'a> CopyContext<'a> {
     /// [`Self::begin_batch_file_delta`] and carries `ITEM_TRANSFER` plus a
     /// sum_head and token body. A created non-regular entry moves no data, so
     /// upstream writes only its `NDX` and the 16-bit iflags word. This records
-    /// that same two-byte entry, keyed to the traversal index the preceding
-    /// `capture_batch_file_entry` assigned (`batch_flist_index - 1`, stable
-    /// because the itemize record is emitted before any child entry is
-    /// captured), so [`Self::flush_batch_delta_to_batch`] ships it under the
-    /// sorted `NDX`.
+    /// that same two-byte entry, keyed to the traversal index of the entry
+    /// being itemized ([`Self::set_batch_entry_index`]), so
+    /// [`Self::flush_batch_delta_to_batch`] ships it under the sorted `NDX`.
     ///
     /// A no-op when batch mode is inactive, the protocol predates iflags
     /// (< 29), or `iflags` carries nothing the upstream emit gate keeps.
@@ -764,7 +762,7 @@ impl<'a> CopyContext<'a> {
         if iflags & (SIGNIFICANT_ITEM_FLAGS | ITEM_REPORT_XATTR) == 0 {
             return;
         }
-        let idx = self.batch_flist_index - 1;
+        let idx = self.batch_entry_index;
         let mut record = iflags.to_le_bytes().to_vec();
         record.extend(xattr_report.unwrap_or_default());
         self.batch_delta_entries.push((idx, record));
@@ -1529,22 +1527,19 @@ impl<'a> CopyContext<'a> {
                 e,
             )
         };
-        let traversal_to_sorted = self.build_batch_sort_mapping();
-        let mut sorted_to_traversal = vec![0usize; traversal_to_sorted.len()];
-        for (traversal, &sorted) in traversal_to_sorted.iter().enumerate() {
-            sorted_to_traversal[sorted as usize] = traversal;
-        }
-        let mut entries: Vec<Option<protocol::flist::FileEntry>> =
-            std::mem::take(&mut self.batch_pending_entries)
-                .into_iter()
-                .map(Some)
-                .collect();
         let mut acls = std::mem::take(&mut self.batch_pending_acls);
-        let sorted: Vec<protocol::flist::FileEntry> = sorted_to_traversal
-            .iter()
-            .map(|&t| entries[t].take().expect("each entry is sorted once"))
-            .collect();
-        let plan = protocol::flist::SubListPlan::new(&sorted);
+        // `sorted[i]` is the entry the plan indexes as `i` and
+        // `sorted_to_traversal[i]` its traversal index.
+        let (plan, sorted, sorted_to_traversal) = if self.batch_plans_lists_per_scan() {
+            self.plan_batch_lists_from_scans().map_err(|e| {
+                err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                ))
+            })?
+        } else {
+            self.plan_batch_lists_once()
+        };
         if let Some(&orphan) = plan.orphans.first() {
             return Err(err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -1665,11 +1660,94 @@ impl<'a> CopyContext<'a> {
             .map_err(|e| err(std::io::Error::other(e)))
     }
 
-    /// Increments the batch flist index counter.
+    /// Plans the held entries' lists in one pass over the whole sorted list;
+    /// plan indices are sorted positions.
+    fn plan_batch_lists_once(&mut self) -> BatchListPlan {
+        let traversal_to_sorted = self.build_batch_sort_mapping();
+        let mut sorted_to_traversal = vec![0usize; traversal_to_sorted.len()];
+        for (traversal, &sorted) in traversal_to_sorted.iter().enumerate() {
+            sorted_to_traversal[sorted as usize] = traversal;
+        }
+        let mut entries: Vec<Option<protocol::flist::FileEntry>> =
+            std::mem::take(&mut self.batch_pending_entries)
+                .into_iter()
+                .map(Some)
+                .collect();
+        let sorted: Vec<protocol::flist::FileEntry> = sorted_to_traversal
+            .iter()
+            .map(|&t| entries[t].take().expect("each entry is sorted once"))
+            .collect();
+        let plan = protocol::flist::SubListPlan::new(&sorted);
+        (plan, sorted, sorted_to_traversal)
+    }
+
+    /// Plans the held entries' lists from the directory scans the walk
+    /// recorded, each list sorted in `f_name_cmp` order; plan indices are
+    /// traversal indices.
     ///
-    /// Called after each flist entry is captured to the batch file.
-    pub(super) fn increment_batch_flist_index(&mut self) {
+    /// upstream: flist.c:send_directory() sends one directory's entries as one
+    /// sub-list, sorted by flist_sort_and_clean() (flist.c:2398-2399)
+    fn plan_batch_lists_from_scans(
+        &mut self,
+    ) -> Result<BatchListPlan, protocol::flist::SubListPlanError> {
+        let scans = std::mem::take(&mut self.batch_scans);
+        let entries = std::mem::take(&mut self.batch_pending_entries);
+        let sort_data = &self.batch_entry_sort_data;
+        let by_name = |a: &usize, b: &usize| {
+            let (name_a, dir_a) = &sort_data[*a];
+            let (name_b, dir_b) = &sort_data[*b];
+            batch_entry_compare(name_a, *dir_a, name_b, *dir_b)
+        };
+        let is_top_level = |dir: &std::path::Path| {
+            dir.as_os_str().is_empty() || dir == std::path::Path::new(".")
+        };
+        let mut initial: Vec<usize> = (0..entries.len())
+            .filter(|&i| is_top_level(entries[i].dirname().as_ref()))
+            .collect();
+        initial.sort_by(by_name);
+        let mut planner = protocol::flist::SubListPlanner::new();
+        planner.push_initial(initial.iter().map(|&i| (i, &entries[i])))?;
+        // The root's own scan is the top level of the initial list.
+        for (dir, mut listed) in scans.into_iter().filter(|(dir, _)| !is_top_level(dir)) {
+            listed.sort_by(by_name);
+            planner.push_scan(&dir, listed.iter().map(|&i| (i, &entries[i])))?;
+        }
+        let order = (0..entries.len()).collect();
+        Ok((planner.into_plan(), entries, order))
+    }
+
+    /// Takes the next traversal index for a file-list entry just captured.
+    pub(super) fn next_batch_flist_index(&mut self) -> i32 {
+        let index = self.batch_flist_index;
         self.batch_flist_index += 1;
+        index
+    }
+
+    /// Names the entry whose delta and itemize records follow: the one at
+    /// traversal index `index`.
+    pub(super) fn set_batch_entry_index(&mut self, index: i32) {
+        self.batch_entry_index = index;
+    }
+
+    /// Decides, once per run, how the batch file lists are built for
+    /// `operands` source operands.
+    pub(crate) fn decide_batch_list_mode(&mut self, operands: usize) {
+        self.batch_list_mode = Some(crate::local_copy::batch_list_mode::batch_list_mode(
+            &self.options,
+            operands,
+        ));
+    }
+
+    /// Reports whether the incremental file lists are planned from directory
+    /// scans as the walk reads each directory.
+    pub(crate) fn batch_plans_lists_per_scan(&self) -> bool {
+        self.batch_list_mode == Some(crate::local_copy::batch_list_mode::BatchListMode::Stream)
+    }
+
+    /// Records the traversal indices the walk listed when it read directory
+    /// `dir` (relative to the transfer root, empty for the root itself).
+    pub(crate) fn record_batch_scan(&mut self, dir: &std::path::Path, listed: Vec<usize>) {
+        self.batch_scans.push((dir.to_path_buf(), listed));
     }
 
     /// Records sort metadata for a batch flist entry.
@@ -1681,6 +1759,14 @@ impl<'a> CopyContext<'a> {
         self.batch_entry_sort_data.push((name.to_vec(), is_dir));
     }
 }
+
+/// A planned incremental layout, the entries it indexes, and the traversal
+/// index of each.
+type BatchListPlan = (
+    protocol::flist::SubListPlan,
+    Vec<protocol::flist::FileEntry>,
+    Vec<usize>,
+);
 
 /// Compares two batch flist entries for sorting, matching upstream's
 /// `flist.c:f_name_cmp()` semantics.

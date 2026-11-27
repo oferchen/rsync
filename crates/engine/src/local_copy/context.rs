@@ -516,6 +516,17 @@ pub(crate) struct CopyContext<'a> {
     batch_list_plan: Option<protocol::flist::SubListPlan>,
     /// Traversal index of the current file being delta-captured.
     batch_current_delta_idx: i32,
+    /// Traversal index of the entry being itemized, set when its file-list
+    /// entry is matched to its transfer; delta and itemize records go out
+    /// under it.
+    batch_entry_index: i32,
+    /// Directory scans in walk order, each the traversal indices the walk
+    /// listed when it read the directory, for a batch whose incremental file
+    /// lists are planned as the walk reads each directory.
+    batch_scans: Vec<(PathBuf, Vec<usize>)>,
+    /// How the batch file lists are built; decided once the operands are
+    /// known, `None` before that.
+    batch_list_mode: Option<super::batch_list_mode::BatchListMode>,
     /// Zero-based file-list index counter for batch NDX framing.
     /// Incremented in `capture_batch_file_entry()` for every entry (dirs,
     /// files, symlinks, etc.) to match the upstream flist numbering.
@@ -1454,6 +1465,7 @@ mod tests {
             dir.join("dst"),
         );
         context.batch_flist_index = 1;
+        context.batch_entry_index = 0;
         context.begin_batch_file_delta().expect("begin file delta");
         context
     }

@@ -23,6 +23,7 @@ use super::super::{
     emit_cannot_convert_filename, name_is_convertible, non_empty_path, symlink_target_is_safe,
     transcode_filename_component,
 };
+use super::recursive::ListedEntry;
 use super::support::{DirectoryEntry, is_device, is_fifo};
 
 /// Action to take for a directory entry during recursive copy.
@@ -57,6 +58,9 @@ pub(crate) struct PlannedEntry<'a> {
     pub(crate) metadata_override: Option<fs::Metadata>,
     /// The ACL and xattrs the sender half read when it listed the entry.
     pub(crate) attrs: SourceAttrs,
+    /// The entry's batch file-list record, when the walk listed it as it read
+    /// the directory; its itemize half runs when the entry is transferred.
+    pub(crate) listed: Option<ListedEntry>,
 }
 
 impl<'a> PlannedEntry<'a> {
@@ -531,6 +535,7 @@ pub(crate) fn plan_directory_entries<'a>(
             action,
             metadata_override,
             attrs,
+            listed: None,
         });
         if let Some(buf) = &mut relative_buf {
             buf.pop();
@@ -1035,6 +1040,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             action,
             metadata_override,
             attrs,
+            listed: None,
         });
         if let Some(buf) = &mut relative_buf {
             buf.pop();
@@ -1173,6 +1179,7 @@ mod tests {
             action: EntryAction::CopyFile,
             metadata_override: None,
             attrs: SourceAttrs::default(),
+            listed: None,
         }
     }
 

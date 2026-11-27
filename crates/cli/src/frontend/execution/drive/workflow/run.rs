@@ -1569,6 +1569,32 @@ fn open_log_file(path: &Path) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Each reason set_allow_inc_recurse() clears CF_INC_RECURSE for a local
+    /// recording (compat.c:173-180, options.c:634 for --no-inc-recursive),
+    /// each tried alone against a recursion that allows it.
+    #[test]
+    fn local_batch_inc_recurse_follows_set_allow_inc_recurse() {
+        use core::client::DeleteMode;
+        let allowed = |recursive, inc, qsort, delete: DeleteMode, delay, dsym, prune| {
+            super::local_batch_inc_recurse(recursive, inc, qsort, &delete, delay, dsym, prune)
+        };
+        assert!(allowed(true, None, false, DeleteMode::Disabled, false, false, false));
+        assert!(allowed(true, Some(true), false, DeleteMode::During, false, false, false));
+        assert!(allowed(true, None, false, DeleteMode::DuringDefault, false, false, false));
+        for (reason, result) in [
+            ("no recursion", allowed(false, None, false, DeleteMode::Disabled, false, false, false)),
+            ("--no-inc-recursive", allowed(true, Some(false), false, DeleteMode::Disabled, false, false, false)),
+            ("--qsort", allowed(true, None, true, DeleteMode::Disabled, false, false, false)),
+            ("--delete-before", allowed(true, None, false, DeleteMode::Before, false, false, false)),
+            ("--delete-after", allowed(true, None, false, DeleteMode::After, false, false, false)),
+            ("--delay-updates", allowed(true, None, false, DeleteMode::Disabled, true, false, false)),
+            ("--delay-symlinks", allowed(true, None, false, DeleteMode::Disabled, false, true, false)),
+            ("--prune-empty-dirs", allowed(true, None, false, DeleteMode::Disabled, false, false, true)),
+        ] {
+            assert!(!result, "{reason} must clear CF_INC_RECURSE");
+        }
+    }
     use super::{derive_batch_seed, explicit_batch_seed};
 
     /// An explicit non-zero `--checksum-seed=N` must be recorded in the batch

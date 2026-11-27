@@ -546,6 +546,7 @@ pub(crate) fn copy_sources(
     let destination_root = plan.destination_spec().path().to_path_buf();
     let mut context = CopyContext::new(mode, options, handler, destination_root);
     context.set_multi_source(plan.sources().len() > 1);
+    context.decide_batch_list_mode(plan.sources().len());
 
     // upstream: generator.c:2850-2851 - the generator prints the
     // delta-transmission status once at DEBUG_GTE(FLIST, 1) (first active at

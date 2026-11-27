@@ -49,6 +49,7 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
+mod batch_list_mode;
 pub mod buffer_pool;
 pub mod clonefile;
 mod context;
