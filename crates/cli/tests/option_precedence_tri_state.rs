@@ -86,9 +86,31 @@ fn test_times_last_wins_negative() {
 }
 
 // Device/Link preservation precedence: --devices/--no-devices,
-// --specials/--no-specials, --hard-links/--no-hard-links, and
-// --links/--no-links are Clap-mutually-exclusive rather than overridable
-// tri-state flags, so there are no last-wins precedence tests here.
+// --specials/--no-specials and --hard-links/--no-hard-links are
+// Clap-mutually-exclusive rather than overridable tri-state flags, so there
+// are no last-wins precedence tests for them here.
+
+// upstream: options.c:692-694 - `--links`/`--no-links` share one
+// POPT_ARG_VAL target, so the last one on the command line wins.
+#[test]
+fn test_links_last_wins_positive() {
+    let args = parse_args(["oc-rsync", "--no-links", "--links", "src", "dest"]).unwrap();
+    assert_eq!(
+        args.links,
+        Some(true),
+        "Last --links should override --no-links"
+    );
+}
+
+#[test]
+fn test_links_last_wins_negative() {
+    let args = parse_args(["oc-rsync", "--links", "--no-links", "src", "dest"]).unwrap();
+    assert_eq!(
+        args.links,
+        Some(false),
+        "Last --no-links should override --links"
+    );
+}
 
 #[test]
 fn test_acls_last_wins_positive() {

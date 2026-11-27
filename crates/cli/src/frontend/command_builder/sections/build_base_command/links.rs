@@ -12,7 +12,11 @@ pub(super) fn add_link_args(command: ClapCommand) -> ClapCommand {
                 .short('l')
                 .help("Copy symlinks as symlinks.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with_all(["copy-links", "no-links"]),
+                // upstream: options.c:692-695 - `--links`/`--no-links` are a
+                // POPT_ARG_VAL pair (last one wins) and `--copy-links` is an
+                // independent POPT_ARG_NONE, so no pairing is refused; a
+                // `copy_links` sender stats through symlinks (flist.c:517).
+                .overrides_with("no-links"),
         )
         .arg(
             Arg::new("no-links")
@@ -20,7 +24,7 @@ pub(super) fn add_link_args(command: ClapCommand) -> ClapCommand {
                 .visible_alias("no-l")
                 .help("Do not copy symlinks as symlinks.")
                 .action(ArgAction::SetTrue)
-                .conflicts_with_all(["links", "copy-links"]),
+                .overrides_with("links"),
         )
         .arg(
             Arg::new("copy-links")
