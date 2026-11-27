@@ -122,6 +122,18 @@ pub fn parse_rule_modifiers_in(
     })
 }
 
+/// Returns true for the characters C `isspace()` accepts in the C locale:
+/// space, tab, newline, vertical tab, form feed and carriage return.
+///
+/// upstream: exclude.c:1222 rule_strcmp() ends a long keyword at any of these,
+/// but the modifier loop that follows stops only at `' '` or `'_'`
+/// (exclude.c:1365), so any other one of them is the first modifier byte and
+/// is refused as an invalid modifier. Rust's `char::is_ascii_whitespace` omits
+/// the vertical tab, so it cannot stand in for this set.
+pub fn is_c_isspace(ch: char) -> bool {
+    matches!(ch, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
 /// Byte offset of `inner` within `outer`, when `inner` is a slice of it.
 fn offset_within(outer: &str, inner: &str) -> Option<usize> {
     let offset = (inner.as_ptr() as usize).checked_sub(outer.as_ptr() as usize)?;

@@ -1359,3 +1359,54 @@ mod long_keyword_separator {
         }
     }
 }
+
+/// Every rule form takes only ` ` or `_` as the separator before its pattern.
+///
+/// upstream: exclude.c:1365 - the modifier loop stops at ` `/`_` alone, so a
+/// tab (or any other whitespace) after a prefix, a modifier or a keyword is
+/// refused at its own position (exclude.c:1371-1380) and exits 1. MEASURED
+/// against 3.5.2 with `--filter`: each refused row prints exactly
+/// `invalid modifier '<ch>' at position <n> in filter rule: <rule>`.
+#[test]
+fn rule_separator_is_space_or_underscore_for_every_rule_form() {
+    let accepted = [
+        ("- foo", "foo"),
+        ("-_foo", "foo"),
+        ("-  foo", " foo"),
+        ("exclude foo", "foo"),
+        ("exclude_foo", "foo"),
+        ("exclude  foo", " foo"),
+        ("H_foo", "foo"),
+    ];
+    for (rule, pattern) in accepted {
+        match parse_filter_directive(OsStr::new(rule), RuleSource::Argument) {
+            Ok(FilterDirective::Rule(spec)) => assert_eq!(spec.pattern(), pattern, "{rule:?}"),
+            other => panic!("{rule:?} must parse to a rule, got {other:?}"),
+        }
+    }
+    let refused = [
+        ("-\tfoo", 1),
+        ("+\tfoo", 1),
+        ("-\t", 1),
+        ("-p\tfoo", 2),
+        ("H\tfoo", 1),
+        ("P\tfoo", 1),
+        (".\tfoo", 1),
+        (":\tfoo", 1),
+        ("exclude\tfoo", 7),
+        ("include\tfoo", 7),
+        ("hide\tfoo", 4),
+        ("merge\tfoo", 5),
+        ("dir-merge\tfoo", 9),
+        ("include\x0bfoo", 7),
+    ];
+    for (rule, position) in refused {
+        let ch = rule.as_bytes()[position] as char;
+        let refusal = parse_filter_directive(OsStr::new(rule), RuleSource::Argument)
+            .expect_err(rule)
+            .to_string();
+        let expected =
+            format!("invalid modifier '{ch}' at position {position} in filter rule: {rule}");
+        assert!(refusal.contains(&expected), "{rule:?}: {refusal}");
+    }
+}

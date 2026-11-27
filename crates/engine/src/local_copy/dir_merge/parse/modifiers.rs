@@ -50,6 +50,14 @@ pub(super) fn split_long_keyword_tail(after: &str) -> Option<(&str, &str)> {
             })
         }
         Some(ch) if ch == '_' || ch == ' ' => Some(("", &after[ch.len_utf8()..])),
+        // upstream: rule_strcmp accepts any isspace (exclude.c:1222), but the
+        // modifier loop then lands ON it and only ` `/`_` stop the loop
+        // (exclude.c:1365), so a tab is the first modifier byte and is refused.
+        Some(ch) if filters::is_c_isspace(ch) => Some(match after.find(['_', ' ']) {
+            // The separator is ASCII, so `idx + 1` stays on a char boundary.
+            Some(idx) => (&after[..idx], &after[idx + 1..]),
+            None => (after, ""),
+        }),
         Some(_) => None,
     }
 }

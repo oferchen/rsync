@@ -9,7 +9,7 @@ use crate::client::FilterRuleSpec;
 use crate::message::Message;
 
 use super::super::directive::FilterDirective;
-use super::helpers::{split_keyword_modifiers, split_short_modifiers, unknown_filter_rule};
+use super::helpers::{split_long_keyword_tail, split_short_modifiers, unknown_filter_rule};
 use super::modifiers::{parse_rule_modifiers, rule_directive};
 use super::rule_line::RuleLine;
 use super::shorthand::parse_filter_shorthand;
@@ -71,19 +71,18 @@ pub(super) fn parse_short_include_rule(
 /// `protect`/`risk` plus pattern). Keywords are matched case-sensitively to
 /// mirror upstream; an unknown keyword yields a syntax error.
 pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, Message> {
-    let trimmed = line.text();
-    // upstream: exclude.c:1222 `rule_strcmp` accepts `_` as a keyword separator
-    // alongside `isspace`, and exclude.c:1444-1445 then consumes exactly that one
-    // byte. MEASURED against rsync 3.5.0: `--filter='exclude_b.txt'` excludes
-    // `b.txt`.
-    let mut parts = trimmed.splitn(2, |ch: char| ch == '_' || ch.is_ascii_whitespace());
-    let keyword = parts.next().expect("split always yields at least one part");
-    let remainder = parts.next().unwrap_or("");
-    let (keyword, keyword_modifiers) = split_keyword_modifiers(keyword);
-    // `splitn` on the first separator already consumed the single separator
-    // between the keyword and the pattern (upstream exclude.c:1444-1445), so the
-    // remainder is the pattern verbatim. Do not trim further leading separators.
-    let pattern = remainder;
+    let text = line.text();
+    // upstream: exclude.c:1218-1227 `rule_strcmp` ends a keyword at isspace,
+    // `_`, `,` or the end of the string; `split_long_keyword_tail` then mirrors
+    // what the modifier loop does with that byte (exclude.c:1365, 1444-1445).
+    // MEASURED against rsync 3.5.0: `--filter='exclude_b.txt'` excludes `b.txt`.
+    let end = text
+        .find(|ch: char| ch == ',' || ch == '_' || filters::is_c_isspace(ch))
+        .unwrap_or(text.len());
+    let keyword = &text[..end];
+    let Some((keyword_modifiers, pattern)) = split_long_keyword_tail(&text[end..]) else {
+        return Err(unknown_filter_rule(line));
+    };
 
     let build_rule = |builder: fn(String) -> FilterRuleSpec,
                       include: bool,

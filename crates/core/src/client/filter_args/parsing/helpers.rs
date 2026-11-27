@@ -27,25 +27,6 @@ pub(super) fn unexpected_end_of_filter_rule(line: RuleLine<'_>) -> Message {
     )
 }
 
-/// Consumes exactly one rule separator (a single space, `_`, or `,`) that
-/// terminates the rule character and its modifiers, returning the rest of the
-/// line verbatim.
-///
-/// upstream: exclude.c:1365,1444-1445 - after the modifier loop stops at the
-/// first ` `/`_` separator, `if (*s) s++` consumes exactly ONE separator
-/// character. The pattern length is then `strlen` (exclude.c:1465), so any
-/// further leading whitespace or `_` stays part of the pattern verbatim and is
-/// never trimmed. The `,` case mirrors the optional comma that may follow a rule
-/// character or keyword (exclude.c:1224-1225, 1327-1328). A non-separator leading character
-/// is returned unchanged.
-pub(super) fn consume_rule_separator(remainder: &str) -> &str {
-    let mut chars = remainder.chars();
-    match chars.next() {
-        Some(ch) if ch == '_' || ch == ',' || ch.is_ascii_whitespace() => chars.as_str(),
-        _ => remainder,
-    }
-}
-
 /// Splits the text that follows a long-form filter keyword into
 /// `(modifiers, pattern)`, or returns `None` when the keyword is not terminated
 /// by a separator and is therefore not this keyword at all.
@@ -71,29 +52,41 @@ pub(super) fn split_long_keyword_tail(after: &str) -> Option<(&str, &str)> {
     let mut chars = after.chars();
     match chars.next() {
         None => Some(("", "")),
-        Some(',') => {
-            let body = chars.as_str();
-            Some(match body.find(is_rule_separator) {
-                // The separator is ASCII, so `idx + 1` stays on a char boundary.
-                Some(idx) => (&body[..idx], &body[idx + 1..]),
-                None => (body, ""),
-            })
-        }
+        Some(',') => Some(split_modifier_run(chars.as_str())),
         Some(ch) if is_rule_separator(ch) => Some(("", &after[ch.len_utf8()..])),
+        // upstream: rule_strcmp accepts any isspace (exclude.c:1222), but the
+        // modifier loop's `*++s` then lands ON it and only ` `/`_` stop the loop
+        // (exclude.c:1365), so a tab is the first modifier byte and is refused.
+        // MEASURED against 3.5.2: `--filter=$'exclude\tfoo'` exits 1 with
+        // `invalid modifier '\t' at position 7 in filter rule: exclude\tfoo`.
+        Some(ch) if filters::is_c_isspace(ch) => Some(split_modifier_run(after)),
         Some(_) => None,
     }
 }
 
-/// The bytes that end a rule keyword or modifier run in this parser.
+/// The bytes that end a modifier run: `' '` and `'_'` alone.
 ///
-/// upstream's modifier loop terminates on `' '`/`'_'` alone (exclude.c:1365),
-/// while `rule_strcmp` accepts any `isspace` (exclude.c:1222); a tab therefore
-/// reaches upstream's `default:` arm as an invalid modifier. oc has treated the
-/// whole ASCII whitespace class as a separator throughout this module since
-/// before these parsers existed, and this helper keeps that one convention
-/// rather than introducing a second.
+/// upstream: exclude.c:1365 - `while (ch != '!' && *++s && *s != ' ' && *s !=
+/// '_')`. A tab or any other whitespace is not a separator; it reaches the
+/// modifier `switch` default and is refused as an invalid modifier
+/// (exclude.c:1371-1380). MEASURED against 3.5.2: `--filter=$'-\tfoo'` exits 1
+/// with `invalid modifier '\t' at position 1 in filter rule: -\tfoo`.
 fn is_rule_separator(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_whitespace()
+    ch == ' ' || ch == '_'
+}
+
+/// Splits `body` at its first separator into `(modifiers, pattern)`.
+///
+/// upstream: exclude.c:1444-1445 `if (*s) s++` consumes exactly ONE separator,
+/// and the pattern is then the remainder verbatim (`len = strlen(s)`,
+/// exclude.c:1465), so further spaces or `_` stay part of it. With no separator
+/// the whole body is modifiers and the pattern is empty.
+fn split_modifier_run(body: &str) -> (&str, &str) {
+    match body.find(is_rule_separator) {
+        // The separator is ASCII, so `idx + 1` stays on a char boundary.
+        Some(idx) => (&body[..idx], &body[idx + 1..]),
+        None => (body, ""),
+    }
 }
 
 /// Splits the text after a single-character rule prefix into
@@ -109,11 +102,7 @@ fn is_rule_separator(ch: char) -> bool {
 /// pattern is empty, so `+foo` is refused on its `f` rather than read as a
 /// pattern.
 pub(super) fn split_short_modifiers(text: &str) -> (&str, &str) {
-    let body = text.strip_prefix(',').unwrap_or(text);
-    match body.find(is_rule_separator) {
-        Some(idx) => (&body[..idx], consume_rule_separator(&body[idx..])),
-        None => (body, ""),
-    }
+    split_modifier_run(text.strip_prefix(',').unwrap_or(text))
 }
 
 /// Runs a modifier run through the shared table, rendering a refusal the way
@@ -149,16 +138,6 @@ pub(super) fn parse_modifier_run(
     })
 }
 
-/// Splits a long-form keyword token into `(name, modifiers)` at the first
-/// comma, returning empty modifiers when no comma is present.
-pub(super) fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
-    if let Some((name, modifiers)) = keyword.split_once(',') {
-        (name, modifiers)
-    } else {
-        (keyword, "")
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -168,35 +147,6 @@ mod tests {
         super::RuleLine::new(text, RuleSource::Argument)
     }
     use super::*;
-
-    #[test]
-    fn consume_rule_separator_basic() {
-        // A non-separator leading character is returned unchanged.
-        assert_eq!(consume_rule_separator("pattern"), "pattern");
-    }
-
-    #[test]
-    fn consume_rule_separator_leading_whitespace() {
-        // Exactly one separator is consumed; any further whitespace stays in the
-        // pattern verbatim (upstream exclude.c:1444-1445 `if (*s) s++`).
-        assert_eq!(consume_rule_separator("  pattern"), " pattern");
-        assert_eq!(consume_rule_separator("\t\tpattern"), "\tpattern");
-        assert_eq!(consume_rule_separator(" pattern"), "pattern");
-    }
-
-    #[test]
-    fn consume_rule_separator_leading_underscore() {
-        assert_eq!(consume_rule_separator("__pattern"), "_pattern");
-        assert_eq!(consume_rule_separator("_ pattern"), " pattern");
-        assert_eq!(consume_rule_separator("_pattern"), "pattern");
-    }
-
-    #[test]
-    fn consume_rule_separator_comma_prefix() {
-        assert_eq!(consume_rule_separator(",pattern"), "pattern");
-        assert_eq!(consume_rule_separator(", pattern"), " pattern");
-        assert_eq!(consume_rule_separator(",_pattern"), "_pattern");
-    }
 
     fn split_merge(text: &str) -> (&str, &str) {
         split_short_modifiers(text)
@@ -333,23 +283,70 @@ mod tests {
         }
     }
 
+    /// The refusal a keyword rule's tail is given, or `None` when it parses.
+    fn keyword_refusal(rule: &str, keyword: &str) -> Option<String> {
+        let (run, _) = split_long_keyword_tail(&rule[keyword.len()..])?;
+        parse_modifier_run(run, filters::ModifierScope::PLAIN, arg(rule))
+            .err()
+            .map(|refusal| refusal.to_string())
+    }
+
+    /// upstream: exclude.c:1365 - only ` ` and `_` end the modifier run, and
+    /// exclude.c:1444-1445 consumes exactly one of them. MEASURED against 3.5.2:
+    /// `-_foo` and `- foo` exclude `foo`, `-  foo` excludes ` foo`.
     #[test]
-    fn split_keyword_modifiers_no_comma() {
-        assert_eq!(split_keyword_modifiers("include"), ("include", ""));
+    fn split_modifier_run_ends_only_at_space_or_underscore() {
+        for (body, expected) in [
+            (" foo", ("", "foo")),
+            ("_foo", ("", "foo")),
+            ("  foo", ("", " foo")),
+            ("__foo", ("", "_foo")),
+            ("_ foo", ("", " foo")),
+            ("p foo", ("p", "foo")),
+            ("\tfoo", ("\tfoo", "")),
+            ("p\tfoo bar", ("p\tfoo", "bar")),
+            ("\x0bfoo", ("\x0bfoo", "")),
+        ] {
+            assert_eq!(split_modifier_run(body), expected, "{body:?}");
+        }
+    }
+
+    /// upstream: exclude.c:1222 rule_strcmp accepts any isspace after a
+    /// keyword, but the modifier loop then refuses every one but ` `
+    /// (exclude.c:1365, 1376). MEASURED against 3.5.2: `exclude<TAB>foo` exits
+    /// 1 with `invalid modifier '<TAB>' at position 7`, while `exclude foo`,
+    /// `exclude_foo` and `exclude  foo` parse.
+    #[test]
+    fn long_keyword_refuses_non_space_whitespace_as_a_modifier() {
+        for (rule, refused_at) in [
+            ("exclude foo", None),
+            ("exclude_foo", None),
+            ("exclude  foo", None),
+            ("exclude,p foo", None),
+            ("exclude\tfoo", Some(('\t', 7))),
+            ("exclude\x0bfoo", Some(('\x0b', 7))),
+            ("exclude\x0cfoo", Some(('\x0c', 7))),
+            ("exclude\rfoo", Some(('\r', 7))),
+            ("exclude,p\tfoo", Some(('\t', 9))),
+        ] {
+            let refusal = keyword_refusal(rule, "exclude");
+            match refused_at {
+                None => assert_eq!(refusal, None, "{rule:?}"),
+                Some((ch, position)) => {
+                    let expected = format!(
+                        "invalid modifier '{ch}' at position {position} in filter rule: {rule}"
+                    );
+                    let refusal = refusal.unwrap_or_else(|| panic!("{rule:?} must be refused"));
+                    assert!(refusal.contains(&expected), "{rule:?}: {refusal}");
+                }
+            }
+        }
     }
 
     #[test]
-    fn split_keyword_modifiers_with_comma() {
-        assert_eq!(split_keyword_modifiers("include,sr"), ("include", "sr"));
-    }
-
-    #[test]
-    fn split_keyword_modifiers_multiple_commas() {
-        assert_eq!(split_keyword_modifiers("a,b,c"), ("a", "b,c"));
-    }
-
-    #[test]
-    fn split_keyword_modifiers_empty() {
-        assert_eq!(split_keyword_modifiers(""), ("", ""));
+    fn long_keyword_needs_a_terminator() {
+        // upstream: rule_strcmp returns NULL for any other byte (exclude.c:1226).
+        assert_eq!(split_long_keyword_tail("X"), None);
+        assert_eq!(split_long_keyword_tail(""), Some(("", "")));
     }
 }

@@ -164,7 +164,8 @@ pub use merge::{
 pub use overlong::{is_over_long, over_long_filter};
 pub use rule::FilterRule;
 pub use rule_modifiers::{
-    InvalidModifier, ModifierScope, RuleModifiers, parse_rule_modifiers, parse_rule_modifiers_in,
+    InvalidModifier, ModifierScope, RuleModifiers, is_c_isspace, parse_rule_modifiers,
+    parse_rule_modifiers_in,
 };
 pub use rule_source::{OwnedRuleSource, RuleSource, trace_add_rule};
 pub use set::{
