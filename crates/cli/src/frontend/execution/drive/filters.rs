@@ -25,7 +25,8 @@ where
     let filter_rules = build_filter_rules(inputs, &cvs, &ProcessFilterFiles { who: Role::Client })
         .map_err(|refusal| {
             let brand = stderr.brand();
-            write_refusal(stderr.writer_mut(), brand, Role::Client, &refusal)
+            let style = stderr.escape_style();
+            write_refusal(stderr.writer_mut(), brand, Role::Client, &refusal, style)
                 .unwrap_or_else(|_| refusal.code().unwrap_or(1))
         })?;
     let builder = if filter_rules.is_empty() {

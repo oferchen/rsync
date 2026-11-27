@@ -1,5 +1,6 @@
 use super::MessageSink;
 use crate::LineModeGuard;
+use crate::escape::{self, EscapeStyle};
 use crate::line_mode::LineMode;
 use core::{branding::Brand, message::MessageScratch};
 
@@ -83,6 +84,34 @@ impl<W> MessageSink<W> {
     /// Updates the brand used to render subsequent messages.
     pub const fn set_brand(&mut self, brand: Brand) {
         self.brand = brand;
+    }
+
+    /// Makes every rendered message escape its non-printable bytes as a
+    /// terminal line, or stop doing so.
+    ///
+    /// upstream: log.c:499 `rwrite()` hands every FERROR/FWARNING/FINFO
+    /// line to `filtered_fwrite()` (or, for a client without `-8`, through the
+    /// `ic_chck` check at log.c:463-496 first), so a control byte in a name or
+    /// in a refused rule prints as `\#ooo`. A sink whose writer already
+    /// escapes - the log file - leaves this off, since escaping twice turns
+    /// `\#013` into `\#134#013`.
+    pub const fn set_terminal_escaping(&mut self, enabled: bool) {
+        self.terminal_escaping = enabled;
+    }
+
+    /// The escape style this sink applies to the messages it renders: the
+    /// process terminal style when terminal escaping is on, passthrough
+    /// otherwise.
+    ///
+    /// The terminal style is read at call time because `-8` is parsed after
+    /// the sink is built.
+    #[must_use]
+    pub fn escape_style(&self) -> EscapeStyle {
+        if self.terminal_escaping {
+            escape::terminal_style()
+        } else {
+            EscapeStyle::passthrough()
+        }
     }
 }
 

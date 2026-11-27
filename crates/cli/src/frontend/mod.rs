@@ -286,6 +286,9 @@ where
     install_signal_handling();
 
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);
+    // upstream: log.c:463-499 rwrite() escapes every client diagnostic line
+    // before it reaches the terminal.
+    stderr_sink.set_terminal_escaping(true);
     // Raw command-line token count (including argv[0]); `== 2` means a single
     // option token was supplied, mirroring upstream's `argc == 2` test below.
     let raw_token_count = args.len();

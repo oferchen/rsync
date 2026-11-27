@@ -49,6 +49,7 @@ impl<W> MessageSink<W> {
             scratch,
             line_mode,
             brand,
+            terminal_escaping: false,
         }
     }
 

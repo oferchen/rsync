@@ -40,6 +40,14 @@ pub(super) fn write_filter_refusal<Err: Write>(
     brand: core::branding::Brand,
     message: &Message,
 ) -> i32 {
-    core::client::filter_args::write_refusal(stderr, brand, Role::Server, message)
-        .unwrap_or_else(|_| message.code().unwrap_or(1))
+    // upstream: log.c:499 - the server writes this before multiplexing starts,
+    // through filtered_fwrite(.., !allow_8bit_chars, ..).
+    core::client::filter_args::write_refusal(
+        stderr,
+        brand,
+        Role::Server,
+        message,
+        logging::escape::terminal_style(),
+    )
+    .unwrap_or_else(|_| message.code().unwrap_or(1))
 }
