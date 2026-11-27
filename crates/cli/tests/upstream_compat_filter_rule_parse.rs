@@ -791,3 +791,65 @@ fn nested_merge_file_rules_scope_like_upstream() {
             .contains(&"bar/down/to/foo/.excl".to_owned())
     );
 }
+
+/// #8738: only ` ` and `_` end a rule's modifier run (exclude.c:1365), so a tab
+/// after a prefix, a modifier or a keyword is an invalid modifier
+/// (exclude.c:1371-1380) and exits 1, from `--filter` and from a merge file
+/// alike; a second space is part of the pattern (exclude.c:1444-1445). The
+/// tree holds both `foo` and ` foo` so a run that strips that space shows.
+#[test]
+fn only_space_or_underscore_separates_a_rule_from_its_pattern() {
+    let tree = [("foo", "f"), (" foo", "s"), ("bar", "b")];
+    for rule in [
+        "-\tfoo",
+        "- foo",
+        "-_foo",
+        "-  foo",
+        "+\tfoo",
+        "-p\tfoo",
+        "-\t",
+        "H\tfoo",
+        ":\tfoo",
+        "exclude\tfoo",
+        "exclude foo",
+        "exclude_foo",
+        "exclude  foo",
+        "merge\tfoo",
+    ] {
+        if let Some(outcome) = assert_parity(&tree, &[&format!("--filter={rule}")])
+            && rule.contains('\t')
+        {
+            assert_eq!(outcome.exit, 1, "{rule:?}");
+            assert!(
+                outcome.diagnostic.starts_with("invalid modifier '"),
+                "{rule:?}"
+            );
+        }
+    }
+    for line in [
+        "-\tfoo",
+        "- foo",
+        "-_foo",
+        "-  foo",
+        "exclude\tfoo",
+        "+\tbar",
+    ] {
+        let rules = format!("{line}\n");
+        let merged = [
+            ("foo", "f"),
+            (" foo", "s"),
+            ("bar", "b"),
+            ("rules", rules.as_str()),
+        ];
+        assert_parity(&merged, &["--filter=. src/rules"]);
+        let per_dir = [
+            ("foo", "f"),
+            (" foo", "s"),
+            ("bar", "b"),
+            (".rsync-filter", rules.as_str()),
+        ];
+        for source in [Source::Local, Source::Push] {
+            assert_parity_from(&per_dir, &["-F"], source);
+        }
+    }
+}

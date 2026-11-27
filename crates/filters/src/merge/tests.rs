@@ -1110,14 +1110,54 @@ fn long_form_keyword_underscore_separator_matches_space_form() {
     assert_eq!(under[0].pattern(), b"*.bak");
 }
 
-// upstream: rule_strcmp uses isspace(), which accepts a tab as a separator, so
-// `include<TAB>*.txt` is the same rule as `include *.txt`.
+/// Only ` ` and `_` separate a rule prefix or keyword from its pattern; any
+/// other whitespace is an invalid modifier.
+///
+/// upstream: exclude.c:1222 rule_strcmp() ends a keyword at any isspace byte,
+/// but the modifier loop (exclude.c:1365) stops only at ` `/`_`, so a tab after
+/// `-`, `-p` or `exclude` reaches the `invalid:` label (exclude.c:1376) and
+/// exits 1. MEASURED against 3.5.2 with each line as a merge file: every tab
+/// line fails with `invalid modifier in filter rule: <rule from ... line 1>`,
+/// while ` `, `_` and a double space parse (the second space is pattern).
 #[test]
-fn long_form_keyword_tab_separator() {
-    let rules = parse_rules("include\t*.txt", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::Include);
-    assert_eq!(rules[0].pattern(), b"*.txt");
+fn rule_separator_is_space_or_underscore_only() {
+    // The pattern a line parses to, or `None` when it must be refused.
+    type Case = (&'static str, Option<(FilterAction, &'static [u8])>);
+    let cases: &[Case] = &[
+        ("- foo", Some((FilterAction::Exclude, b"foo"))),
+        ("-_foo", Some((FilterAction::Exclude, b"foo"))),
+        ("-  foo", Some((FilterAction::Exclude, b" foo"))),
+        ("-p foo", Some((FilterAction::Exclude, b"foo"))),
+        ("exclude foo", Some((FilterAction::Exclude, b"foo"))),
+        ("exclude_foo", Some((FilterAction::Exclude, b"foo"))),
+        ("exclude  foo", Some((FilterAction::Exclude, b" foo"))),
+        ("-\tfoo", None),
+        ("+\tfoo", None),
+        ("-p\tfoo", None),
+        ("H\tfoo", None),
+        ("exclude\tfoo", None),
+        ("include\tfoo", None),
+        ("include\x0bfoo", None),
+        ("include\x0cfoo", None),
+        ("exclude,p\tfoo", None),
+        ("merge\tfoo", None),
+        ("dir-merge\tfoo", None),
+    ];
+    for &(line, expected) in cases {
+        let parsed = parse_rules(line, Path::new("test"));
+        match expected {
+            Some((action, pattern)) => {
+                let rules = parsed.unwrap_or_else(|e| panic!("`{line:?}` must parse: {e}"));
+                assert_eq!(rules.len(), 1, "{line:?}");
+                assert_eq!(rules[0].action(), action, "{line:?}");
+                assert_eq!(rules[0].pattern(), pattern, "{line:?}");
+            }
+            None => {
+                let rendered = parsed.expect_err(line).to_string();
+                assert_modifier_rejected_without_echo(&rendered, line);
+            }
+        }
+    }
 }
 
 // upstream: rule_strcmp returns `str + rule_len` for a comma, so the modifier

@@ -10,7 +10,7 @@ use crate::RuleSource;
 use crate::clear_token::{ClearToken, classify_clear_token};
 use crate::cvs::{CvsSession, CvsTemplate};
 use crate::rule_source::trace_add_rule;
-use crate::{FilterRule, ModifierScope, RuleModifiers, parse_rule_modifiers_in};
+use crate::{FilterRule, ModifierScope, RuleModifiers, is_c_isspace, parse_rule_modifiers_in};
 
 use super::error::MergeFileError;
 
@@ -514,26 +514,18 @@ fn complete_rule(
     Ok(parsed_rule(action, mods, pattern))
 }
 
-/// Returns true for the characters upstream `isspace()` treats as whitespace in
-/// the C locale (space, tab, newline, vertical tab, form feed, carriage return).
-///
-/// Rust's [`char::is_ascii_whitespace`] omits the vertical tab, so this mirrors
-/// the C set exactly for `rule_strcmp` separator detection.
-fn is_c_isspace(ch: char) -> bool {
-    matches!(ch, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
-}
-
 /// Tries to parse a long-form rule (keyword prefix like `include`, `exclude`).
 ///
 /// Returns `Ok(Some(rule))` if the line matches a long-form keyword, `Ok(None)`
-/// if no keyword matched, or `Err` if a keyword was followed by a comma and an
-/// invalid modifier.
+/// if no keyword matched, or `Err` if a keyword was followed by an invalid
+/// modifier.
 ///
 /// upstream: exclude.c:1218-1227 rule_strcmp - a keyword matches only when it is
-/// followed by one of the accepted separators: whitespace, `_`, `,`, or the end
-/// of the string. Whitespace/`_`/end terminate the keyword and the remaining
-/// text is the pattern verbatim; a `,` instead introduces modifiers, which are
-/// parsed by the same modifier loop as short-form prefixes (exclude.c:1241-1487).
+/// followed by isspace, `_`, `,`, or the end of the string. A ` `, `_` or the
+/// end terminates the keyword and the remaining text is the pattern verbatim;
+/// a `,` introduces modifiers, parsed by the same modifier loop as short-form
+/// prefixes (exclude.c:1241-1487); any other isspace byte is the first byte of
+/// that loop and is refused.
 fn try_parse_long_form(
     line: &str,
     source_path: &Path,
@@ -560,32 +552,42 @@ fn try_parse_long_form(
         }
         // The matched prefix is all ASCII, so `klen` is a valid char boundary.
         let after = &line[klen..];
-        match after.chars().next() {
+        let modifier_run = match after.chars().next() {
             // upstream: rule_strcmp returns `str + rule_len` for `,`, so the
             // modifier loop begins after the comma (e.g. `dir-merge,n .filt`).
-            Some(',') => {
-                let prefix_specifies_side = matches!(
-                    action,
-                    ShortFormAction::Hide
-                        | ShortFormAction::Show
-                        | ShortFormAction::Protect
-                        | ShortFormAction::Risk
-                );
-                let (mods, pattern) = parse_modifiers(
-                    &after[','.len_utf8()..],
-                    action.is_merge(),
-                    prefix_specifies_side,
-                    line,
-                    source_path,
-                    line_num,
-                )?;
-                return complete_rule(action, mods, pattern, line, source_path, line_num).map(Some);
-            }
-            // upstream: rule_strcmp accepts isspace/`_` as terminating
-            // separators; exactly one is consumed and the remainder is the
-            // pattern verbatim (strlen, no trimming), so trailing and embedded
+            Some(',') => Some(&after[','.len_utf8()..]),
+            // upstream: rule_strcmp also ends the keyword at a tab or any other
+            // isspace byte, but the modifier loop's `*++s` then lands ON it and
+            // only ` `/`_` stop the loop (exclude.c:1365), so it is refused as
+            // an invalid modifier. MEASURED against 3.5.2: a merge-file line
+            // `exclude<TAB>foo` exits 1 with `invalid modifier in filter rule`.
+            Some(ch) if ch != ' ' && is_c_isspace(ch) => Some(after),
+            _ => None,
+        };
+        if let Some(run) = modifier_run {
+            let prefix_specifies_side = matches!(
+                action,
+                ShortFormAction::Hide
+                    | ShortFormAction::Show
+                    | ShortFormAction::Protect
+                    | ShortFormAction::Risk
+            );
+            let (mods, pattern) = parse_modifiers(
+                run,
+                action.is_merge(),
+                prefix_specifies_side,
+                line,
+                source_path,
+                line_num,
+            )?;
+            return complete_rule(action, mods, pattern, line, source_path, line_num).map(Some);
+        }
+        match after.chars().next() {
+            // upstream: a ` ` or `_` after the keyword stops the modifier loop at
+            // once; exactly one is consumed and the remainder is the pattern
+            // verbatim (strlen, no trimming), so trailing and embedded
             // whitespace stays part of the pattern.
-            Some(ch) if ch == '_' || is_c_isspace(ch) => {
+            Some(ch @ (' ' | '_')) => {
                 let pattern = &after[ch.len_utf8()..];
                 return complete_rule(
                     action,

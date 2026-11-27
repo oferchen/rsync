@@ -120,10 +120,15 @@ fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
             rest.strip_prefix(',').unwrap_or(rest),
         );
     }
-    if let Some((name, modifiers)) = keyword.split_once(',') {
-        (name, modifiers)
-    } else {
-        (keyword, "")
+    // upstream: exclude.c:1222 rule_strcmp also ends a keyword at a tab or any
+    // other isspace byte, but the modifier loop's `*++s` then lands ON it and
+    // only ` `/`_` stop the loop (exclude.c:1365), so it is the first modifier
+    // byte and is refused. MEASURED against 3.5.2: a `.rsync-filter` line
+    // `exclude<TAB>foo` exits 1 with `invalid modifier in filter rule`.
+    match keyword.find(|ch: char| ch == ',' || filters::is_c_isspace(ch)) {
+        Some(idx) if keyword[idx..].starts_with(',') => (&keyword[..idx], &keyword[idx + 1..]),
+        Some(idx) => (&keyword[..idx], &keyword[idx..]),
+        None => (keyword, ""),
     }
 }
 
@@ -285,10 +290,11 @@ fn classify_filter_directive_line(
         }
     }
 
-    // upstream: exclude.c:1222 `rule_strcmp` accepts `_` as a keyword separator
-    // alongside `isspace`. MEASURED against rsync 3.5.0: `--filter='exclude_b'`
-    // excludes `b`; oc split on whitespace only and rejected the rule.
-    let mut parts = text.splitn(2, |ch: char| ch == '_' || ch.is_whitespace());
+    // upstream: exclude.c:1365 - only ` ` and `_` end the modifier run, so they
+    // alone end the token; any other whitespace stays in it for
+    // `split_keyword_modifiers` to refuse. MEASURED against rsync 3.5.0:
+    // `--filter='exclude_b'` excludes `b`.
+    let mut parts = text.splitn(2, ['_', ' ']);
     let keyword = parts.next().unwrap_or("");
     // `splitn` already consumed the single separator between the keyword and
     // the pattern (upstream exclude.c:1444-1445), so the remainder is the
@@ -634,6 +640,60 @@ mod tests {
         let (name, mods) = split_keyword_modifiers("include,/s");
         assert_eq!(name, "include");
         assert_eq!(mods, "/s");
+    }
+
+    /// upstream: exclude.c:1222, 1365 - a keyword or single-letter prefix ends
+    /// at isspace, but only ` `/`_` end the modifier run, so any other
+    /// whitespace is handed on as the first modifier byte.
+    #[test]
+    fn split_keyword_modifiers_keeps_non_space_whitespace_as_a_modifier() {
+        for (token, expected) in [
+            ("exclude\tfoo", ("exclude", "\tfoo")),
+            ("exclude\x0bfoo", ("exclude", "\x0bfoo")),
+            ("exclude,p\tfoo", ("exclude", "p\tfoo")),
+            ("H\tfoo", ("H", "\tfoo")),
+        ] {
+            assert_eq!(split_keyword_modifiers(token), expected, "{token:?}");
+        }
+    }
+
+    /// MEASURED against 3.5.2 with each line as a `.rsync-filter` under `-F`:
+    /// a tab after a prefix or keyword exits 1 with `invalid modifier in filter
+    /// rule`, while ` `, `_` and a double space parse.
+    #[test]
+    fn rule_separator_is_space_or_underscore_only() {
+        let source = RuleSource::File { name: "f", line: 1 };
+        for line in [
+            "-\tfoo",
+            "-p\tfoo",
+            "H\tfoo",
+            "exclude\tfoo",
+            "hide\tfoo",
+            "merge\tfoo",
+            "dir-merge\tfoo",
+        ] {
+            let refusal = classify_filter_directive_line(line, source)
+                .expect_err(line)
+                .to_string();
+            assert!(
+                refusal.starts_with("invalid modifier in filter rule"),
+                "{line:?}: {refusal}"
+            );
+        }
+        for line in [
+            "- foo",
+            "-_foo",
+            "-  foo",
+            "exclude foo",
+            "exclude_foo",
+            "exclude  foo",
+            "H foo",
+        ] {
+            assert!(
+                classify_filter_directive_line(line, source).is_ok(),
+                "{line:?}"
+            );
+        }
     }
 
     #[test]
