@@ -30,8 +30,9 @@ use logging::info_log;
 use metadata::{
     AclIdMapper, MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts,
 };
+use protocol::flist::FileEntry;
 #[cfg(unix)]
-use protocol::flist::{FileEntry, FileType};
+use protocol::flist::FileType;
 
 #[cfg(unix)]
 use crate::generator::ItemFlags;
@@ -104,10 +105,10 @@ impl ReceiverContext {
         // preserve_specials, which also frame the file list's rdev fields.
         // Entries fall through to the non-regular skip path exactly as they do
         // when -D was never given.
-        if self.config.flags.skip_dest_writes()
-            || self.config.flags.drop_devices
-            || (!self.config.flags.devices && !self.config.flags.specials)
-        {
+        let creates = !self.config.flags.skip_dest_writes()
+            && !self.config.flags.drop_devices
+            && (self.config.flags.devices || self.config.flags.specials);
+        if !creates && !self.may_skip_non_regular() {
             return Ok(());
         }
 
@@ -115,62 +116,30 @@ impl ReceiverContext {
         let start = range.start;
         for (i, entry) in self.file_list[range].iter().enumerate() {
             let flist_idx = start + i;
-            let is_device = entry.is_device();
-            let is_special = entry.is_special();
+            let skipped = self.skips_as_non_regular(entry);
+            if !skipped && !(creates && (entry.is_device() || entry.is_special())) {
+                continue;
+            }
             // upstream: generator.c:1699-1713 - the daemon filter is checked
             // before the existence gate and the device/special branch.
-            if (is_device || is_special)
-                && self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry)
-            {
+            if self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry) {
                 continue;
             }
             // upstream: generator.c:1794-1843 - the existence gate precedes
             // both the device/special branch and the non-regular skip.
-            if (is_device || is_special)
-                && self.skip_non_regular_by_existence_gate(
-                    &mut *writer,
-                    entry,
-                    dest_dir,
-                    &dest_dir.join(entry.path()),
-                )
-            {
+            if self.skip_non_regular_by_existence_gate(
+                &mut *writer,
+                entry,
+                dest_dir,
+                &dest_dir.join(entry.path()),
+            ) {
                 continue;
             }
-            if is_device {
-                if !self.config.flags.devices {
-                    continue;
-                }
-                // upstream: generator.c:2073 - the device arm is
-                // `am_root && preserve_devices && ftype == FT_DEVICE`. Without
-                // the privilege term an unprivileged receiver enters the
-                // creation branch, unlinks whatever occupies the destination,
-                // and only then fails the `mknod` it was never able to
-                // perform - destroying an existing file. Upstream instead
-                // falls through to the non-regular skip at generator.c:2109,
-                // leaving the destination untouched.
-                //
-                // The term is `am_root != 0`, so `--fake-super` qualifies: it
-                // is the -1 arm of the tri-state and still writes the 0600
-                // placeholder (`syscall.c:do_mknod()`).
-                if !metadata::am_root() && !self.config.fake_super {
-                    // upstream: generator.c:2150-2155 - INFO_GTE(NONREG, 1),
-                    // which is info_verbosity[0] and so prints at default
-                    // verbosity.
-                    info_log!(
-                        Nonreg,
-                        1,
-                        "skipping non-regular file \"{}\"",
-                        entry.path().display()
-                    );
-                    continue;
-                }
-            } else if is_special {
-                if !self.config.flags.specials {
-                    continue;
-                }
-            } else {
+            if skipped {
+                self.report_skipped_non_regular(entry);
                 continue;
             }
+            let is_device = entry.is_device();
 
             // upstream: generator.c:1980-1982 - a follower is handed to
             // hard_link_check() before the FT_SPECIAL/FT_DEVICE branch, so it
@@ -455,31 +424,114 @@ impl ReceiverContext {
     >(
         &self,
         range: std::ops::Range<usize>,
-        _dest_dir: &Path,
-        _writer: &mut W,
+        dest_dir: &Path,
+        writer: &mut W,
     ) -> std::io::Result<()> {
         // upstream: generator.c:2072 - see the unix arm above.
-        if self.config.flags.skip_dest_writes()
-            || self.config.flags.drop_devices
-            || (!self.config.flags.devices && !self.config.flags.specials)
-        {
+        let creates = !self.config.flags.skip_dest_writes()
+            && !self.config.flags.drop_devices
+            && (self.config.flags.devices || self.config.flags.specials);
+        if !creates && !self.may_skip_non_regular() {
             return Ok(());
         }
 
+        let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         for entry in &self.file_list[range] {
             let gated = (entry.is_device() && self.config.flags.devices)
                 || (entry.is_special() && self.config.flags.specials);
-            if !gated {
+            if creates && gated {
+                logging::info_log!(
+                    Nonreg,
+                    1,
+                    "skipping special file \"{}\": device and special files are not supported on this platform",
+                    entry.path().display()
+                );
                 continue;
             }
-            logging::info_log!(
-                Nonreg,
-                1,
-                "skipping special file \"{}\": device and special files are not supported on this platform",
-                entry.path().display()
-            );
+            if !self.skips_as_non_regular(entry)
+                || self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry)
+                || self.skip_non_regular_by_existence_gate(
+                    &mut *writer,
+                    entry,
+                    dest_dir,
+                    &dest_dir.join(entry.path()),
+                )
+            {
+                continue;
+            }
+            self.report_skipped_non_regular(entry);
         }
         Ok(())
+    }
+
+    /// Whether any file-list entry can reach the non-regular skip, so a
+    /// transfer that preserves every non-regular type skips the pass.
+    ///
+    /// upstream: generator.c:1675-1681 - under `list_only` recv_generator()
+    /// lists the entry and returns before every skip branch, so a listing
+    /// never prints the line. Dry-run carries on to it.
+    fn may_skip_non_regular(&self) -> bool {
+        let flags = &self.config.flags;
+        if flags.list_only {
+            return false;
+        }
+        !flags.links
+            || flags.drop_devices
+            || !flags.devices
+            || !flags.specials
+            || !self.may_create_devices()
+    }
+
+    /// Whether `recv_generator()` falls through to the non-regular skip for
+    /// `entry`: a symlink without `--links`, a device without `--devices` or
+    /// without the privilege to create it, or a FIFO/socket without
+    /// `--specials`. `--drop-D` sends devices and specials the same way.
+    ///
+    /// upstream: generator.c:1985 `preserve_links && ftype == FT_SYMLINK`,
+    /// generator.c:2072-2074 `!drop_devices && ((am_root && preserve_devices
+    /// && ftype == FT_DEVICE) || (preserve_specials && ftype == FT_SPECIAL))`,
+    /// and generator.c:2150 `if (ftype != FT_REG)`.
+    fn skips_as_non_regular(&self, entry: &FileEntry) -> bool {
+        let flags = &self.config.flags;
+        if entry.is_symlink() {
+            !flags.links
+        } else if entry.is_device() {
+            flags.drop_devices || !flags.devices || !self.may_create_devices()
+        } else if entry.is_special() {
+            flags.drop_devices || !flags.specials
+        } else {
+            false
+        }
+    }
+
+    /// The `am_root` term of the device arm (generator.c:2073). Without it an
+    /// unprivileged receiver would enter the creation branch, unlink whatever
+    /// occupies the destination, and only then fail the `mknod` it could never
+    /// perform. `am_root` is non-zero under `--fake-super` (the -1 arm of the
+    /// tri-state), which still writes the 0600 placeholder
+    /// (`syscall.c:do_mknod()`).
+    fn may_create_devices(&self) -> bool {
+        metadata::am_root() || self.config.fake_super
+    }
+
+    /// Reports an entry the receiver leaves uncreated.
+    ///
+    /// upstream: generator.c:2150-2155 - `INFO_GTE(NONREG, 1)`, which is
+    /// info_verbosity[0] (options.c:257) and so prints at default verbosity.
+    /// A lone entry the single-file rename wrote under the destination
+    /// operand's name is still named by its file-list name: generator.c:2152-2153
+    /// swaps `fname` for `f_name(file, NULL)` under `solo_file`.
+    fn report_skipped_non_regular(&self, entry: &FileEntry) {
+        logging::info_log_bytes!(Nonreg, 1, {
+            let name = self.single_file_renamed_from.as_deref().map_or_else(
+                || entry.name_bytes().into_owned(),
+                super::deletion::path_wire_bytes,
+            );
+            let mut message = b"skipping non-regular file \"".to_vec();
+            message.extend_from_slice(&name);
+            message.push(b'"');
+            message
+        });
     }
 }
 

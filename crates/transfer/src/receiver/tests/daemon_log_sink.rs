@@ -186,7 +186,7 @@ fn a_renamed_entry_logs_its_file_list_name_but_a_deletion_keeps_its_own() {
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
     let rows = Rows::default();
     ctx.set_daemon_log_sink(SharedDaemonLog::new(RowLog(Arc::clone(&rows))));
-    ctx.daemon_log_renamed_from = Some(PathBuf::from("listed"));
+    ctx.single_file_renamed_from = Some(PathBuf::from("listed"));
     {
         let mut pending = ctx.daemon_log_rows.borrow_mut();
         pending.entry(0).or_default().push(row("renamed", false));

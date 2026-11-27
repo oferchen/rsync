@@ -1887,7 +1887,7 @@ impl ReceiverContext {
         };
         row.dir.clone_from(&self.daemon_log_dir);
         if let Some(name) = self
-            .daemon_log_renamed_from
+            .single_file_renamed_from
             .as_ref()
             .filter(|_| !row.deleted)
         {

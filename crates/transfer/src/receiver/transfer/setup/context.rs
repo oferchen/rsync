@@ -1335,9 +1335,7 @@ impl ReceiverContext {
             return dest_dir;
         }
         if let Some(entry) = self.file_list.first_mut() {
-            if self.daemon_log_active {
-                self.daemon_log_renamed_from = Some(entry.path().to_path_buf());
-            }
+            self.single_file_renamed_from = Some(entry.path().to_path_buf());
             entry.set_name(PathBuf::from(&target_basename));
         }
         parent.unwrap_or_else(|| PathBuf::from("."))

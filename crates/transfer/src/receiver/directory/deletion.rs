@@ -143,7 +143,7 @@ impl MsgDeletedBudget {
 
 /// Returns the on-the-wire bytes of a deletion-root-relative name, matching the
 /// raw `fname` upstream passes to `send_msg(MSG_DELETED, ...)` (`log.c:954`).
-fn path_wire_bytes(rel: &Path) -> Vec<u8> {
+pub(in crate::receiver) fn path_wire_bytes(rel: &Path) -> Vec<u8> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;

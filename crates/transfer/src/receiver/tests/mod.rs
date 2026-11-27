@@ -54,6 +54,8 @@ mod replay_basis;
 #[cfg(unix)]
 mod sanitize_symlink_targets;
 mod sender_stats;
+#[cfg(unix)]
+mod skipped_non_regular_notice;
 mod support;
 mod symlinks_and_devices;
 #[cfg(unix)]
