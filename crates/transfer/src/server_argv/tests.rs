@@ -543,23 +543,17 @@ fn derive_rows(entries: &[Entry]) -> Vec<(String, LongOption)> {
         .collect()
 }
 
-/// The table is re-derived from rsync 3.5.2's options.c and must equal it
-/// row for row. On a difference the derived rows are printed in the table's
-/// own syntax, ready to paste.
+/// options.c:610-876 of rsync 3.5.2, verbatim. The `transfer` integration
+/// test `upstream_long_options_vendored` checks it against the source the
+/// interop job builds.
+const VENDORED_LONG_OPTIONS: &str = include_str!("upstream_long_options.txt");
+
+/// The table is re-derived from 3.5.2's long_options[] and must equal it row
+/// for row. On a difference the derived rows are printed in the table's own
+/// syntax, ready to paste.
 #[test]
 fn table_is_derived_from_upstream_options_c() {
-    let Some(path) = test_support::workspace_root()
-        .map(|root| root.join("target/interop/upstream-src/rsync-3.5.2/options.c"))
-        .filter(|path| path.is_file())
-    else {
-        test_support::capability_missing(
-            "rsync 3.5.2 source not at target/interop/upstream-src/rsync-3.5.2 \
-             (fetch it with `tools/ci/run_interop.sh build-only`)",
-        );
-        return;
-    };
-    let source = std::fs::read_to_string(&path).expect("read options.c");
-    let entries = parse_long_options(&source);
+    let entries = parse_long_options(VENDORED_LONG_OPTIONS);
     for name in OMITTED {
         assert!(
             entries.iter().any(|entry| entry.name == name),
@@ -576,9 +570,6 @@ fn table_is_derived_from_upstream_options_c() {
             .iter()
             .map(|(name, kind)| format!("    (\"{name}\", LongOption::{kind:?}),\n"))
             .collect();
-        panic!(
-            "LONG_OPTIONS differs from {}; derived rows:\n{rows}",
-            path.display()
-        );
+        panic!("LONG_OPTIONS differs from options.c:610-876; derived rows:\n{rows}");
     }
 }
