@@ -54,7 +54,7 @@ fn rename_with_io_uring_fallback_fails_for_missing_source() {
 fn is_cross_device_detects_exdev() {
     #[cfg(unix)]
     {
-        let exdev = io::Error::from_raw_os_error(libc::EXDEV);
+        let exdev = io::Error::from_raw_os_error(fast_io::errno::EXDEV);
         assert!(is_cross_device(&exdev));
     }
     let not_found = io::Error::new(io::ErrorKind::NotFound, "not found");

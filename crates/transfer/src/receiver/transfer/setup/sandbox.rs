@@ -224,7 +224,7 @@ pub(super) fn open_sandbox_for_dest_anchored(
         Ok(sandbox) => Ok(Some(Arc::new(sandbox))),
         Err(err) => {
             let code = err.raw_os_error();
-            if matches!(code, Some(libc::EXDEV)) {
+            if matches!(code, Some(fast_io::errno::EXDEV)) {
                 return Err(io::Error::new(
                     err.kind(),
                     format!(
@@ -237,7 +237,7 @@ pub(super) fn open_sandbox_for_dest_anchored(
                     ),
                 ));
             }
-            if matches!(code, Some(libc::ENOENT)) {
+            if matches!(code, Some(fast_io::errno::ENOENT)) {
                 // First-run push: the tail is created later by
                 // `ensure_relative_parents`. Ordinary, and not worth an
                 // operator's attention.
@@ -448,7 +448,7 @@ mod symlink_race_tests {
             "expected the escape refusal, got: {err}"
         );
         assert!(
-            msg.contains(&format!("errno={}", libc::EXDEV)),
+            msg.contains(&format!("errno={}", fast_io::errno::EXDEV)),
             "escape must be refused as an escape (EXDEV), not merely as \
              'there was a symlink', got: {err}"
         );

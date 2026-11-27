@@ -468,7 +468,9 @@ impl GeneratorContext {
             }
             // upstream: xattrs.c:1242-1246 - a symlink whose xattrs cannot be
             // read keeps its mode and reads as uid/gid 0.
-            Err(error) if ft.is_symlink() && error.raw_os_error() == Some(libc::EPERM) => {
+            Err(error)
+                if ft.is_symlink() && error.raw_os_error() == Some(fast_io::errno::EPERM) =>
+            {
                 Ok(Some(metadata::FakeSuperStat {
                     mode: metadata.mode(),
                     uid: 0,

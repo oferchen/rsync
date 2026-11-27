@@ -186,11 +186,11 @@ mod tests {
     #[test]
     fn only_a_directory_is_reported_as_non_empty() {
         assert_eq!(
-            classify(&failure(DeleteStep::Rmdir, libc::ENOTEMPTY)),
+            classify(&failure(DeleteStep::Rmdir, fast_io::errno::ENOTEMPTY)),
             DeleteVerdict::NotEmpty
         );
         assert_eq!(
-            classify(&failure(DeleteStep::Unlink, libc::ENOTEMPTY)),
+            classify(&failure(DeleteStep::Unlink, fast_io::errno::ENOTEMPTY)),
             DeleteVerdict::Failed
         );
     }
@@ -201,11 +201,11 @@ mod tests {
     #[test]
     fn every_other_errno_is_a_failure() {
         for errno in [
-            libc::EACCES,
-            libc::EPERM,
-            libc::EBUSY,
-            libc::ELOOP,
-            libc::ENOTDIR,
+            fast_io::errno::EACCES,
+            fast_io::errno::EPERM,
+            fast_io::errno::EBUSY,
+            fast_io::errno::ELOOP,
+            fast_io::errno::ENOTDIR,
         ] {
             assert_eq!(
                 classify(&failure(DeleteStep::Unlink, errno)),
@@ -282,7 +282,7 @@ mod tests {
         );
         assert!(writer.0.is_empty(), "a vanished victim prints nothing");
 
-        let kept = failure(DeleteStep::Rmdir, libc::ENOTEMPTY);
+        let kept = failure(DeleteStep::Rmdir, fast_io::errno::ENOTEMPTY);
         assert_eq!(
             ctx.report_delete_failure(&mut writer, Path::new("history"), &kept),
             DeleteVerdict::NotEmpty
@@ -292,12 +292,12 @@ mod tests {
             "the non-empty notice is FINFO and must not lift the exit code"
         );
 
-        let busy = failure(DeleteStep::Rmdir, libc::EBUSY);
+        let busy = failure(DeleteStep::Rmdir, fast_io::errno::EBUSY);
         assert_eq!(
             ctx.report_delete_failure(&mut writer, Path::new("a/mnt"), &busy),
             DeleteVerdict::Failed
         );
-        let refused = failure(DeleteStep::MakeBackup, libc::EACCES);
+        let refused = failure(DeleteStep::MakeBackup, fast_io::errno::EACCES);
         ctx.report_delete_failure(&mut writer, Path::new("a/f"), &refused);
 
         assert_eq!(

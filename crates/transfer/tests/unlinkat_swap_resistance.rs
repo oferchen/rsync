@@ -104,7 +104,7 @@ fn unlink_via_sandbox_dir_flag_refuses_non_empty_directory() {
         .expect_err("must refuse to rmdir a non-empty directory");
     let code = err.raw_os_error();
     assert!(
-        code == Some(libc::ENOTEMPTY) || code == Some(libc::EEXIST),
+        code == Some(fast_io::errno::ENOTEMPTY) || code == Some(fast_io::errno::EEXIST),
         "expected ENOTEMPTY or EEXIST, got {code:?}"
     );
     assert!(dir.is_dir(), "directory must survive a failed rmdir");

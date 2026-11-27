@@ -282,7 +282,10 @@ fn try_create_new(
             // Mirror the fallback's `OpenOptions::new().write(true).create_new(true)`
             // exactly: `O_WRONLY | O_CREAT | O_EXCL`, plus `O_NOFOLLOW` so a
             // pre-planted symlink at the leaf path cannot redirect the create.
-            let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
+            let flags = fast_io::open_flags::O_WRONLY
+                | fast_io::open_flags::O_CREAT
+                | fast_io::open_flags::O_EXCL
+                | fast_io::open_flags::O_NOFOLLOW;
             return fast_io::openat_via_sandbox_or_fallback(
                 Some(sandbox.as_ref()),
                 dest_dir,
@@ -310,7 +313,10 @@ fn try_create_new(
     #[cfg(unix)]
     let opened = fast_io::ConfinedFallback::confined().open_at(
         concrete_path,
-        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
+        fast_io::open_flags::O_WRONLY
+            | fast_io::open_flags::O_CREAT
+            | fast_io::open_flags::O_EXCL
+            | fast_io::open_flags::O_NOFOLLOW,
         0o600,
     );
     // Windows: create the temp file without following a reparse
@@ -735,7 +741,7 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(
             error.to_string(),
-            io::Error::from_raw_os_error(libc::EACCES).to_string(),
+            io::Error::from_raw_os_error(fast_io::errno::EACCES).to_string(),
             "the wrapper must render exactly like the error it carries"
         );
         let attempted = attempted_temp_path(&error).expect("temp name attached");

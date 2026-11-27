@@ -23,7 +23,9 @@ use test_support::{
 /// uses from this platform's C library: upstream prints `strerror()`, which is
 /// "Cannot allocate memory" on glibc and "Out of memory" on musl.
 fn enomem_text() -> String {
-    engine::local_copy::upstream_io_error(&std::io::Error::from_raw_os_error(libc::ENOMEM))
+    engine::local_copy::upstream_io_error(&std::io::Error::from_raw_os_error(
+        fast_io::errno::ENOMEM,
+    ))
 }
 
 /// Builds `src/d/d/.../d` `levels` deep with a file `f` in every level, so

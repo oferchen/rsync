@@ -121,7 +121,7 @@ impl MakeWayFor {
 pub(super) fn is_not_empty(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
-        Some(libc::ENOTEMPTY) | Some(libc::EEXIST)
+        Some(fast_io::errno::ENOTEMPTY) | Some(fast_io::errno::EEXIST)
     )
 }
 

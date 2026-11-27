@@ -772,7 +772,7 @@ fn stage_into_partial_dir(
 ///
 /// Forwards to [`fast_io::is_cross_device`], the single source of truth shared
 /// with the engine local-copy commit guard and [`crate::temp_guard`]. On Unix
-/// this is `raw_os_error() == libc::EXDEV` (errno 18); on Windows
+/// this is `raw_os_error() == fast_io::errno::EXDEV` (errno 18); on Windows
 /// `ERROR_NOT_SAME_DEVICE` (error 17).
 pub(super) fn is_cross_device(e: &io::Error) -> bool {
     fast_io::is_cross_device(e)
@@ -983,7 +983,7 @@ fn force_exdev_active() -> bool {
 fn simulated_cross_device_error() -> io::Error {
     #[cfg(unix)]
     {
-        io::Error::from_raw_os_error(libc::EXDEV)
+        io::Error::from_raw_os_error(fast_io::errno::EXDEV)
     }
     #[cfg(windows)]
     {

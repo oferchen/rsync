@@ -1774,7 +1774,7 @@ mod tests {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         let dest = std::path::Path::new("/srv/mod/payload");
         let temp = std::path::Path::new("/srv/mod/.payload.a2dBeL");
-        let denied = || io::Error::from_raw_os_error(libc::EACCES);
+        let denied = || io::Error::from_raw_os_error(fast_io::errno::EACCES);
 
         let mkstemp = pr.commit_failure(
             dest,
@@ -1849,7 +1849,7 @@ mod tests {
                 crate::temp_guard::CommitOp::Backup,
                 dest,
                 Some(backup_dir),
-                io::Error::from_raw_os_error(libc::ENOENT),
+                io::Error::from_raw_os_error(fast_io::errno::ENOENT),
             ),
         );
         assert!(
@@ -1870,7 +1870,7 @@ mod tests {
             &crate::temp_guard::attach_commit_op(
                 crate::temp_guard::CommitOp::Backup,
                 dest,
-                io::Error::from_raw_os_error(libc::ENOENT),
+                io::Error::from_raw_os_error(fast_io::errno::ENOENT),
             ),
         );
         assert!(
@@ -1894,7 +1894,7 @@ mod tests {
             crate::temp_guard::CommitOp::Backup,
             std::path::Path::new("./authorized_keys"),
             Some(backup),
-            io::Error::from_raw_os_error(libc::ENOENT),
+            io::Error::from_raw_os_error(fast_io::errno::ENOENT),
         );
         assert_eq!(
             keep_backup_failed_line(
@@ -1911,7 +1911,7 @@ mod tests {
         let untagged = crate::temp_guard::attach_commit_op(
             crate::temp_guard::CommitOp::Backup,
             std::path::Path::new("./authorized_keys"),
-            io::Error::from_raw_os_error(libc::ENOENT),
+            io::Error::from_raw_os_error(fast_io::errno::ENOENT),
         );
         assert_eq!(
             keep_backup_failed_line(
@@ -1932,7 +1932,8 @@ mod tests {
     fn commit_failure_reports_the_real_errno() {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         let dest = std::path::Path::new("/srv/mod/payload");
-        let rendered = pr.commit_failure(dest, &io::Error::from_raw_os_error(libc::EPERM));
+        let rendered =
+            pr.commit_failure(dest, &io::Error::from_raw_os_error(fast_io::errno::EPERM));
         assert!(
             rendered.ends_with("(1)"),
             "EPERM must render as (1), not the EACCES literal: {rendered}"
@@ -2752,7 +2753,7 @@ mod tests {
             file_entry: None,
             log_name: None,
         };
-        crate::disk_commit::close_fault::arm(libc::EIO);
+        crate::disk_commit::close_fault::arm(fast_io::errno::EIO);
         if chunked {
             let tx = pr.file_sender();
             tx.send(FileMessage::Begin(Box::new(begin))).unwrap();
@@ -2850,12 +2851,12 @@ mod tests {
             )
         };
         for errno in [
-            libc::EACCES,
-            libc::ENOSPC,
-            libc::EROFS,
-            libc::ENAMETOOLONG,
-            libc::EISDIR,
-            libc::ENOENT,
+            fast_io::errno::EACCES,
+            fast_io::errno::ENOSPC,
+            fast_io::errno::EROFS,
+            fast_io::errno::ENAMETOOLONG,
+            fast_io::errno::EISDIR,
+            fast_io::errno::ENOENT,
         ] {
             for op in [
                 CommitOp::Mkstemp,
@@ -2982,7 +2983,7 @@ mod tests {
             CommitOp::Copy,
             temp,
             Some(dest),
-            io::Error::from_raw_os_error(libc::ENOSPC),
+            io::Error::from_raw_os_error(fast_io::errno::ENOSPC),
         );
         let rewrapped = attach_commit_op_between(CommitOp::Rename, temp, Some(dest), copy);
 

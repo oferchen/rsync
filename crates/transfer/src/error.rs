@@ -637,7 +637,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failed_received_file_close_is_rerr_fileio_whatever_the_errno() {
-        for errno in [libc::EIO, libc::ENOSPC, libc::EACCES] {
+        for errno in [
+            fast_io::errno::EIO,
+            fast_io::errno::ENOSPC,
+            fast_io::errno::EACCES,
+        ] {
             let error = crate::temp_guard::attach_commit_op(
                 crate::temp_guard::CommitOp::Close,
                 Path::new("/dest/.f.XXXXXX"),
@@ -646,7 +650,7 @@ mod tests {
             assert_eq!(rerr_for_io_error(&error), 11, "errno {errno}");
         }
         assert_eq!(
-            rerr_for_io_error(&io::Error::from_raw_os_error(libc::EACCES)),
+            rerr_for_io_error(&io::Error::from_raw_os_error(fast_io::errno::EACCES)),
             3,
             "the untagged errno keeps its own class"
         );

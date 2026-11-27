@@ -1357,7 +1357,10 @@ impl ReceiverContext {
                     // the leader and re-root the group so later members link to it.
                     #[cfg(unix)]
                     let can_fallback_copy = entry.is_file()
-                        && matches!(e.raw_os_error(), Some(libc::EMLINK) | Some(libc::EXDEV));
+                        && matches!(
+                            e.raw_os_error(),
+                            Some(fast_io::errno::EMLINK) | Some(fast_io::errno::EXDEV)
+                        );
                     #[cfg(not(unix))]
                     let can_fallback_copy = false;
                     if can_fallback_copy && std::fs::copy(&leader_path, &link_path).is_ok() {

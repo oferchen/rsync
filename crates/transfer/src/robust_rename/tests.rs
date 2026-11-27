@@ -54,7 +54,7 @@ fn exdev_copies_into_place_and_removes_the_temp() {
     let final_path = fx.dest.join("file");
 
     let outcome = robust_rename(unanchored(&fx.dest), &fx.temp, &final_path, None, |_, _| {
-        Err(os_error(libc::EXDEV))
+        Err(os_error(fast_io::errno::EXDEV))
     })
     .expect("cross-filesystem commit succeeds by copying");
 
@@ -79,7 +79,7 @@ fn exdev_replaces_a_read_only_destination() {
     fs::set_permissions(&final_path, fs::Permissions::from_mode(0o444)).unwrap();
 
     robust_rename(unanchored(&fx.dest), &fx.temp, &final_path, None, |_, _| {
-        Err(os_error(libc::EXDEV))
+        Err(os_error(fast_io::errno::EXDEV))
     })
     .expect("copy replaces the read-only destination");
 
@@ -107,7 +107,7 @@ fn exdev_with_relative_partial_dir_stages_the_copy_then_renames() {
                 .borrow_mut()
                 .push((old.to_path_buf(), new.to_path_buf()));
             if calls.borrow().len() == 1 {
-                Err(os_error(libc::EXDEV))
+                Err(os_error(fast_io::errno::EXDEV))
             } else {
                 fs::rename(old, new)
             }
@@ -149,7 +149,7 @@ fn absolute_partial_dir_is_not_a_staging_target() {
         Some(&absolute_partial),
         |_, _| {
             *calls.borrow_mut() += 1;
-            Err(os_error(libc::EXDEV))
+            Err(os_error(fast_io::errno::EXDEV))
         },
     )
     .expect("direct copy succeeds");
@@ -169,11 +169,11 @@ fn other_rename_errors_do_not_copy() {
     let final_path = fx.dest.join("file");
 
     let error = robust_rename(unanchored(&fx.dest), &fx.temp, &final_path, None, |_, _| {
-        Err(os_error(libc::EACCES))
+        Err(os_error(fast_io::errno::EACCES))
     })
     .expect_err("EACCES propagates");
 
-    assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    assert_eq!(error.raw_os_error(), Some(fast_io::errno::EACCES));
     assert!(fx.temp.exists());
     assert!(!final_path.exists());
 }
@@ -195,7 +195,7 @@ fn busy_target_is_unlinked_and_retried_four_times() {
         |_, new| {
             *calls.borrow_mut() += 1;
             fs::write(new, b"running binary").unwrap();
-            Err(os_error(libc::ETXTBSY))
+            Err(os_error(fast_io::errno::ETXTBSY))
         },
     )
     .expect_err("tries run out");
@@ -219,7 +219,7 @@ fn busy_target_that_cannot_be_unlinked_stops_retrying() {
 
     let error = robust_rename(unanchored(&fx.dest), &fx.temp, &final_path, None, |_, _| {
         *calls.borrow_mut() += 1;
-        Err(os_error(libc::ETXTBSY))
+        Err(os_error(fast_io::errno::ETXTBSY))
     })
     .expect_err("missing target cannot be unlinked");
 
@@ -243,7 +243,7 @@ fn busy_target_retry_succeeds() {
         |old, new| {
             *calls.borrow_mut() += 1;
             if *calls.borrow() == 1 {
-                Err(os_error(libc::ETXTBSY))
+                Err(os_error(fast_io::errno::ETXTBSY))
             } else {
                 fs::rename(old, new)
             }
@@ -279,7 +279,7 @@ fn exdev_copy_refuses_an_interior_symlink_escape() {
         fsync: false,
     };
     let result = robust_rename(anchor, &fx.temp, &final_path, None, |_, _| {
-        Err(os_error(libc::EXDEV))
+        Err(os_error(fast_io::errno::EXDEV))
     });
 
     assert!(result.is_err(), "the confined copy refuses the escape");
@@ -386,7 +386,7 @@ fn a_failed_exdev_copy_is_tagged_as_a_copy_of_the_temp_onto_the_destination() {
     let final_path = fx.dest.join("missing").join("file");
 
     let error = robust_rename(unanchored(&fx.dest), &fx.temp, &final_path, None, |_, _| {
-        Err(os_error(libc::EXDEV))
+        Err(os_error(fast_io::errno::EXDEV))
     })
     .expect_err("the copy cannot create its target");
 
