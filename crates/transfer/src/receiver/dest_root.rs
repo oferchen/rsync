@@ -69,6 +69,9 @@ pub enum SelectStep {
     /// The destination could not be stat()ed for a reason other than its
     /// absence. upstream: main.c:798-803 - `ERROR: cannot stat destination %s`.
     Stat,
+    /// The destination directory exists but cannot be entered.
+    /// upstream: main.c:776-781 - `change_dir#1 %s failed`.
+    ChangeDir1,
     /// A lone non-directory's destination parent could not be entered.
     /// upstream: main.c:865-869 - `change_dir#3 %s failed`.
     ChangeDir3,
@@ -131,6 +134,7 @@ impl fmt::Display for DestRootSelectError {
         let cause = logging::upstream_errno_text(&self.source);
         match self.step {
             SelectStep::Stat => write!(f, "ERROR: cannot stat destination {}: {cause}", self.fname),
+            SelectStep::ChangeDir1 => write!(f, "change_dir#1 {} failed: {cause}", self.fname),
             SelectStep::ChangeDir3 => write!(f, "change_dir#3 {} failed: {cause}", self.fname),
         }
     }
@@ -154,6 +158,8 @@ pub(in crate::receiver) enum DestRootFailure {
     /// `--mkpath`, which upstream reports before it lops the trailing slash
     /// (main.c:757-762 vs :809-821).
     Mkdir { cause: io::Error, slash_kept: bool },
+    /// The existing destination directory could not be entered.
+    ChangeDir1(io::Error),
     /// The destination's parent could not be entered.
     ChangeDir3 { cause: io::Error, parent: PathBuf },
 }
@@ -161,7 +167,10 @@ pub(in crate::receiver) enum DestRootFailure {
 impl DestRootFailure {
     fn cause(&self) -> &io::Error {
         match self {
-            Self::Stat(cause) | Self::Mkdir { cause, .. } | Self::ChangeDir3 { cause, .. } => cause,
+            Self::Stat(cause)
+            | Self::Mkdir { cause, .. }
+            | Self::ChangeDir1(cause)
+            | Self::ChangeDir3 { cause, .. } => cause,
         }
     }
 
@@ -305,6 +314,20 @@ pub fn ensure_dest_root_exists(
         .map(|root| root == DestRoot::Created)
 }
 
+/// Checks that the receiver could enter the existing destination directory.
+///
+/// upstream: main.c:776-781 get_local_name() - `change_dir(dest_path)` into an
+/// existing directory, `RERR_FILESELECT` when it fails, even under
+/// `--dry-run`. oc never chdirs, so a stat of `<dest>/.` stands in for it:
+/// like `chdir` it needs search permission, not read permission.
+fn enter_dest_root(dest_root: &Path) -> io::Result<()> {
+    dest_root
+        .join(".")
+        .metadata()
+        .map(drop)
+        .map_err(|cause| DestRootFailure::ChangeDir1(cause).into_io())
+}
+
 /// What [`ensure_dest_root`] found at the destination root.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::receiver) enum DestRoot {
@@ -353,7 +376,9 @@ pub(in crate::receiver) fn ensure_dest_root(
     }
     let created = made > 0 && !dry_run;
     match stat {
-        Ok(meta) if meta.is_dir() => return Ok(made_root(created)),
+        Ok(meta) if meta.is_dir() => {
+            return enter_dest_root(dest_root).map(|()| made_root(created));
+        }
         Ok(_) if file_total > 1 || trailing_slash => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

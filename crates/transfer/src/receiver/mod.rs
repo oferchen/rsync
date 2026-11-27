@@ -29,6 +29,7 @@
 //! - [`metadata::apply_metadata_from_file_entry`] - Metadata preservation
 //! - [`protocol::wire`] - Wire format for signatures and deltas
 
+mod backup_dir;
 mod basis;
 mod context;
 mod daemon_filter;
@@ -55,6 +56,7 @@ pub(crate) use crate::parallel_io::ParallelThresholds;
 
 use signature;
 
+pub use self::backup_dir::{BackupDirRefusal, check_backup_dir};
 pub use self::basis::{
     BasisFileConfig, BasisFileResult, ChecksumThreadsPolicy, InplaceBackupSpec,
     find_basis_file_with_config, set_checksum_threads_policy,

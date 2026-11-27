@@ -187,8 +187,8 @@ pub use self::handshake::{
 pub use self::iobuf::PeerWriteError;
 pub use self::reader::RemoteExitError;
 pub use self::receiver::{
-    DestRootMkdirError, DestRootSelectError, ListOnlyEntry, ReceiverContext, SelectStep, SumHead,
-    TransferStats,
+    BackupDirRefusal, DestRootMkdirError, DestRootSelectError, ListOnlyEntry, ReceiverContext,
+    SelectStep, SumHead, TransferStats, check_backup_dir,
 };
 pub use self::role::ServerRole;
 pub use self::setup::SafeReadError;

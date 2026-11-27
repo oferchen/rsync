@@ -71,7 +71,10 @@ use engine::local_copy::{
 };
 
 use super::config::{BandwidthLimit, ClientConfig, DeleteMode};
-use super::error::{ClientError, map_local_copy_error, missing_operands_error, validate_temp_dir};
+use super::error::{
+    ClientError, map_local_copy_error, missing_operands_error, validate_backup_dir,
+    validate_temp_dir,
+};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::remote;
 use super::summary::ClientSummary;
@@ -264,15 +267,22 @@ fn run_client_internal(
     // anchored explicitly here, once, before the check: doing it later would
     // let the validation and the temp-file placement disagree about which
     // directory the operator named.
-    if let Some(dest) = config
+    //
+    // upstream: main.c:1036-1057 - the same do_recv() stats --backup-dir first,
+    // against the same directory.
+    if let Some(working_dir) = config
         .transfer_args()
         .last()
         .filter(|dest| !remote::operand_is_remote(dest))
+        .map(|dest| receiver_working_directory(Path::new(dest)))
     {
+        if let Some(backup_dir) = config.backup_directory() {
+            validate_backup_dir(backup_dir, &working_dir)?;
+        }
         let anchored = config
             .temp_directory()
             .filter(|temp_dir| temp_dir.is_relative())
-            .map(|temp_dir| receiver_working_directory(Path::new(dest)).join(temp_dir));
+            .map(|temp_dir| working_dir.join(temp_dir));
         if let Some(anchored) = anchored {
             config.set_temp_directory(anchored);
         }

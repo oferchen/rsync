@@ -732,6 +732,24 @@ pub(crate) fn validate_temp_dir(temp_dir: &Path) -> Result<(), ClientError> {
     }
 }
 
+/// Validates a `--backup-dir` argument before transferring, mirroring
+/// upstream's receiver-side check.
+///
+/// upstream: main.c:1036-1057 `do_recv()` - a backup directory that is not a
+/// directory is `RERR_SYNTAX` (1), any stat failure but `ENOENT` is
+/// `RERR_FILEIO` (11). Like `--temp-dir`, callers invoke this only when the
+/// local process receives; a relative value resolves against `dest_dir`.
+#[cold]
+pub(crate) fn validate_backup_dir(backup_dir: &Path, dest_dir: &Path) -> Result<(), ClientError> {
+    transfer::check_backup_dir(backup_dir, dest_dir).map_err(|refusal| {
+        let code = match refusal {
+            transfer::BackupDirRefusal::NotDirectory(_) => ExitCode::Syntax,
+            transfer::BackupDirRefusal::Stat(..) => ExitCode::FileIo,
+        };
+        temp_dir_error(refusal.to_string(), code)
+    })
+}
+
 #[cold]
 fn temp_dir_error(text: String, code: ExitCode) -> ClientError {
     let message = rsync_error!(code.as_i32(), text).with_role(Role::Receiver);
