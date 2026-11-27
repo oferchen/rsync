@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use crate::branding::Brand;
 use crate::message::strings::exit_code_message;
 use crate::message::{Message, Role};
+use logging::escape::{EscapeStyle, escape_for_output};
 
 /// Writes `refusal` as upstream reports a fatal filter error and returns its
 /// exit code.
@@ -18,6 +19,12 @@ use crate::message::{Message, Role};
 /// `who` is upstream's `who_am_i()` for the process that parsed the rule: the
 /// client, a remote-shell server, or a daemon's sender or pre-fork receiver.
 ///
+/// `style` escapes the cause line, which echoes operator- or peer-supplied
+/// rule text: upstream's `rwrite()` passes it through `filtered_fwrite()`
+/// (log.c:476, log.c:499), so a VT in a rule prints as `\#013`. A caller
+/// whose writer escapes on its own (a log file) passes
+/// `EscapeStyle::passthrough()`.
+///
 /// # Errors
 ///
 /// Any error writing to `out`.
@@ -26,19 +33,16 @@ pub fn write_refusal<W: Write>(
     brand: Brand,
     who: Role,
     refusal: &Message,
+    style: EscapeStyle,
 ) -> io::Result<i32> {
     let code = refusal.code().unwrap_or(1);
+    let mut line = Vec::new();
     if refusal.role().is_some() {
-        writeln!(
-            out,
-            "{}: [{}] {}",
-            brand.client_program_name(),
-            who.as_str(),
-            refusal.text()
-        )?;
-    } else {
-        writeln!(out, "{}", refusal.text())?;
+        write!(line, "{}: [{}] ", brand.client_program_name(), who.as_str())?;
     }
+    line.extend_from_slice(&escape_for_output(refusal.text().as_bytes(), style));
+    line.push(b'\n');
+    out.write_all(&line)?;
     if let Some(template) = exit_code_message(code) {
         let mut trailer = template.to_message().with_role(who).with_brand(brand);
         if let Some(source) = refusal.source() {
@@ -54,10 +58,14 @@ mod tests {
     use super::*;
     use crate::rsync_error;
 
-    fn rendered(who: Role, refusal: &Message) -> (String, i32) {
+    fn rendered_with(who: Role, refusal: &Message, style: EscapeStyle) -> (String, i32) {
         let mut out = Vec::new();
-        let code = write_refusal(&mut out, Brand::Upstream, who, refusal).expect("write");
+        let code = write_refusal(&mut out, Brand::Upstream, who, refusal, style).expect("write");
         (String::from_utf8(out).expect("utf8"), code)
+    }
+
+    fn rendered(who: Role, refusal: &Message) -> (String, i32) {
+        rendered_with(who, refusal, EscapeStyle::terminal(false))
     }
 
     /// upstream: exclude.c:1714-1719 - an operator-named merge file that will
@@ -100,5 +108,23 @@ mod tests {
             "{text}"
         );
         assert!(lines[1].contains("[server="), "{text}");
+    }
+
+    /// upstream: exclude.c:1376 echoes the refused rule through
+    /// `rprintf(FERROR, ...)`, and log.c:499 `filtered_fwrite()` escapes it,
+    /// so a VT in the rule (and in the `'%c'` detail) prints as `\#013`.
+    /// Measured against rsync 3.5.2: `--filter=$'+\vfoo'` prints
+    /// `invalid modifier '\#013' at position 1 in filter rule: +\#013foo`.
+    #[test]
+    fn a_control_byte_in_the_cause_line_is_escaped_for_the_terminal() {
+        let refusal = rsync_error!(
+            1,
+            "invalid modifier '\u{b}' at position 1 in filter rule: +\u{b}foo"
+        );
+        let (text, _) = rendered(Role::Client, &refusal);
+        assert_eq!(
+            text.lines().next(),
+            Some("invalid modifier '\\#013' at position 1 in filter rule: +\\#013foo")
+        );
     }
 }

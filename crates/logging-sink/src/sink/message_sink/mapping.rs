@@ -18,8 +18,11 @@ impl<W> MessageSink<W> {
             scratch,
             line_mode,
             brand,
+            terminal_escaping,
         } = self;
-        MessageSink::with_parts_and_brand(f(writer), scratch, line_mode, brand)
+        let mut mapped = MessageSink::with_parts_and_brand(f(writer), scratch, line_mode, brand);
+        mapped.terminal_escaping = terminal_escaping;
+        mapped
     }
 
     /// Attempts to map the sink's writer into a different type, preserving the original sink on failure.
@@ -37,16 +40,20 @@ impl<W> MessageSink<W> {
             scratch,
             line_mode,
             brand,
+            terminal_escaping,
         } = self;
 
         match f(writer) {
-            Ok(mapped) => Ok(MessageSink::with_parts_and_brand(
-                mapped, scratch, line_mode, brand,
-            )),
-            Err((writer, error)) => Err(TryMapWriterError::new(
-                MessageSink::with_parts_and_brand(writer, scratch, line_mode, brand),
-                error,
-            )),
+            Ok(mapped) => {
+                let mut sink = MessageSink::with_parts_and_brand(mapped, scratch, line_mode, brand);
+                sink.terminal_escaping = terminal_escaping;
+                Ok(sink)
+            }
+            Err((writer, error)) => {
+                let mut sink = MessageSink::with_parts_and_brand(writer, scratch, line_mode, brand);
+                sink.terminal_escaping = terminal_escaping;
+                Err(TryMapWriterError::new(sink, error))
+            }
         }
     }
 

@@ -308,6 +308,29 @@ fn run_module_list_reports_access_denied() {
     handle.join().expect("server thread");
 }
 
+/// upstream: clientserver.c:428-429 and 438-439 print each line a daemon
+/// sends before giving up with its own rprintf(), so a refusal carries one
+/// cause line per received line rather than one joined text.
+#[test]
+fn run_module_list_keeps_each_pre_acknowledgement_line_of_a_refusal() {
+    let _guard = env_lock().lock().expect("env mutex poisoned");
+
+    let responses = vec!["no listing here\n", "second\x01line\n"];
+    let (addr, handle) = spawn_stub_daemon(responses);
+
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
+        None,
+        ProtocolVersion::NEWEST,
+    );
+
+    let error = run_module_list(request).expect_err("an unacknowledged listing is refused");
+    assert_eq!(error.cause_lines(), ["no listing here", "second\x01line"]);
+    assert!(!error.message().to_string().contains('\n'));
+
+    handle.join().expect("daemon thread completes");
+}
+
 #[test]
 fn run_module_list_accepts_plaintext_motd_before_acknowledgment() {
     let _guard = env_lock().lock().expect("env mutex poisoned");

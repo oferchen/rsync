@@ -74,6 +74,7 @@ pub struct MessageSink<W> {
     scratch: MessageScratch,
     line_mode: LineMode,
     brand: Brand,
+    terminal_escaping: bool,
 }
 
 mod accessors;
@@ -90,6 +91,7 @@ where
             .field("writer", &self.writer)
             .field("line_mode", &self.line_mode)
             .field("brand", &self.brand)
+            .field("terminal_escaping", &self.terminal_escaping)
             .finish()
     }
 }

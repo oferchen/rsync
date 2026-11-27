@@ -68,8 +68,8 @@ enum LeadLine {
     /// `rprintf(FERROR, RSYNC_NAME ": ...")` lines, each prefixed with the
     /// program name.
     Program(Vec<String>),
-    /// An unprefixed `rprintf(FERROR, ...)` cause.
-    Cause(String),
+    /// Unprefixed `rprintf(FERROR, ...)` cause lines, one per upstream call.
+    Cause(Vec<String>),
     /// Bytes another process wrote to stderr verbatim, line endings
     /// included, then a program-prefixed line.
     #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
@@ -109,7 +109,7 @@ impl ClientError {
     pub(crate) fn followed_by_exit_wait(mut self, failure: crate::server::ExitWaitFailure) -> Self {
         let line = match failure {
             crate::server::ExitWaitFailure::ReadError(text) => LeadLine::Program(vec![text]),
-            crate::server::ExitWaitFailure::Timeout(text) => LeadLine::Cause(text),
+            crate::server::ExitWaitFailure::Timeout(text) => LeadLine::Cause(vec![text]),
         };
         self.after_trailer
             .get_or_insert_with(|| Box::new(AfterTrailer::default()))
@@ -131,7 +131,7 @@ impl ClientError {
     /// for the peer's exit failed with one.
     pub fn trailing_cause_line(&self) -> Option<&str> {
         match self.after_trailer.as_deref().and_then(|a| a.line.as_ref()) {
-            Some(LeadLine::Cause(line)) => Some(line),
+            Some(LeadLine::Cause(lines)) => lines.first().map(String::as_str),
             _ => None,
         }
     }
@@ -177,8 +177,16 @@ impl ClientError {
     ///
     /// upstream: xattrs.c:1253-1258 - `rprintf(FERROR, "Corrupt ...")` and
     /// then `exit_cleanup()`, whose log_exit() trailer follows it.
-    fn with_cause_line(mut self, line: String) -> Self {
-        self.lead_line = Some(Box::new(LeadLine::Cause(line)));
+    fn with_cause_line(self, line: String) -> Self {
+        self.with_cause_lines(vec![line])
+    }
+
+    /// Attaches several unprefixed cause lines, one per upstream
+    /// `rprintf(FERROR, ...)` call. Each is its own terminal line, so a
+    /// newline is never embedded in one: `rwrite()` would escape it as
+    /// `\#012` (log.c:288-291), keeping only the trailing one raw (log.c:460).
+    pub(crate) fn with_cause_lines(mut self, lines: Vec<String>) -> Self {
+        self.lead_line = Some(Box::new(LeadLine::Cause(lines)));
         self
     }
     /// Attaches the summary of a transfer that finished every entry but still
@@ -242,12 +250,18 @@ impl ClientError {
         }
     }
 
-    /// Returns the line upstream prints verbatim before the exit trailer, if
-    /// this failure has one.
+    /// Returns the first line upstream prints verbatim before the exit
+    /// trailer, if this failure has one; see [`Self::cause_lines`].
     pub fn cause_line(&self) -> Option<&str> {
+        self.cause_lines().first().map(String::as_str)
+    }
+
+    /// Returns every line upstream prints verbatim before the exit trailer,
+    /// in order; empty when this failure has none.
+    pub fn cause_lines(&self) -> &[String] {
         match self.lead_line.as_deref() {
-            Some(LeadLine::Cause(line)) => Some(line),
-            _ => None,
+            Some(LeadLine::Cause(lines)) => lines,
+            _ => &[],
         }
     }
 
@@ -936,6 +950,16 @@ pub(crate) fn getaddrinfo_error(
 #[cold]
 pub(crate) fn cause_line_error(line: String, exit_code: ExitCode, role: Role) -> ClientError {
     remote_exit_error(exit_code, role).with_cause_line(line)
+}
+
+/// [`cause_line_error`] for a cause upstream prints with several
+/// `rprintf(FERROR, ...)` calls, one line each.
+pub(crate) fn cause_lines_error(
+    lines: Vec<String>,
+    exit_code: ExitCode,
+    role: Role,
+) -> ClientError {
+    remote_exit_error(exit_code, role).with_cause_lines(lines)
 }
 
 /// Creates a daemon error from an i32 exit code.

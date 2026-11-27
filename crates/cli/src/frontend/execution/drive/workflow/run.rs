@@ -47,7 +47,7 @@ fn refuse_local_remote_option<Err: Write>(
 ) -> i32 {
     let program = stderr.brand().client_program_name();
     let refusal = option.remote_refusal_line(program);
-    let _ = writeln!(stderr.writer_mut(), "{refusal}");
+    let _ = stderr.write_escaped_line(&refusal);
     fail_with_message(exit_trailer(SYNTAX_ERROR, Role::Receiver), stderr);
     let _ = writeln!(
         stderr.writer_mut(),
@@ -663,8 +663,10 @@ where
     let remainder = match extract_operands(raw_remainder) {
         Ok(operands) => operands,
         Err(unsupported) => {
+            // upstream: options.c:933 option_error() prints the token through
+            // rprintf(FERROR, ...), so log.c:499 escapes a control byte in it.
             let line = unsupported.refusal_line(stderr.brand().client_program_name());
-            let _ = writeln!(stderr.writer_mut(), "{line}");
+            let _ = stderr.write_escaped_line(&line);
             return Err(fail_with_message(unsupported.to_message(), stderr));
         }
     };
@@ -1015,7 +1017,7 @@ where
                     format_args!("failed to open log-file {}", path.display()),
                     &error,
                 );
-                let _ = writeln!(stderr.writer_mut(), "{line}");
+                let _ = stderr.write_escaped_line(&line);
                 let _ = writeln!(stdout, "Ignoring \"log file\" setting.");
             }
         }

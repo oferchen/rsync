@@ -762,7 +762,7 @@ pub(crate) fn copy_sources(
                 // ownership walk, so the operand fails rather than falling back
                 // to the path-following open the walk exists to replace.
                 if let Err(error) = context.set_files_from_base(source) {
-                    eprintln!("{error}");
+                    logging::escape::eprint_terminal_line(&error.to_string());
                     context.record_io_error();
                     first_io_error.get_or_insert(error);
                     continue;
@@ -785,7 +785,10 @@ pub(crate) fn copy_sources(
                         // vanish from inside its tree already reported it.
                         // full_fname() wraps the path in double quotes (util1.c:1528).
                         let error = if error.vanished_path() == Some(source.path()) {
-                            eprintln!("file has vanished: \"{}\"", source.path().display());
+                            logging::escape::eprint_terminal_line(&format!(
+                                "file has vanished: \"{}\"",
+                                source.path().display()
+                            ));
                             error.reported()
                         } else {
                             error
@@ -797,8 +800,9 @@ pub(crate) fn copy_sources(
                         // upstream: flist.c send_file_list() - a missing source
                         // argument prints `link_stat "%s" failed: %s` to stderr,
                         // sets IOERR_GENERAL (exit 23), and the transfer
-                        // continues with the remaining sources.
-                        eprintln!("{error}");
+                        // continues with the remaining sources. log.c:476 /
+                        // log.c:499 escape the name like any other line.
+                        logging::escape::eprint_terminal_line(&error.to_string());
                         context.record_io_error();
                         if first_io_error.is_none() {
                             first_io_error = Some(error);

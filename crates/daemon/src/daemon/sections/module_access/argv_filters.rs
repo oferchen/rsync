@@ -262,12 +262,16 @@ fn refuse_argv_filters(
                 .log_sink
                 .and_then(|log| log.lock().ok().map(|sink| sink.brand()))
                 .unwrap_or(Brand::Oc);
+            // Raw: the log sink below escapes each line itself, as upstream
+            // escapes a daemon line once, in logit() (log.c:143); escaping
+            // here too would turn `\#013` into `\#134#013`.
             let mut lines = Vec::new();
             let _ = core::client::filter_args::write_refusal(
                 &mut lines,
                 brand,
                 argv_parse_role(client_args),
                 refusal,
+                logging::escape::EscapeStyle::passthrough(),
             );
             // upstream: msgs2stderr keeps its default of 2 until after
             // parse_arguments() returns (options.c:103, clientserver.c:1164-1182),

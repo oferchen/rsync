@@ -465,15 +465,16 @@ fn emit_error_report<Err>(
         let _ = stderr.writer_mut().write_all(text.as_bytes());
     }
     // upstream: an unprefixed rprintf(FERROR, ...) cause that precedes the
-    // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr().
-    if let Some(line) = error.cause_line() {
-        let _ = writeln!(stderr.writer_mut(), "{line}");
+    // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr(). Each
+    // upstream call is its own escaped line (log.c:460, main.c:1591-1592).
+    for line in error.cause_lines() {
+        let _ = stderr.write_escaped_line(line);
     }
     // upstream: rprintf(FERROR, RSYNC_NAME ": ...") lines that precede
     // the log_exit() trailer, e.g. io.c:298-303 whine_about_eof().
     let program = stderr.brand().client_program_name();
     for line in error.program_lines() {
-        let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+        let _ = stderr.write_escaped_line(&format!("{program}: {line}"));
     }
     if trailer {
         let message: &Message = error.message();
@@ -487,10 +488,10 @@ fn emit_error_report<Err>(
     // after log_exit()'s trailer, e.g. io.c:918-925 `read error`.
     if let Some(line) = error.trailing_program_line() {
         let program = stderr.brand().client_program_name();
-        let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+        let _ = stderr.write_escaped_line(&format!("{program}: {line}"));
     }
     if let Some(line) = error.trailing_cause_line() {
-        let _ = writeln!(stderr.writer_mut(), "{line}");
+        let _ = stderr.write_escaped_line(line);
     }
 }
 

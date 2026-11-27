@@ -44,7 +44,7 @@ pub fn eight_bit_output() -> bool {
 /// upstream: main.c:1911 `setlocale(LC_CTYPE, "")` adopts the environment's
 /// locale, and every multibyte decision afterwards - `mbrtowc()` in
 /// log.c:251-274 `locale_char_len()`, and the `iconv` validation of
-/// rsync.c:95-98 `ic_chck` - is made in that locale's codeset. oc-rsync decodes
+/// rsync.c:96-98 `ic_chck` - is made in that locale's codeset. oc-rsync decodes
 /// only the codesets it can decode without `iconv`; any other codeset keeps the
 /// byte-at-a-time escaping, which escapes every byte at or above 0x80 on the
 /// terminal (see [`set_locale_codeset`]).
@@ -102,9 +102,9 @@ fn classify_codeset(codeset: Option<&str>) -> LocaleCharset {
 /// Process-wide "check messages against the locale charset" state - upstream's
 /// `ic_chck`.
 ///
-/// upstream: rsync.c:95-98 opens `ic_chck = iconv_open(defset, defset)` only
+/// upstream: rsync.c:96-98 opens `ic_chck = iconv_open(defset, defset)` only
 /// for a process that is not a server and runs without `-8`. While it is open,
-/// log.c:462-494 `rwrite()` validates every terminal line in the locale
+/// log.c:463-496 `rwrite()` validates every terminal line in the locale
 /// codeset: a byte that does not start a valid character is written as
 /// `\#ooo`, and the valid characters go through `filtered_fwrite(.., 0, ..)`
 /// (log.c:476), which keeps printable multibyte characters raw. A server or a
@@ -147,7 +147,7 @@ pub fn terminal_style() -> EscapeStyle {
 ///   - the terminal sink of a server or a `-8` client passes
 ///     `!allow_8bit_chars` (log.c:499);
 ///   - a client without `-8` validates the line against the locale charset
-///     first and passes 0 (log.c:462-494, see [`set_message_charset_check`]);
+///     first and passes 0 (log.c:463-496, see [`set_message_charset_check`]);
 ///   - the log-file sink passes 0 (log.c:143), which is deliberately *not*
 ///     gated on `--8-bit-output`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,22 +287,34 @@ pub fn escape_for_output(input: &[u8], style: EscapeStyle) -> Vec<u8> {
     // A producer feeding a sink that escapes must not pre-escape anything: the
     // `\#ddd` guard below would otherwise fire on the sink's own output the
     // moment it re-entered this function, turning `\#033` into `\#134#033`.
-    if style == EscapeStyle::passthrough() {
-        return input.to_vec();
-    }
-
-    // Fast path: all bytes ASCII-printable or tab (0x09, 0x20-0x7E) -> no byte
-    // needs escaping under any style and there is no literal `\#ddd` to guard,
-    // so return the bytes verbatim.
-    //
-    // DEL (0x7F) and high bytes (0x80-0xFF) are deliberately excluded here so
-    // they always take the slow path, which applies the style's own rule.
-    let all_safe = input.iter().all(|&b| is_c_print(b) || b == b'\t');
-    if all_safe && !has_literal_escape_sequence(input) {
+    if !may_need_escaping(input, style) {
         return input.to_vec();
     }
 
     escape_bytes_slow(input, style)
+}
+
+/// Whether [`escape_for_output`] could change `input` under `style`.
+///
+/// `false` guarantees the escaped output equals `input`, so a sink can write
+/// the bytes it already holds without building an escaped copy. `true` is
+/// conservative: a byte at or above 0x80 always answers `true` because only
+/// the slow path applies the style's and the locale's rule to it.
+#[must_use]
+pub fn may_need_escaping(input: &[u8], style: EscapeStyle) -> bool {
+    // A producer feeding a sink that escapes must not pre-escape anything: the
+    // `\#ddd` guard would otherwise fire on the sink's own output the moment
+    // it re-entered the escaper, turning `\#033` into `\#134#033`.
+    if style == EscapeStyle::passthrough() {
+        return false;
+    }
+
+    // All bytes ASCII-printable or tab (0x09, 0x20-0x7E) -> no byte needs
+    // escaping under any style and there is no literal `\#ddd` to guard.
+    // DEL (0x7F) and high bytes (0x80-0xFF) are deliberately excluded so they
+    // always take the slow path, which applies the style's own rule.
+    let all_safe = input.iter().all(|&b| is_c_print(b) || b == b'\t');
+    !all_safe || has_literal_escape_sequence(input)
 }
 
 /// Returns `true` when the input contains a literal `\#ddd` sequence.
@@ -337,7 +349,7 @@ fn escape_bytes_slow(input: &[u8], style: EscapeStyle) -> Vec<u8> {
     let mut output: Vec<u8> = Vec::with_capacity(input.len() + input.len() / 4);
     let len = input.len();
     let mut i = 0;
-    // upstream: log.c:462-494 - with `ic_chck` open, `iconvbufs()` passes the
+    // upstream: log.c:463-496 - with `ic_chck` open, `iconvbufs()` passes the
     // valid characters to `filtered_fwrite(f, convbuf, len, 0, ..)` (log.c:476)
     // and writes each byte it rejects as `\#ooo` (log.c:484-486).
     let charset_checked = style.use_isprint && style.escape_controls && message_charset_checked();
@@ -438,6 +450,33 @@ pub fn escape_path(path: &Path, style: EscapeStyle) -> Vec<u8> {
 /// Convenience wrapper for already-converted strings (e.g. from
 /// `to_string_lossy()`). Escapes non-printable bytes in the UTF-8
 /// representation.
+/// Writes `line` and a newline to `out` as one terminal line, escaped with the
+/// process [`terminal_style`].
+///
+/// upstream: log.c:463-499 `rwrite()` escapes every diagnostic it prints, and
+/// log.c:460 writes the trailing newline raw. A line with nothing to escape is
+/// written without building a copy.
+///
+/// # Errors
+///
+/// Any error writing to `out`.
+pub fn write_terminal_line<W: Write>(out: &mut W, line: &str) -> std::io::Result<()> {
+    let style = terminal_style();
+    if !may_need_escaping(line.as_bytes(), style) {
+        return writeln!(out, "{line}");
+    }
+    let mut escaped = escape_for_output(line.as_bytes(), style);
+    escaped.push(b'\n');
+    out.write_all(&escaped)
+}
+
+/// Prints `line` on stderr as one escaped terminal line; see
+/// [`write_terminal_line`]. A failed write to stderr is ignored, as
+/// `eprintln!` would panic and upstream's `rwrite()` has no one to report to.
+pub fn eprint_terminal_line(line: &str) {
+    let _ = write_terminal_line(&mut std::io::stderr().lock(), line);
+}
+
 #[cfg(test)]
 fn escape_str(s: &str, style: EscapeStyle) -> Vec<u8> {
     escape_for_output(s.as_bytes(), style)
@@ -841,7 +880,7 @@ mod tests {
 }
 
 /// Terminal escaping under the process locale and `ic_chck` (rsync 3.5.2
-/// rsync.c:95-98, log.c:251-293, log.c:462-499).
+/// rsync.c:96-98, log.c:251-293, log.c:463-499).
 ///
 /// Each test sets the process-wide codeset and `ic_chck` state; nextest runs
 /// every test in its own process, so the settings cannot leak into a peer.
@@ -939,7 +978,7 @@ mod locale_checked_tests {
         assert_eq!(terminal(b"lit\\#123"), b"lit\\#134#123".to_vec());
     }
 
-    /// WHY: a server never opens `ic_chck` (rsync.c:95 `!am_server`), so it
+    /// WHY: a server never opens `ic_chck` (rsync.c:96 `!am_server`), so it
     /// keeps the `isprint()` branch (log.c:499) even under a UTF-8 locale.
     #[test]
     fn server_keeps_isprint_escaping_under_utf8() {
@@ -990,5 +1029,14 @@ mod locale_checked_tests {
             escape_for_output(b"c1\xc2\x85x", style),
             b"c1\\#302\\#205x".to_vec()
         );
+    }
+
+    /// upstream: log.c:288-291 - a C0 byte in a diagnostic is escaped, a tab
+    /// is not, and the trailing newline stays raw.
+    #[test]
+    fn write_terminal_line_escapes_c0_and_keeps_a_tab() {
+        let mut out = Vec::new();
+        write_terminal_line(&mut out, "link_stat \"no\u{1}p\te\" failed").unwrap();
+        assert_eq!(out, b"link_stat \"no\\#001p\te\" failed\n".to_vec());
     }
 }

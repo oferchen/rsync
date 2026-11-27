@@ -180,7 +180,12 @@ where
             // (socket.c:464-475), as for a transfer.
             let program = stderr.brand().client_program_name();
             for line in error.program_lines() {
-                let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+                let _ = stderr.write_escaped_line(&format!("{program}: {line}"));
+            }
+            // upstream: clientserver.c:428-429 and 438-439 - each line a
+            // refusing daemon sent is its own rprintf(), escaped on its own.
+            for line in error.cause_lines() {
+                let _ = stderr.write_escaped_line(line);
             }
             if write_message(error.message(), stderr).is_err() {
                 let code = error.exit_code();

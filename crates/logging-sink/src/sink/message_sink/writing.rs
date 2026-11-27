@@ -1,4 +1,5 @@
 use super::MessageSink;
+use crate::escape::{self, EscapeStyle};
 use crate::line_mode::LineMode;
 use core::message::{Message, MessageSegments};
 use std::borrow::Borrow;
@@ -9,11 +10,66 @@ where
     W: Write,
 {
     fn render_message(&mut self, message: &Message, append_newline: bool) -> io::Result<()> {
+        // The prefix, role and trailer are fixed printable ASCII, so only the
+        // text can need escaping; a clean text keeps the vectored, copy-free
+        // render below.
+        let style = self.escape_style();
+        if escape::may_need_escaping(message.text().as_bytes(), style) {
+            return self.render_escaped(message, append_newline, style);
+        }
         if append_newline {
             message.render_line_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
         } else {
             message.render_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
         }
+    }
+
+    /// Writes `line` and a newline in one write, escaped with
+    /// [`escape_style`](Self::escape_style).
+    ///
+    /// For a pre-formatted diagnostic that is not a [`Message`], such as the
+    /// unprefixed `rprintf(FERROR, ...)` cause line ahead of `log_exit()`'s
+    /// trailer: upstream's `rwrite()` escapes it like any other line
+    /// (log.c:476, log.c:499). A line with nothing to escape is written as is,
+    /// without building a copy.
+    ///
+    /// # Errors
+    ///
+    /// Any error writing to the underlying writer.
+    pub fn write_escaped_line(&mut self, line: &str) -> io::Result<()> {
+        let style = self.escape_style();
+        if !escape::may_need_escaping(line.as_bytes(), style) {
+            return writeln!(self.writer, "{line}");
+        }
+        let mut out = escape::escape_for_output(line.as_bytes(), style);
+        out.push(b'\n');
+        self.writer.write_all(&out)
+    }
+
+    /// Renders `message` as one escaped terminal line.
+    ///
+    /// upstream: log.c:460 `rwrite()` peels one trailing newline and writes it
+    /// raw after `filtered_fwrite()` has escaped the rest of the line, so a
+    /// newline inside the text prints as `\#012` and cannot forge a line.
+    fn render_escaped(
+        &mut self,
+        message: &Message,
+        append_newline: bool,
+        style: EscapeStyle,
+    ) -> io::Result<()> {
+        let mut rendered = Vec::new();
+        message.append_to_vec_with_scratch(&mut self.scratch, &mut rendered)?;
+        let mut body = rendered.as_slice();
+        let mut trailing_newline = append_newline;
+        if let Some(rest) = body.strip_suffix(b"\n") {
+            body = rest;
+            trailing_newline = true;
+        }
+        let mut line = escape::escape_for_output(body, style);
+        if trailing_newline {
+            line.push(b'\n');
+        }
+        self.writer.write_all(&line)
     }
 
     /// Writes a single message using the sink's current [`LineMode`].
@@ -275,5 +331,84 @@ mod tests {
         let msg = Message::info("borrowed");
         sink.write(&msg).unwrap();
         assert!(!sink.writer().is_empty());
+    }
+
+    /// The rendered line of `text` from a sink that escapes for the terminal.
+    ///
+    /// A fresh test process starts without `-8` and without the client's
+    /// `ic_chck` check, so the terminal style is upstream's `use_isprint`
+    /// byte rule (log.c:499 on a server or a `-8`-less client lacking iconv).
+    fn terminal_line(text: &'static str) -> Vec<u8> {
+        let mut sink = make_sink();
+        sink.set_terminal_escaping(true);
+        sink.write(Message::warning(text)).unwrap();
+        sink.into_inner()
+    }
+
+    fn plain_line(text: &'static str) -> Vec<u8> {
+        let mut sink = make_sink();
+        sink.write(Message::warning(text)).unwrap();
+        sink.into_inner()
+    }
+
+    /// upstream: log.c:288-291 `filtered_char_len()` escapes C0 bytes but
+    /// writes a tab raw. The rest of the line keeps the plain rendering.
+    #[test]
+    fn terminal_escaping_escapes_c0_but_keeps_a_tab() {
+        assert_eq!(
+            terminal_line("rule a\tb\u{b}c"),
+            plain_line("rule a\tb\\#013c")
+        );
+    }
+
+    /// upstream: log.c:290-291 - DEL and the C1 range are escaped, and under
+    /// `use_isprint` so is every other byte `isprint()` rejects, byte by byte.
+    #[test]
+    fn terminal_escaping_escapes_del_and_high_bytes() {
+        assert_eq!(
+            terminal_line("x\u{7f}y\u{85}z"),
+            plain_line("x\\#177y\\#302\\#205z")
+        );
+    }
+
+    /// upstream: log.c:288-289 - a literal `\#ddd` in the text has its
+    /// backslash escaped, so it cannot pass for an escape the filter wrote.
+    #[test]
+    fn terminal_escaping_guards_a_literal_escape_sequence() {
+        assert_eq!(
+            terminal_line("n\\#001\u{1}"),
+            plain_line("n\\#134#001\\#001")
+        );
+    }
+
+    /// upstream: log.c:460 peels only the trailing newline, so a newline
+    /// inside the text is escaped and cannot forge a second line.
+    #[test]
+    fn terminal_escaping_keeps_an_embedded_newline_on_one_line() {
+        let line = terminal_line("a\nb");
+        assert_eq!(line, plain_line("a\\#012b"));
+        assert_eq!(line.iter().filter(|&&b| b == b'\n').count(), 1);
+    }
+
+    /// The trailing newline of a text rendered without the sink's own newline
+    /// is the line terminator upstream writes raw (log.c:460).
+    #[test]
+    fn terminal_escaping_writes_a_texts_trailing_newline_raw() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        sink.set_terminal_escaping(true);
+        sink.write(Message::warning("v\u{1}\n")).unwrap();
+        assert!(sink.into_inner().ends_with(b"v\\#001\n"));
+    }
+
+    /// upstream: xattrs.c:1253-1258 and the like print an unprefixed cause
+    /// line through `rprintf(FERROR, ...)`; log.c:499 escapes it before the
+    /// newline, and a tab stays raw.
+    #[test]
+    fn write_escaped_line_escapes_a_pre_formatted_cause_line() {
+        let mut sink = make_sink();
+        sink.set_terminal_escaping(true);
+        sink.write_escaped_line("link_stat \"no\u{1}p\te\" failed")
+            .unwrap();
+        assert_eq!(sink.into_inner(), b"link_stat \"no\\#001p\te\" failed\n");
     }
 }
