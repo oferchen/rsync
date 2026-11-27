@@ -552,6 +552,11 @@ fn build_server_config(
             // Without this wiring the daemon would parse `charset = LATIN1` but
             // never apply it, leaving --iconv negotiation a silent no-op.
             cfg.connection.iconv = resolve_module_charset_converter(module.charset.as_deref());
+            // upstream: clientserver.c:1165-1167 - `-s` in the first arg pass
+            // sets protect_args, which compat.c:820 consults. Only option args
+            // count: everything after the `.` marker is a path.
+            let option_args = client_args.split(|arg| arg == ".").next().unwrap_or_default();
+            cfg.connection.protect_args = has_secluded_args_flag(option_args);
 
             // upstream: `use_secure_symlinks = am_daemon && (!am_chrooted ||
             // module_dirlen) && !symlink_optout_allowed()` (clientserver.c:1093-1094). Mark the server-side daemon connection so

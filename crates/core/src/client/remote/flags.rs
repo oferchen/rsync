@@ -659,6 +659,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // over SSH/daemon, but the in-process file-list reader and writer never
     // see a converter and silently pass raw bytes through.
     server_config.connection.iconv = config.iconv().resolve_converter();
+    server_config.connection.protect_args = config.protect_args().unwrap_or(false);
     // upstream: flist.c:send_file_list() - missing_args controls ENOENT handling
     // for top-level source paths and --files-from entries.
     server_config.file_selection.ignore_missing_args = config.ignore_missing_args();

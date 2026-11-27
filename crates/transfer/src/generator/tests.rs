@@ -3446,6 +3446,48 @@ mod legacy_goodbye_tests {
 mod files_from {
     use super::*;
 
+    /// Resolves the wire list `café\0\0` (UTF-8) on a sender whose local
+    /// charset is ISO-8859-1, returning the resolved paths' raw bytes.
+    #[cfg(all(feature = "iconv", unix))]
+    fn resolve_utf8_stream(protect_args: bool) -> Vec<Vec<u8>> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.files_from_path = Some("-".to_owned());
+        config.connection.iconv = Some(
+            protocol::iconv::FilenameConverter::new("ISO-8859-1", "UTF-8").expect("converter"),
+        );
+        config.connection.protect_args = protect_args;
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
+        let mut reader = Cursor::new(b"caf\xC3\xA9\0\0".to_vec());
+
+        ctx.resolve_files_from_paths(&[PathBuf::from("/src")], &mut reader)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path.as_os_str().as_bytes().to_vec())
+            .collect()
+    }
+
+    /// upstream: compat.c:820-827 - `filesfrom_convert` needs protect_args, so
+    /// without `-s` the sender looks up the name exactly as it was sent.
+    #[cfg(all(feature = "iconv", unix))]
+    #[test]
+    fn resolve_keeps_stream_names_unconverted_without_protect_args() {
+        assert_eq!(
+            resolve_utf8_stream(false),
+            vec![b"/src/caf\xC3\xA9".to_vec()]
+        );
+    }
+
+    /// upstream: flist.c:2766 - under protect_args `RL_CONVERT` transcodes the
+    /// wire name into the local charset before the lookup.
+    #[cfg(all(feature = "iconv", unix))]
+    #[test]
+    fn resolve_converts_stream_names_under_protect_args() {
+        assert_eq!(resolve_utf8_stream(true), vec![b"/src/caf\xE9".to_vec()]);
+    }
+
     #[test]
     fn resolve_returns_empty_when_no_files_from_configured() {
         let (handshake, ctx) = test_generator();
