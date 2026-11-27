@@ -22,17 +22,17 @@ use crate::client::remote::safe_arg::{ArgKind, escape_metachars};
 
 /// Sends daemon-mode arguments to the server.
 ///
-/// When `--protect-args` / `-s` is active, uses a two-phase protocol
-/// matching upstream `clientserver.c:443-458`:
-/// - Phase 1: role markers + `--secluded-args` + `--iconv=...` (when
-///   configured) so the daemon knows to expect protected args and, for a
-///   real upstream daemon, parses `--iconv` while `need_unsorted_flist`'s
-///   `protect_args != 2` guard still holds (see
-///   [`build_minimal_daemon_args`] for the full rationale, including why
-///   the long-form `-s` alias is used in place of a bare `-s` and why no
-///   standalone `.` is emitted)
-/// - Phase 2: remaining argument list via `send_secluded_args()` wire
-///   format, with `--iconv` filtered back out since phase 1 already sent it
+/// When `--protect-args` / `-s` is active, uses the two-phase exchange of
+/// upstream `clientserver.c:443-458`, split where `server_options()` places
+/// its `NULL` (`options.c:2985-2986`):
+/// - Phase 1: `--server`, `--sender` on a pull, the compact flag string
+///   (which carries the `s`) and `--iconv=...` when configured
+/// - Phase 2: `rsync` followed by everything after the `NULL`, via the
+///   `send_protected_args()` wire format
+///
+/// Phase 2 must not repeat `--server`: the daemon parses it again and
+/// `options.c:1535-1547` clears `iconv_opt`, after which
+/// `clientserver.c:1279-1289` closes the module `charset` converters.
 ///
 /// Without protect-args, sends all arguments in a single phase.
 /// For protocol >= 30, strings are null-terminated; for < 30, newline-terminated.
@@ -47,14 +47,15 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 
     let full_args = build_full_daemon_args(config, request, protocol, is_sender);
 
+    let (unprotected, protected) = if protect {
+        full_args.split_at(unprotected_arg_count(config, is_sender))
+    } else {
+        (full_args.as_slice(), [].as_slice())
+    };
     // upstream: clientserver.c:443-455 - phase 1 sends args over the daemon text
-    // protocol; with protect-args, only the minimal set is sent so the daemon
-    // detects the secluded-args marker and expects phase-2 secluded args.
+    // protocol, stopping at the protect-args `NULL`.
     let phase1_args: Vec<OsString> = if protect {
-        build_minimal_daemon_args(config, is_sender)
-            .into_iter()
-            .map(OsString::from)
-            .collect()
+        unprotected.to_vec()
     } else {
         // upstream: options.c:2833-3268 server_options() wraps every emitted
         // option-with-value through `safe_arg()` before it enters the wire
@@ -70,7 +71,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
         // `glob_expand()` untouched (io.c:1523-1532). Escaping an operand here
         // would ship literal backslashes that no peer removes - upstream
         // then splits the name on them, so `a b.txt` arrives as `/a/ b.txt`.
-        let (options, operands) = split_at_operands(&full_args);
+        let (options, operands) = split_at_operands(unprotected);
         options
             .iter()
             .map(|arg| safe_arg_for_daemon(arg))
@@ -113,18 +114,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     // via the secluded-args wire format (null-separated with empty terminator),
     // applying iconvbufs(ic_send, ...) per arg when --iconv is configured.
     if protect {
-        // upstream: options.c:2974-2986 - `--iconv=...` is emitted before the
-        // NULL cutoff, so it already travelled in phase 1
-        // (`build_minimal_daemon_args`). Skip it here to avoid sending it
-        // twice; `full_args` still carries it for the non-protect single-phase
-        // send path above. The filter operates on the arg's raw bytes so the
-        // trailing operand (which never matches the ASCII `--iconv=` prefix)
-        // keeps its non-UTF-8 bytes intact.
-        let payload: Vec<&OsStr> = full_args
-            .iter()
-            .filter(|a| !daemon_arg_wire_bytes(a).starts_with(b"--iconv="))
-            .map(OsString::as_os_str)
-            .collect();
+        let payload: Vec<&OsStr> = protected.iter().map(OsString::as_os_str).collect();
         // upstream: rsync.c:297-298 - DEBUG_GTE(CMD, 1) emits
         // `print_child_argv("protected args:", args + i + 1)` right before the
         // per-arg `iconvbufs(ic_send, ...)` loop. Upstream's argv begins after
@@ -160,86 +150,37 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     Ok(())
 }
 
-/// Builds the minimal phase-1 argument list for protect-args daemon mode.
+/// Counts the leading [`build_full_daemon_args`] entries that precede the
+/// protect-args `NULL` of `server_options()`: `--server`, `--sender` on a
+/// pull, the compact flag string and `--iconv=...` when configured.
 ///
-/// Upstream's phase 1 wire (`clientserver.c:443-450`) emits each `sargs[]`
-/// entry up to the `NULL` marker that `server_options()` inserts at
-/// `options.c:2920-2921`. That marker sits AFTER the compact flag string and
-/// `--iconv=...` but BEFORE every post-NULL long-form option and the
-/// trailing `.` / module path which `start_inband_exchange()` appends at
-/// `clientserver.c:345-388`.
-/// As a result upstream's phase 1 wire never contains a standalone `.` or
-/// a bare `-s`: the `s` for `--secluded-args` is embedded inside the
-/// compact flag string (`argstr[x++] = 's'`, `options.c:2795-2796`).
-///
-/// We emit only the role markers, `--secluded-args`, and `--iconv=...` (when
-/// configured) here so that:
-///
-/// 1. The daemon's `has_secluded_args_flag` check still trips and reads
-///    phase 2 via `recv_secluded_args` (`--secluded-args` is in the same
-///    detection set as `-s`).
-/// 2. The merged arg list never carries a spurious standalone `.` from
-///    phase 1 - the only `.` is the one phase 2 supplies as the positional
-///    separator, so `apply_long_form_args`'s first-`.` dot_position lookup
-///    correctly bounds the option region. A stray phase-1 `.` was dropping
-///    every long-form option emitted after the merge boundary, including
-///    `--groupmap=*:GID` (upstream issue #829 / daemon-groupmap-wild).
-/// 3. The merged arg list never carries a bare `-s` short-form arg that
-///    would shadow the real compact flag string in `build_server_config`'s
-///    first-short-form-arg picker. The real flag string arrives in phase 2
-///    via `build_full_daemon_args`.
-/// 4. `--iconv=...`, when configured, is parsed by a real upstream daemon
-///    while `protect_args` still reads `1` (not yet forced to `2` at
-///    `clientserver.c:1163`), so `options.c:2196-2201`'s `need_unsorted_flist
-///    = 1` side effect fires. If `--iconv` were deferred to phase 2 (as
-///    every other long-form option is), a real upstream daemon would parse
-///    it under `protect_args == 2` and `options.c:2196`'s `protect_args !=
-///    2` guard would suppress `need_unsorted_flist`, breaking the sender's
-///    and receiver's shared NDX-vs-unsorted-index correlation whenever
-///    `-s`/`--secluded-args` and `--iconv` are combined against a real
-///    upstream daemon.
-///
-/// Upstream daemons accept `--secluded-args` as the long-form alias of `-s`
-/// (`options.c:821`), so this remains wire-compatible with upstream rsync.
+/// Under protect-args the flag string always exists because it carries the
+/// `s` (`options.c:2858-2859`, `if (x > 1)` at `options.c:2972-2973`).
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:345` - `sargs[sargc++] = "."` AFTER `server_options()`
-/// - `clientserver.c:439-446` - phase 1 wire writes args until `!sargs[i]`
-/// - `clientserver.c:1160-1163` - `protect_args = 2` only takes effect AFTER
-///   phase 1's `parse_arguments()` returns
-/// - `options.c:2196-2201` - `need_unsorted_flist = 1` guarded by
-///   `protect_args != 2`
-/// - `options.c:2795-2796` - `argstr[x++] = 's'` when `protect_args`
-/// - `options.c:2909-2918` - `--iconv=...` emitted immediately before the
-///   NULL cutoff
-/// - `options.c:2920-2921` - NULL marker between phase 1 / phase 2 args
-/// - `options.c:818` - `--secluded-args` long-form alias for `-s`
-pub(super) fn build_minimal_daemon_args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
-    let mut args = vec!["--server".to_owned()];
-    if is_sender {
-        args.push("--sender".to_owned());
-    }
-    args.push("--secluded-args".to_owned());
-    if let Some(arg) = daemon_iconv_arg(config) {
-        args.push(arg);
-    }
-    args
+/// - `options.c:2850-2855` - `--server`, then `--sender` when `!am_sender`
+/// - `options.c:2975-2983` - `--iconv=...` right after the flag string
+/// - `options.c:2985-2986` - `if (protect_args && !local_server)` `NULL`
+fn unprotected_arg_count(config: &ClientConfig, is_sender: bool) -> usize {
+    2 + usize::from(is_sender) + usize::from(daemon_iconv_arg(config).is_some())
 }
 
 /// Builds the `--iconv=...` argument when configured, or `None`.
 ///
-/// Shared by [`build_minimal_daemon_args`] (phase-1, when protect-args is
-/// active) and [`build_full_daemon_args`] (the non-protect single-phase send
-/// and phase-2's fallback carrier). Mirrors upstream `options.c:2974-2983`.
+/// A daemon client runs `setup_iconv()` before `server_options()`
+/// (`clientserver.c:171-172` for a socket, `main.c:678-679` before
+/// `start_inband_exchange()` over a remote shell), and `rsync.c:119-123`
+/// truncates `iconv_opt` at the comma there. The daemon is therefore sent
+/// the LOCAL charset, unlike a remote-shell server (`main.c:624` runs
+/// `server_options()` first and forwards the post-comma half). The value is
+/// inert on the daemon: its converters come from the module `charset`
+/// (`clientserver.c:763-768`).
 fn daemon_iconv_arg(config: &ClientConfig) -> Option<String> {
     match config.iconv() {
         IconvSetting::Unspecified | IconvSetting::Disabled => None,
         IconvSetting::LocaleDefault => Some("--iconv=.".to_owned()),
-        IconvSetting::Explicit { local, remote } => {
-            let forwarded = remote.as_deref().unwrap_or(local);
-            Some(format!("--iconv={forwarded}"))
-        }
+        IconvSetting::Explicit { local, .. } => Some(format!("--iconv={local}")),
     }
 }
 
@@ -269,27 +210,16 @@ pub(super) fn build_full_daemon_args(
     // (a PULL), so upstream's `am_sender` corresponds to `!is_sender`.
     let we_are_sender = !is_sender;
 
-    // upstream: options.c:3056-3057 server_options() forwards the RAW
-    // --checksum-choice string verbatim - both comma components - gated only on
-    // `checksum_choice` being non-null. That pointer is nulled solely for the
-    // fully-auto forms (options.c:2117-2123), so forward the full choice
-    // whenever it is not fully-auto, mirroring the SSH path (invocation builder)
-    // rather than collapsing to the transfer component alone.
-    let checksum_choice = config.checksum_choice();
-    if checksum_choice.transfer() != StrongChecksumAlgorithm::Auto
-        || checksum_choice.file() != StrongChecksumAlgorithm::Auto
-    {
-        args.push(format!(
-            "--checksum-choice={}",
-            checksum_choice.to_argument()
-        ));
-    }
-
     // upstream: options.c:2857-2972 - single-character flag string (e.g., "-logDtprzc").
     // upstream: options.c:2969 - maybe_add_e_option() appends the capability
     // string directly onto the compact flag string, producing a single argument
     // like `-logDtpre.iLsfxCIvu`. We follow the same format for interop.
     let mut flag_string = flags::build_server_flag_string(config);
+    // upstream: options.c:2858-2859 - `if (protect_args) argstr[x++] = 's'`,
+    // first after the leading '-'.
+    if config.protect_args().unwrap_or(false) {
+        flag_string.insert(1, 's');
+    }
 
     // upstream: options.c:2882-2901 - server_options() packs a direction-
     // specific branch of compact letters. `build_server_flag_string` is
@@ -360,6 +290,12 @@ pub(super) fn build_full_daemon_args(
     }
     if !flag_string.is_empty() {
         args.push(flag_string);
+    }
+
+    // upstream: options.c:2975-2983 - `--iconv=...` follows the flag string,
+    // ahead of the protect-args `NULL` (see `unprotected_arg_count`).
+    if let Some(arg) = daemon_iconv_arg(config) {
+        args.push(arg);
     }
 
     // upstream: options.c:2988-2989 - `if (list_only > 1) "--list-only"`. Only
@@ -655,6 +591,22 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
+    // upstream: options.c:3056-3057 server_options() forwards the RAW
+    // --checksum-choice string verbatim - both comma components - gated only on
+    // `checksum_choice` being non-null. That pointer is nulled solely for the
+    // fully-auto forms (options.c:2117-2123), so forward the full choice
+    // whenever it is not fully-auto, mirroring the SSH path (invocation builder)
+    // rather than collapsing to the transfer component alone.
+    let checksum_choice = config.checksum_choice();
+    if checksum_choice.transfer() != StrongChecksumAlgorithm::Auto
+        || checksum_choice.file() != StrongChecksumAlgorithm::Auto
+    {
+        args.push(format!(
+            "--checksum-choice={}",
+            checksum_choice.to_argument()
+        ));
+    }
+
     // upstream: options.c:3231-3234 - `if (remove_source_files == 1)
     // "--remove-source-files"; else if (remove_source_files)
     // "--remove-sent-files"`. The deprecated alias is forwarded verbatim when
@@ -761,22 +713,6 @@ pub(super) fn build_full_daemon_args(
     }
     if let Some(mapping) = config.group_mapping() {
         args.push(format!("--groupmap={}", mapping.spec()));
-    }
-
-    // upstream: options.c:2974-2983, options.c:2232-2234 - --iconv forwarding
-    // to the remote daemon. When iconv_opt contains a comma, only the
-    // post-comma half (daemon's local charset) is forwarded; otherwise the
-    // whole string is forwarded as-is. `--iconv=-` (Disabled) and the default
-    // (Unspecified) forward nothing because upstream nulls iconv_opt at
-    // options.c:2196-2198 before this branch runs. Without this the daemon
-    // never enables `ic_recv` and writes wire UTF-8 bytes verbatim.
-    //
-    // Under protect-args, `send_daemon_arguments` strips this entry back out
-    // of the phase-2 payload because `build_minimal_daemon_args` already sent
-    // it in phase 1 (see that function's doc comment for why the phase
-    // matters to a real upstream daemon's `need_unsorted_flist`).
-    if let Some(arg) = daemon_iconv_arg(config) {
-        args.push(arg);
     }
 
     // upstream: options.c:3251-3258 - `server_options()` appends every -M /

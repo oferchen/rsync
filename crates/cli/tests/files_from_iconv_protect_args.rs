@@ -181,16 +181,6 @@ fn check(leg: Leg, protect_args: bool, expected: (Option<i32>, Vec<Vec<u8>>)) {
         (reference, oc.as_path(), "rsync 3.5.2 client, oc server"),
         (oc.as_path(), reference, "oc client, rsync 3.5.2 server"),
     ] {
-        // An oc client's `-s` request to a 3.5.2 daemon is a separate client
-        // defect (the daemon reads the list unconverted); this file covers the
-        // server side, which the other three pairings exercise.
-        if matches!(leg, Leg::DaemonPull)
-            && protect_args
-            && server == reference
-            && client == oc.as_path()
-        {
-            continue;
-        }
         assert_eq!(
             run(client, server, leg, protect_args),
             expected,
@@ -226,7 +216,10 @@ fn a_push_with_protect_args_converts_the_remote_list() {
 }
 
 /// A daemon learns protect_args from the client's `-s` (clientserver.c:1165)
-/// and applies its module `charset` the same way.
+/// and applies its module `charset` the same way. The client must not repeat
+/// `--server` in its protected args: a 3.5.2 daemon would parse it again,
+/// clear `iconv_opt` (options.c:1535-1547) and close the module converters
+/// (clientserver.c:1279-1289), reading the list unconverted.
 #[test]
 fn a_daemon_pull_without_protect_args_sends_the_list_unconverted() {
     check(Leg::DaemonPull, false, (Some(23), Vec::new()));

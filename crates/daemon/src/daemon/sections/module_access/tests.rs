@@ -285,8 +285,8 @@ mod module_access_tests {
         );
     }
 
-    // Regression: the client's actual phase-1 wire for
-    // secluded-args daemon push is `[--server, --sender, --secluded-args]`
+    // Regression: the phase-1 wire that oc-rsync 0.6.4 and earlier send for
+    // a secluded-args daemon push is `[--server, --sender, --secluded-args]`
     // (no standalone `.` or bare `-s`), and phase 2 carries the real
     // compact flag string plus `--groupmap=*:GID`. The previous client
     // emitted a stray `.` in phase 1 which made `apply_long_form_args`'
@@ -312,14 +312,15 @@ mod module_access_tests {
     #[cfg(unix)]
     #[test]
     fn merge_secluded_args_oc_rsync_client_wire_preserves_groupmap_wildcard() {
-        // Phase 1 mirrors the fixed `build_minimal_daemon_args` output
-        // for a daemon-push (client is sender, daemon is receiver).
+        // Phase 1 as oc-rsync 0.6.4 and earlier send it for a daemon-push
+        // (client is sender, daemon is receiver). Current clients send the
+        // upstream split (`merge_secluded_args_prepends_phase1_and_skips_rsync_arg0`).
         let phase1 = vec![
             "--server".to_owned(),
             "--sender".to_owned(),
             "--secluded-args".to_owned(),
         ];
-        // Phase 2 mirrors `build_full_daemon_args` output: leading
+        // Phase 2 as those clients send it: leading
         // synthetic "rsync" arg0, then `--server`, `--sender`, the real
         // compact flag string, the long-form options including the
         // wildcard `--groupmap`, the `.` separator, and the positional
