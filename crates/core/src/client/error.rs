@@ -185,7 +185,7 @@ impl ClientError {
     /// `rprintf(FERROR, ...)` call. Each is its own terminal line, so a
     /// newline is never embedded in one: `rwrite()` would escape it as
     /// `\#012` (log.c:288-291), keeping only the trailing one raw (log.c:460).
-    fn with_cause_lines(mut self, lines: Vec<String>) -> Self {
+    pub(crate) fn with_cause_lines(mut self, lines: Vec<String>) -> Self {
         self.lead_line = Some(Box::new(LeadLine::Cause(lines)));
         self
     }

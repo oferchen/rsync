@@ -436,12 +436,16 @@ pub fn run_module_list_with_password_and_options(
     }
 
     if !acknowledged {
+        if pre_ack_messages.iter().any(|line| !line.is_empty()) {
+            // upstream: clientserver.c:428-429 and 438-439 print each line the
+            // daemon sent with its own rprintf(), so each stays its own
+            // escaped terminal line ahead of the refusal.
+            return Err(daemon_listing_unavailable_error("").with_cause_lines(pre_ack_messages));
+        }
         if !pre_ack_messages.is_empty() {
-            let mut detail = pre_ack_messages.join("\n");
-            if detail.is_empty() {
-                detail = String::from("daemon closed connection before acknowledging module list");
-            }
-            return Err(daemon_listing_unavailable_error(&detail));
+            return Err(daemon_listing_unavailable_error(
+                "daemon closed connection before acknowledging module list",
+            ));
         }
 
         return Err(daemon_protocol_error(

@@ -61,3 +61,20 @@ fn an_unknown_option_is_escaped() {
     assert!(!stderr.contains(&0x01), "raw control byte: {text:?}");
     assert!(text.contains("--bo\\#001gus: unknown option"), "{text}");
 }
+
+/// A daemon that sends free text and closes before acknowledging the listing:
+/// each line it sent is its own stderr line (clientserver.c:428-429,
+/// 438-439), a control byte in one is escaped, then the refusal follows.
+#[test]
+fn a_daemon_refusal_prints_one_line_per_daemon_line() {
+    let (addr, handle) = spawn_stub_daemon(vec!["no listing here\n", "second\x01line\n"]);
+    let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+    let (_code, _stdout, stderr) = run_with_args([OsString::from(RSYNC), OsString::from(url)]);
+    let text = String::from_utf8(stderr).expect("escaped stderr is ASCII");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "{text}");
+    assert_eq!(lines[0], "no listing here");
+    assert_eq!(lines[1], "second\\#001line");
+    assert!(lines[2].contains("daemon refused module listing"), "{text}");
+    handle.join().expect("server thread");
+}
