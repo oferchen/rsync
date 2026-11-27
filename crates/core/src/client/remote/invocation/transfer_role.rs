@@ -12,7 +12,9 @@
 
 use std::ffi::OsString;
 
-use super::super::super::error::{ClientError, cause_line_error, invalid_argument_error};
+use super::super::super::error::{
+    ClientError, cause_line_error, cause_lines_error, invalid_argument_error,
+};
 use super::super::hostspec::{check_for_hostspec, operand_bytes};
 use super::{RemoteOperands, TransferSpec};
 use crate::exit_code::ExitCode;
@@ -67,13 +69,15 @@ fn validate_remote_sources(sources: &[OsString], option_port: i32) -> Result<(),
     Ok(())
 }
 
-/// upstream: main.c:1592-1593.
+/// upstream: main.c:1591-1592 - two `rprintf(FERROR, ...)` calls, so two
+/// lines; a newline in the operand itself is escaped as `\#012`.
 fn unexpected_local_arg(source: &OsString) -> ClientError {
-    syntax_refusal(
-        &format!(
-            "Unexpected local arg: {}\nIf arg is a remote file/dir, prefix it with a colon (:).",
-            source.to_string_lossy()
-        ),
+    cause_lines_error(
+        vec![
+            format!("Unexpected local arg: {}", source.to_string_lossy()),
+            "If arg is a remote file/dir, prefix it with a colon (:).".to_owned(),
+        ],
+        ExitCode::Syntax,
         Role::PreForkReceiver,
     )
 }

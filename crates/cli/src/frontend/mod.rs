@@ -368,9 +368,16 @@ where
             let detail = clap_error_detail(&error);
             let mut message = strings::exit_code_message_with_detail(code, detail.as_str())
                 .unwrap_or_else(|| rsync_error!(code, "{}", detail));
-            message = message.with_role(Role::Client);
-            if write_message(&message, &mut stderr_sink).is_err() {
-                let _ = writeln!(stderr_sink.writer_mut(), "{detail}");
+            message = message
+                .with_role(Role::Client)
+                .with_brand(stderr_sink.brand());
+            // clap renders its error over several lines. Each is written as
+            // its own escaped terminal line, as upstream prints every option
+            // error line with its own rprintf(FERROR, ...) (options.c:2087-2090,
+            // main.c:1916-1917), so a control byte in the user's argument is
+            // escaped while clap's own line breaks stay raw.
+            for line in message.to_string().lines() {
+                let _ = stderr_sink.write_escaped_line(line);
             }
             code
         }

@@ -281,6 +281,9 @@ mod short_tests;
 mod size_tests;
 #[path = "stats.rs"]
 mod stats_tests;
+#[cfg(unix)]
+#[path = "stderr_lines.rs"]
+mod stderr_lines_tests;
 #[path = "stop.rs"]
 mod stop_tests;
 #[path = "timeout.rs"]

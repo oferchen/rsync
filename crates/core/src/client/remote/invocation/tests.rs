@@ -5257,7 +5257,7 @@ mod multi_source_pull {
                     .starts_with("rsync error: syntax or usage error (code 1) at "),
                 "{e}"
             );
-            e.cause_line().unwrap_or_default().to_owned()
+            e.cause_lines().join("\n")
         })
     }
 

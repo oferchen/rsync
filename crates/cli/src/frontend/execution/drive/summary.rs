@@ -465,8 +465,9 @@ fn emit_error_report<Err>(
         let _ = stderr.writer_mut().write_all(text.as_bytes());
     }
     // upstream: an unprefixed rprintf(FERROR, ...) cause that precedes the
-    // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr().
-    if let Some(line) = error.cause_line() {
+    // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr(). Each
+    // upstream call is its own escaped line (log.c:460, main.c:1591-1592).
+    for line in error.cause_lines() {
         let _ = stderr.write_escaped_line(line);
     }
     // upstream: rprintf(FERROR, RSYNC_NAME ": ...") lines that precede
