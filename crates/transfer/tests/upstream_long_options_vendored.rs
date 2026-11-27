@@ -42,8 +42,8 @@ fn vendored_long_options_equal_the_3_5_2_source() {
     ) else {
         return;
     };
-    let vendored = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src/server_argv/upstream_long_options.txt");
+    let vendored =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/server_argv/upstream_long_options.txt");
     let vendored = std::fs::read_to_string(vendored).expect("read the vendored table");
     assert_eq!(long_options_block(&source), vendored);
 }
