@@ -9,6 +9,8 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use logging::{ChangeDirFailed, ChangeDirStep};
+
 /// The failed pre-flight `mkdir` of the destination root.
 ///
 /// upstream: main.c:817-821 get_local_name() - `rsyserr(FERROR, errno,
@@ -134,13 +136,16 @@ impl DestRootSelectError {
 
 impl fmt::Display for DestRootSelectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let cause = logging::upstream_errno_text(&self.source);
-        match self.step {
-            SelectStep::Stat => write!(f, "ERROR: cannot stat destination {}: {cause}", self.fname),
-            SelectStep::ChangeDir1 => write!(f, "change_dir#1 {} failed: {cause}", self.fname),
-            SelectStep::ChangeDir2 => write!(f, "change_dir#2 {} failed: {cause}", self.fname),
-            SelectStep::ChangeDir3 => write!(f, "change_dir#3 {} failed: {cause}", self.fname),
-        }
+        let step = match self.step {
+            SelectStep::Stat => {
+                let cause = logging::upstream_errno_text(&self.source);
+                return write!(f, "ERROR: cannot stat destination {}: {cause}", self.fname);
+            }
+            SelectStep::ChangeDir1 => ChangeDirStep::One,
+            SelectStep::ChangeDir2 => ChangeDirStep::Two,
+            SelectStep::ChangeDir3 => ChangeDirStep::Three,
+        };
+        fmt::Display::fmt(&ChangeDirFailed::new(step, &self.fname, &self.source), f)
     }
 }
 

@@ -75,6 +75,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
+mod change_dir;
 mod config;
 mod context;
 #[cfg(any(windows, test))]
@@ -100,6 +101,7 @@ mod tracing_bridge;
 #[cfg(feature = "tracing")]
 mod tracing_macros;
 
+pub use change_dir::{ChangeDirFailed, ChangeDirStep};
 pub use config::{MAX_VERBOSITY, VerbosityConfig};
 pub use context::{
     ContextGuard, DiagnosticEvent, DiagnosticSink, LogContext, Session, apply_debug_flag,
