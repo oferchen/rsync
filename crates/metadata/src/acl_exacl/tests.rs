@@ -998,3 +998,102 @@ fn a_kind_only_default_acl_error_warns_unless_it_is_unsupported() {
         )]
     );
 }
+
+/// upstream: generator.c:1729-1733 and receiver.c:1201-1205 read the default
+/// ACL when the entry's directory changes, not per file: 3 dirs x 50 children
+/// cost 3 reads, where one read per child costs 150.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn default_perms_for_dir_reads_once_per_directory_not_per_file() {
+    use super::default_perms::DEFAULT_ACL_READS;
+
+    let dir = test_support::create_tempdir();
+    let dirs: Vec<_> = ["a", "b", "c"]
+        .iter()
+        .map(|name| {
+            let path = dir.path().join(name);
+            std::fs::create_dir(&path).expect("mkdir");
+            path
+        })
+        .collect();
+    let before = DEFAULT_ACL_READS.get();
+    for parent in &dirs {
+        for _ in 0..50 {
+            let _ = default_perms_for_dir(parent, 0o022);
+        }
+    }
+    assert_eq!(
+        DEFAULT_ACL_READS.get() - before,
+        dirs.len(),
+        "the default ACL must be read once per directory, not once per file"
+    );
+}
+
+/// The cached bits are the ones read for the directory's first child, even if
+/// its default ACL changes before the next child - 3.5.2 reuses `dflt_perms`
+/// until `dn` changes (generator.c:1729-1733), so it has the same window.
+/// Another directory in between makes the next call read it afresh.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn default_perms_for_dir_reuses_the_bits_until_the_directory_changes() {
+    fn set_default_acl(dir: &std::path::Path, other: Perm) {
+        let entries = [
+            exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+            exacl::AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
+            exacl::AclEntry::allow_other(other, None),
+        ];
+        if let Err(error) = setfacl(&[dir], &entries, Some(AclOption::DEFAULT_ACL)) {
+            panic!(
+                "cannot set a default ACL on {} ({error}); this test needs a \
+                 filesystem with POSIX default ACLs, such as ext4",
+                dir.display()
+            );
+        }
+    }
+
+    let dir = test_support::create_tempdir();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    std::fs::create_dir(&a).expect("mkdir a");
+    std::fs::create_dir(&b).expect("mkdir b");
+
+    set_default_acl(&a, Perm::empty());
+    assert_eq!(default_perms_for_dir(&a, 0o022), 0o750, "first read of a");
+    set_default_acl(&a, Perm::READ | Perm::EXECUTE);
+    assert_eq!(
+        default_perms_for_dir(&a, 0o022),
+        0o750,
+        "a second child of a reuses the bits read for the first"
+    );
+    let _ = default_perms_for_dir(&b, 0o022);
+    assert_eq!(
+        default_perms_for_dir(&a, 0o022),
+        0o755,
+        "returning to a after b reads a again"
+    );
+}
+
+/// upstream keeps one last parent (generator.c:1398, :1731), not a map:
+/// children of two directories in alternating order read the default ACL at
+/// every switch, 20 reads for 10 rounds of a then b.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn default_perms_for_dir_rereads_when_two_directories_alternate() {
+    use super::default_perms::DEFAULT_ACL_READS;
+
+    let dir = test_support::create_tempdir();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    std::fs::create_dir(&a).expect("mkdir a");
+    std::fs::create_dir(&b).expect("mkdir b");
+    let before = DEFAULT_ACL_READS.get();
+    for _ in 0..10 {
+        let _ = default_perms_for_dir(&a, 0o022);
+        let _ = default_perms_for_dir(&b, 0o022);
+    }
+    assert_eq!(
+        DEFAULT_ACL_READS.get() - before,
+        20,
+        "one cached parent: every switch between a and b reads again"
+    );
+}
