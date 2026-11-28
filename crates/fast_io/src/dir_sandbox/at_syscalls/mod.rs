@@ -46,10 +46,10 @@ mod tests;
 
 pub use clone::{CloneAttempt, CloneFreshTimes, confined_clone_file};
 pub use create::{
-    confined_create_new, confined_link_anonymous, create_dir_all_via_sandbox_or_fallback, linkat,
-    linkat_via_sandbox_or_fallback, make_path_beneath_cwd, mkdirat,
-    mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat, mknodat_via_sandbox_or_fallback, symlinkat,
-    symlinkat_via_sandbox_or_fallback,
+    confined_create_new, confined_link_anonymous, create_dir_all_via_sandbox_or_fallback,
+    create_dir_beneath_cwd, linkat, linkat_via_sandbox_or_fallback, make_path_beneath_cwd, mkdirat,
+    mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat, mknodat_via_sandbox_or_fallback,
+    open_dir_beneath_cwd, symlinkat, symlinkat_via_sandbox_or_fallback,
 };
 pub(crate) use create::{fake_super_placeholder_at, mknodat_with_retry};
 pub use lstat::{lstat_via_sandbox_or_fallback, stat_via_sandbox_or_fallback};

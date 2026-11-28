@@ -477,6 +477,92 @@ fn walk_parent_beneath_cwd(parent: &Path) -> io::Result<std::os::fd::OwnedFd> {
     })
 }
 
+/// Open the directory `path` names beneath the process cwd through the
+/// confined walk, as a daemon serving an unchrooted module enters a relative
+/// destination.
+///
+/// An in-tree relative symlink is followed; one that leaves the tree, such as
+/// an absolute target, is refused with `ELOOP`. No ownership is judged and no
+/// refusal line is printed. `.` components are skipped, so `.` itself opens
+/// the cwd.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.2/util1.c:1430-1446` `change_dir()` - the `am_daemon &&
+///   (!am_chrooted || module_dirlen) && !symlink_optout_allowed()` arm,
+///   `secure_relative_dirfd(NULL, dir)` then `fchdir()`.
+/// - `rsync-3.5.2/syscall.c:3477-3484` - an absolute path or a `..`
+///   component is `EINVAL`.
+///
+/// # Errors
+///
+/// `EINVAL` for an absolute path or a `..` component, `ELOOP` for an escape
+/// or a non-directory before the last component, otherwise the walk's
+/// `openat`/`readlinkat` errno.
+pub fn open_dir_beneath_cwd(path: &Path) -> io::Result<std::os::fd::OwnedFd> {
+    let relative = cwd_relative(path)?;
+    if relative.as_os_str().is_empty() {
+        return rustix::fs::openat(
+            rustix::fs::CWD,
+            ".",
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(io::Error::from);
+    }
+    walk_parent_beneath_cwd(&relative)
+}
+
+/// One `do_mkdir()` of the directory `path` names beneath the cwd: its parent
+/// is reached through the confined walk first, then the last component is
+/// `mkdirat` against it.
+///
+/// Deliberate deviation: upstream's `do_mkdir()` (`syscall.c:2254-2261`) is a
+/// plain `mkdir()` that follows a parent symlink leaving the tree and makes
+/// the directory outside it; only the `change_dir#2` that follows
+/// (`main.c:836-840`) refuses it. Here the escape is refused with `ELOOP`
+/// before anything is made. Every other parent failure is the walk's plain
+/// errno, the one that `mkdir()` would have reported.
+///
+/// # Errors
+///
+/// `EINVAL` for an absolute path, a `..` component or no name; `ELOOP` for an
+/// escaping parent; otherwise the walk's or the `mkdirat` errno.
+pub fn create_dir_beneath_cwd(path: &Path, mode: u32) -> io::Result<()> {
+    let relative = cwd_relative(path)?;
+    let Some(leaf) = relative.file_name() else {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    };
+    let parent = relative
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| crate::dir_sandbox::walk_beneath(rustix::fs::CWD, parent))
+        .transpose()?;
+    mkdirat(
+        parent.as_ref().map_or(rustix::fs::CWD, AsFd::as_fd),
+        leaf,
+        mode,
+    )
+}
+
+/// `path` as the plain names of a walk beneath the cwd, without `.`.
+///
+/// upstream: syscall.c:3477-3484 - an absolute path or a `..` component is
+/// `EINVAL`.
+fn cwd_relative(path: &Path) -> io::Result<std::path::PathBuf> {
+    let mut relative = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(name) => relative.push(name),
+            std::path::Component::CurDir => {}
+            _ => return Err(io::Error::from_raw_os_error(libc::EINVAL)),
+        }
+    }
+    Ok(relative)
+}
+
 /// Create every missing directory of `dir_path`, which is
 /// `dest_dir.join(relative_dir)`, beneath the `sandbox` root.
 ///

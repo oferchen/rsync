@@ -186,6 +186,29 @@ fn log_message(log: &SharedLogSink, message: &Message) {
     }
 }
 
+/// Writes every diagnostic the session has emitted so far to the daemon log.
+///
+/// upstream: log.c:390-407 - in a daemon `rwrite()` hands every message code
+/// to `logit()`, so a notice raised before the transfer starts (the module
+/// root's ownership walk, for one) reaches the log just as one raised during
+/// it does.
+fn log_pending_diagnostics(log: &SharedLogSink) {
+    for event in logging::drain_events_for_daemon_log() {
+        let message = match event {
+            logging::DiagnosticEvent::Info { message, .. }
+            | logging::DiagnosticEvent::Debug { message, .. } => message,
+            // A byte-faithful notice degrades to a lossy string on this
+            // daemon-log path; the log-file sink applies the log-file escape
+            // at write time. Byte-exact daemon-log fidelity is a follow-up
+            // (see the notice-channel migration inventory).
+            logging::DiagnosticEvent::Bytes { message, .. } => {
+                String::from_utf8_lossy(&message).into_owned()
+            }
+        };
+        log_message(log, &rsync_info!(message).with_role(Role::Daemon));
+    }
+}
+
 /// Writes one raw message line to the shared log sink with proper locking.
 ///
 /// upstream: log.c:132-148 logit() hands the bytes to `filtered_fwrite()`
