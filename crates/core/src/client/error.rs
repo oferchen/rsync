@@ -516,7 +516,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             // (rsync.c:987-995 who_am_i()).
             let line = format!(
                 "[Receiver] mkdir {} failed: {}",
-                logging::full_fname(&path),
+                full_fname_as_given(&path),
                 upstream_io_error(&source)
             );
             program_line_error(line, ExitCode::FileIo, Role::PreForkReceiver)
@@ -708,12 +708,20 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
 /// `change_dir#2` lops the slash first (main.c:810) and `change_dir#3` names
 /// the parent.
 fn entered_name(entry: DestinationEntry, path: &Path) -> String {
+    if entry == DestinationEntry::Existing {
+        full_fname_as_given(path)
+    } else {
+        logging::full_fname(path)
+    }
+}
+
+/// `full_fname()` of a destination operand as given, keeping a trailing slash
+/// the cleaned form drops: upstream prints `dest_path` unaltered.
+fn full_fname_as_given(path: &Path) -> String {
     let name = logging::full_fname(path);
-    let as_given_with_slash = entry == DestinationEntry::Existing
-        && path.as_os_str().as_encoded_bytes().ends_with(b"/")
-        && !name.ends_with("/\"");
+    let with_slash = path.as_os_str().as_encoded_bytes().ends_with(b"/") && !name.ends_with("/\"");
     match name.strip_suffix('"') {
-        Some(unquoted) if as_given_with_slash => format!("{unquoted}/\""),
+        Some(unquoted) if with_slash => format!("{unquoted}/\""),
         _ => name,
     }
 }

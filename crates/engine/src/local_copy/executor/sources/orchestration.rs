@@ -573,7 +573,7 @@ pub(crate) fn copy_sources(
                     symlink_to_dir: false,
                 }
             } else {
-                query_destination_state(destination_path)?
+                query_destination_state(destination_path, context.mkpath_enabled())?
             };
             // upstream: main.c:771 get_local_name() - `do_stat(dest_path)`
             // follows a symlink, so a link to a directory is entered as one
@@ -940,10 +940,11 @@ fn enter_single_entry_parent(
     else {
         return Ok(());
     };
-    if mkpath && fs::metadata(parent).is_err() {
+    if mkpath && !fs::metadata(parent).is_ok_and(|metadata| metadata.is_dir()) {
         // upstream: main.c:757-772 - make_path(dest, MKP_DROP_NAME) builds the
-        // parent chain first; a dry run creates nothing and skips the chdir
-        // (main.c:852-863).
+        // parent chain first; a parent that is not a directory fails its mkdir
+        // there (EEXIST, util1.c:244-246). A dry run creates nothing and skips
+        // the chdir (main.c:852-863).
         if context.mode().is_dry_run() {
             return Ok(());
         }
