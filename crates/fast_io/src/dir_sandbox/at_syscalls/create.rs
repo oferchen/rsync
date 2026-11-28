@@ -396,8 +396,10 @@ pub fn mkdirat_via_sandbox_or_fallback(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.2/util1.c:210-280` `make_path()` - one `do_mkdir_at()` per
-///   missing component, an existing one accepted.
+/// - `rsync-3.5.2/util1.c:231-266` `make_path()` - the deepest directory is
+///   tried first and the walk climbs only on `ENOENT`, so the failure is the
+///   errno of the deepest `do_mkdir_at()` that did not find a missing parent;
+///   the missing components are then created top-down (util1.c:270-284).
 /// - `rsync-3.5.2/syscall.c:2306-2332` `do_mkdir_at()` -
 ///   `secure_relative_dirfd(NULL, dirpath)` then `mkdirat()`.
 /// - `rsync-3.5.2/syscall.c:3320-3324` `secure_relative_open()` - an
@@ -412,28 +414,67 @@ pub fn make_path_beneath_cwd(path: &Path, mode: u32) -> io::Result<()> {
     if path.is_absolute() {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     }
-    let mut parent = std::path::PathBuf::new();
-    for name in path.iter() {
-        let dirfd = if parent.as_os_str().is_empty() {
-            None
-        } else {
-            Some(crate::dir_sandbox::walk_beneath(rustix::fs::CWD, &parent)?)
-        };
-        let at = dirfd.as_ref().map_or(rustix::fs::CWD, AsFd::as_fd);
-        match mkdirat(at, name, mode) {
-            Ok(()) => {}
-            // upstream: util1.c:244-246 - EEXIST is success only when the
-            // existing entry is a directory; a file keeps the EEXIST.
-            Err(e)
-                if e.kind() == io::ErrorKind::AlreadyExists
-                    && rustix::fs::statat(at, name, rustix::fs::AtFlags::empty()).is_ok_and(
-                        |st| rustix::fs::FileType::from_raw_mode(st.st_mode).is_dir(),
-                    ) => {}
+    let names: Vec<&OsStr> = path.iter().collect();
+    let mut present = names.len();
+    while present > 0 {
+        match mkdir_beneath_cwd(&names[..present], mode) {
+            Ok(()) => break,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => present -= 1,
             Err(e) => return Err(e),
         }
-        parent.push(name);
+    }
+    for depth in present + 1..=names.len() {
+        mkdir_beneath_cwd(&names[..depth], mode)?;
     }
     Ok(())
+}
+
+/// One `do_mkdir_at()` of `make_path()`: `mkdirat` the last of `names` against
+/// its parent, reached by the walk beneath the cwd. `EEXIST` on a directory is
+/// success; on anything else it stays `EEXIST` (util1.c:244-246).
+fn mkdir_beneath_cwd(names: &[&OsStr], mode: u32) -> io::Result<()> {
+    let Some((leaf, parent)) = names.split_last() else {
+        return Ok(());
+    };
+    let parent: std::path::PathBuf = parent.iter().collect();
+    let dirfd = if parent.as_os_str().is_empty() {
+        None
+    } else {
+        Some(walk_parent_beneath_cwd(&parent)?)
+    };
+    let at = dirfd.as_ref().map_or(rustix::fs::CWD, AsFd::as_fd);
+    match mkdirat(at, leaf, mode) {
+        Err(e)
+            if e.kind() == io::ErrorKind::AlreadyExists
+                && rustix::fs::statat(at, *leaf, rustix::fs::AtFlags::empty())
+                    .is_ok_and(|st| rustix::fs::FileType::from_raw_mode(st.st_mode).is_dir()) =>
+        {
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+/// Walks to `parent` beneath the cwd with the errno upstream's secure relative
+/// walk reports: a non-directory as the last component is `ENOTDIR`, one
+/// before it is `ELOOP`.
+///
+/// upstream: syscall.c:3279-3281 `secure_relative_open()` - an intermediate
+/// component that fails to descend with `ENOTDIR` is reported as `ELOOP`.
+fn walk_parent_beneath_cwd(parent: &Path) -> io::Result<std::os::fd::OwnedFd> {
+    crate::dir_sandbox::walk_beneath(rustix::fs::CWD, parent).map_err(|error| {
+        let intermediate = error.raw_os_error() == Some(libc::ENOTDIR)
+            && parent.parent().is_some_and(|above| {
+                !above.as_os_str().is_empty()
+                    && crate::dir_sandbox::walk_beneath(rustix::fs::CWD, above)
+                        .is_err_and(|e| e.raw_os_error() == Some(libc::ENOTDIR))
+            });
+        if intermediate {
+            io::Error::from_raw_os_error(libc::ELOOP)
+        } else {
+            error
+        }
+    })
 }
 
 /// Create every missing directory of `dir_path`, which is

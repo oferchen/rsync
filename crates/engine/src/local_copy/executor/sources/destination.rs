@@ -15,7 +15,14 @@ use super::super::transcode_filename_component;
 use super::types::DestinationState;
 
 /// Queries the filesystem to determine destination state.
-pub(crate) fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyError> {
+///
+/// Under `--mkpath` a failed stat is not reported: upstream hands the path to
+/// make_path(), whose own mkdir errno names the failure (main.c:757-761,
+/// :818-821). Without it only ENOENT means "absent".
+pub(crate) fn query_destination_state(
+    path: &Path,
+    mkpath: bool,
+) -> Result<DestinationState, LocalCopyError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             let file_type = metadata.file_type();
@@ -33,7 +40,9 @@ pub(crate) fn query_destination_state(path: &Path) -> Result<DestinationState, L
                 symlink_to_dir,
             })
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DestinationState::default()),
+        Err(error) if mkpath || error.kind() == io::ErrorKind::NotFound => {
+            Ok(DestinationState::default())
+        }
         Err(error) => Err(LocalCopyError::io(
             "inspect destination",
             path.to_path_buf(),
@@ -192,7 +201,7 @@ fn create_destination(path: &Path, mkpath: bool) -> io::Result<()> {
     if is_confined_make_path(path, mkpath) {
         fast_io::make_path_beneath_cwd(path, ACCESSPERMS)
     } else if mkpath {
-        fast_io::operator_create_dir_all(path, ACCESSPERMS)
+        fast_io::operator_make_path(path, ACCESSPERMS)
     } else {
         fast_io::operator_mkdir(path, ACCESSPERMS)
     }
@@ -220,8 +229,13 @@ fn create_destination_plainly(path: &Path, mkpath: bool) -> io::Result<()> {
 fn creation_error(path: &Path, mkpath: bool, error: io::Error) -> LocalCopyError {
     if is_symlink_refusal(path, mkpath, &error) {
         LocalCopyError::destination_entry_failed(created_destination_entry(mkpath), path, error)
-    } else {
+    } else if mkpath {
+        // upstream: main.c:760 - make_path()'s failure jumps to `mkdir_error`
+        // before the trailing slash is cut, so the operand is named as given.
         LocalCopyError::destination_mkdir_failed(path, error)
+    } else {
+        // upstream: main.c:815 - the plain do_mkdir() runs after `*cp = '\0'`.
+        LocalCopyError::destination_mkdir_failed(path.components().collect::<PathBuf>(), error)
     }
 }
 

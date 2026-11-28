@@ -100,3 +100,45 @@ fn a_regular_file_as_the_last_component_is_an_error() {
     assert_eq!(error.raw_os_error(), want, "{error}");
     assert!(tmp.path().join("dst/dstfile").is_file());
 }
+
+/// make_path() tries the deepest directory first (util1.c:231-247), so a file
+/// that is the parent of that directory fails the mkdir's parent walk with
+/// `ENOTDIR`, not the shallower mkdir's `EEXIST`.
+#[test]
+fn a_regular_file_as_the_parent_of_the_deepest_directory_is_enotdir() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(tmp.path().join("dst")).expect("mkdir dst");
+    fs::write(tmp.path().join("dst/dstfile"), b"b\n").expect("write dstfile");
+    let want = fs::create_dir(tmp.path().join("dst/dstfile/x"))
+        .expect_err("mkdir below a file")
+        .raw_os_error();
+    enter(tmp.path());
+
+    let error = make_path_beneath_cwd(Path::new("dst/dstfile/x"), 0o777)
+        .expect_err("a file is not a directory");
+
+    assert_eq!(error.raw_os_error(), want, "{error}");
+    assert!(tmp.path().join("dst/dstfile").is_file());
+}
+
+/// syscall.c:3279-3281 - the relative walk to the deepest directory's parent
+/// reports a non-directory intermediate as `ELOOP`.
+#[test]
+fn a_regular_file_above_the_parent_of_the_deepest_directory_is_eloop() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(tmp.path().join("dst")).expect("mkdir dst");
+    fs::write(tmp.path().join("dst/dstfile"), b"b\n").expect("write dstfile");
+    let looped = tmp.path().join("loop");
+    symlink(&looped, &looped).expect("plant a self loop");
+    let want = fs::metadata(&looped)
+        .expect_err("a self loop")
+        .raw_os_error();
+    fs::remove_file(&looped).expect("remove the loop");
+    enter(tmp.path());
+
+    let error = make_path_beneath_cwd(Path::new("dst/dstfile/x/y"), 0o777)
+        .expect_err("a file is not a directory");
+
+    assert_eq!(error.raw_os_error(), want, "{error}");
+    assert!(tmp.path().join("dst/dstfile").is_file());
+}

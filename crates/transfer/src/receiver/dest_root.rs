@@ -675,6 +675,15 @@ fn count_or_make(target: &Path, pass: Pass) -> io::Result<usize> {
                     missing.push(dir);
                     break;
                 }
+                // A non-directory above `dir`: the deepest mkdir is what fails,
+                // and its errno depends on the walk (ELOOP for a relative path
+                // whose non-directory sits above the parent, syscall.c:3279-3281),
+                // so the making walk reports it rather than this stat.
+                #[cfg(unix)]
+                Err(err) if pass == Pass::Count && err.kind() == io::ErrorKind::NotADirectory => {
+                    missing.push(dir);
+                    break;
+                }
                 Err(err) => Err(err),
             },
         };
