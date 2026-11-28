@@ -193,24 +193,6 @@ impl GoldenMessages {
         });
     }
 
-    /// Get messages for a specific scenario.
-    #[allow(dead_code)] // API for potential future use
-    pub fn get_messages_for_scenario(&self, scenario: &str) -> Vec<&StoredMessage> {
-        self.messages
-            .iter()
-            .filter(|m| m.scenario == scenario)
-            .collect()
-    }
-
-    /// Get message groups for a specific scenario.
-    #[allow(dead_code)] // API for potential future use
-    pub fn get_groups_for_scenario(&self, scenario: &str) -> Vec<&StoredMessageGroup> {
-        self.message_groups
-            .iter()
-            .filter(|g| g.scenario == scenario)
-            .collect()
-    }
-
     /// Get all matchers for a specific scenario.
     pub fn get_matchers_for_scenario(
         &self,

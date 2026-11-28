@@ -45,10 +45,8 @@ The two long-lived slots per session make the ceiling roughly `max_blocking_thre
 | 5 | `crates/rsync_io/src/ssh/async_transport.rs:345` | `Builder::new_current_thread()` | n/a | **unset -> default 512** | unset | Test helper `rt()`. Not on the production path; included for completeness. |
 | 6 | `crates/rsync_io/src/ssh/async_stderr_drain.rs:277` | `Builder::new_current_thread()` | n/a | **unset -> default 512** | unset | Test helper `rt()`. Not on the production path. |
 | 7 | `crates/rsync_io/src/ssh/embedded/sync_bridge.rs:323` | `Builder::new_multi_thread()` | `worker_threads(2)` | **unset -> default 512** | unset | Test fixture `sync_async_bridge_round_trip`. |
-| 8 | `crates/rsync_io/src/ssh/embedded/sync_bridge.rs:421` | `Builder::new_multi_thread()` | `worker_threads(1)` | **unset -> default 512** | unset | Test fixture `sync_writer_backpressure_blocks_until_drained`. |
-| 9 | `crates/rsync_io/src/ssh/embedded/sync_bridge.rs:460` | `Builder::new_current_thread()` | n/a | **unset -> default 512** | unset | Test fixture `dropping_sync_writer_closes_channel`. |
-| 10 | `crates/daemon/src/daemon/async_session/mod.rs:77,96,110,147` | `tokio::runtime::Runtime::new()` (default multi-thread) | tokio default (CPU count) | **unset -> default 512** | unset | Test helpers (`#[cfg(test)]`) that drive async-session unit tests. |
-| 11 | `crates/daemon/src/async_listener.rs:188` | `tokio::runtime::Runtime::new()` | tokio default | **unset -> default 512** | unset | Test fixture for `run_hybrid_listener` integration tests. |
+| 8 | `crates/daemon/src/daemon/async_session/mod.rs:77,96,110,147` | `tokio::runtime::Runtime::new()` (default multi-thread) | tokio default (CPU count) | **unset -> default 512** | unset | Test helpers (`#[cfg(test)]`) that drive async-session unit tests. |
+| 9 | `crates/daemon/src/async_listener.rs:188` | `tokio::runtime::Runtime::new()` | tokio default | **unset -> default 512** | unset | Test fixture for `run_hybrid_listener` integration tests. |
 
 **Workspace tokio pin:** `tokio = "1.52"` (workspace `Cargo.toml:226`) with features `rt-multi-thread, io-util, net, fs, sync, time, process, macros`. Tokio 1.x defaults `max_blocking_threads = 512` and `worker_threads = num_cpus` for `new_multi_thread()` unless explicitly overridden. Neither default is overridden anywhere on the russh boundary.
 

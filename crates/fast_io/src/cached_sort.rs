@@ -65,29 +65,6 @@ where
     perm.apply_slice_in_place(items);
 }
 
-/// Sorts a slice in-place using a cached comparison function.
-///
-/// Similar to `cached_sort_by` but allows custom comparison of keys.
-///
-/// # Arguments
-///
-/// * `items` - The slice to sort
-/// * `key_fn` - Function to extract the sort key from each element
-/// * `cmp_fn` - Function to compare two keys
-pub fn cached_sort_by_cmp<T, K, F, C>(items: &mut [T], key_fn: F, cmp_fn: C)
-where
-    F: Fn(&T) -> K,
-    C: Fn(&K, &K) -> Ordering,
-{
-    if items.len() <= 1 {
-        return;
-    }
-
-    let keys: Vec<K> = items.iter().map(&key_fn).collect();
-    let mut perm = permutation::sort_by(&keys, cmp_fn);
-    perm.apply_slice_in_place(items);
-}
-
 /// Sorts a slice in parallel using cached sort keys.
 ///
 /// Uses rayon for parallel key extraction.

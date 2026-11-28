@@ -39,7 +39,7 @@ mod tests;
 
 pub use self::checksum::decode_checksum;
 pub use self::device::decode_rdev;
-pub use self::flags::{decode_end_marker, decode_flags, is_io_error_end_marker};
+pub use self::flags::{decode_end_marker, decode_flags};
 pub use self::hardlink::{decode_hardlink_dev_ino, decode_hardlink_idx};
 pub use self::mode::decode_mode;
 pub use self::name::decode_name;

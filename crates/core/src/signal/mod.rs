@@ -80,9 +80,7 @@ mod cleanup;
 pub use cleanup::CleanupManager;
 
 mod io_wake;
-pub use io_wake::{
-    IoWaker, IoWakerGuard, register_io_waker, registered_waker_count, wake_blocked_io,
-};
+pub use io_wake::{IoWaker, IoWakerGuard, register_io_waker, wake_blocked_io};
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 

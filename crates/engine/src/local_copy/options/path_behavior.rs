@@ -444,18 +444,6 @@ impl LocalCopyOptions {
         self.specials
     }
 
-    /// Reports whether `--drop-D` withholds device and special CREATION.
-    ///
-    /// Kept separate from [`Self::devices_enabled`] and
-    /// [`Self::specials_enabled`] on purpose: upstream leaves
-    /// `preserve_devices` / `preserve_specials` untouched because they also
-    /// frame the file list's rdev fields. upstream: generator.c:2067-2074.
-    #[must_use]
-    #[doc(alias = "--drop-D")]
-    pub const fn drop_devices_enabled(&self) -> bool {
-        self.drop_devices
-    }
-
     /// Reports whether a device node may actually be created.
     ///
     /// Upstream additionally requires `am_root` to be non-zero, so an

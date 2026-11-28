@@ -4,12 +4,9 @@
 //! including the pre-release `'V'` capability encoding difference. Mirrors
 //! upstream `compat.c:754-759`.
 
-use super::capability::{
-    build_compat_flags_from_client_info, client_has_pre_release_v_flag, parse_client_info,
-};
+use super::capability::client_has_pre_release_v_flag;
 use protocol::CompatibilityFlags;
 use std::io::{self, Write};
-use std::net::TcpStream;
 
 /// Writes compatibility flags to the output stream, handling the pre-release
 /// `'V'` capability flag encoding difference.
@@ -49,53 +46,4 @@ pub(crate) fn write_compat_flags<W: Write + ?Sized>(
         protocol::write_varint(writer, flags.bits() as i32)?;
     }
     Ok(flags)
-}
-
-/// Exchanges compatibility flags directly on a TcpStream for daemon mode.
-///
-/// This function performs the compat flags exchange BEFORE any buffering or
-/// wrapping of the stream, mirroring upstream rsync's behavior where
-/// `write_buf()` writes directly to FD when `iobuf.out_fd` is not yet initialized.
-///
-/// **CRITICAL:** This must be called BEFORE wrapping the stream in ServerWriter
-/// to ensure the compat flags are sent as plain data, not multiplexed data.
-///
-/// # Arguments
-///
-/// * `protocol` - The negotiated protocol version
-/// * `stream` - Raw TcpStream for writing (will use write_all directly)
-/// * `client_args` - Arguments received from client (to parse -e option)
-/// * `allow_inc_recurse` - Whether incremental recursion is allowed
-///
-/// # Returns
-///
-/// Returns the final negotiated compatibility flags, or an I/O error.
-pub fn exchange_compat_flags_direct(
-    protocol: protocol::ProtocolVersion,
-    stream: &mut TcpStream,
-    client_args: &[String],
-    allow_inc_recurse: bool,
-) -> io::Result<Option<CompatibilityFlags>> {
-    if !protocol.uses_binary_negotiation() {
-        return Ok(None);
-    }
-
-    // Parse client capabilities from -e option (mirrors upstream compat.c:738-754)
-    let client_info = parse_client_info(client_args);
-
-    // Build compat flags based on client capabilities.
-    // allow_inc_recurse is passed through from the caller; when true and the client
-    // advertises 'i', the CF_INC_RECURSE flag will be set.
-    let our_flags = build_compat_flags_from_client_info(&client_info, allow_inc_recurse);
-
-    // Server ONLY WRITES compat flags (upstream compat.c:731-759)
-    // The client reads but DOES NOT send anything back - it's unidirectional!
-    // CRITICAL: Write directly to TcpStream, NOT through any trait abstraction!
-    // Handle pre-release 'V' flag: use single-byte write instead of varint.
-    let final_flags = write_compat_flags(stream, our_flags, &client_info)?;
-
-    // CRITICAL: Flush immediately to ensure data leaves application buffers
-    stream.flush()?;
-
-    Ok(Some(final_flags))
 }

@@ -434,24 +434,6 @@ impl BufferRing {
         Some(unsafe { self.buffers_ptr.add(offset) })
     }
 
-    /// Returns a slice view of the buffer identified by `buf_id`.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that:
-    /// - `buf_id` was obtained from a completed CQE (not recycled yet)
-    /// - `len` does not exceed the CQE result (bytes actually written by kernel)
-    /// - No concurrent recycling of this buffer occurs during the slice lifetime
-    pub unsafe fn buffer_slice(&self, buf_id: u16, len: usize) -> Option<&[u8]> {
-        let ptr = self.buffer_ptr(buf_id)?;
-        let clamped = len.min(self.config.buffer_size as usize);
-        // SAFETY: `ptr` is a valid base into the arena (verified by
-        // `buffer_ptr`), `clamped <= buffer_size` keeps us inside the
-        // buffer, and the caller's `unsafe` contract guarantees the kernel
-        // initialised those bytes and is not concurrently recycling them.
-        Some(unsafe { std::slice::from_raw_parts(ptr, clamped) })
-    }
-
     /// Recycles a buffer back into the ring for reuse by the kernel.
     ///
     /// After processing data from a completed read, call this to make the

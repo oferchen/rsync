@@ -139,15 +139,6 @@ impl TokenBuffer {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.data[..self.len]
     }
-
-    /// Returns a mutable slice of the full allocated buffer.
-    ///
-    /// Use this when you need to write more than `len` bytes.
-    #[must_use]
-    #[inline]
-    pub fn as_full_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.data
-    }
 }
 
 #[cfg(test)]

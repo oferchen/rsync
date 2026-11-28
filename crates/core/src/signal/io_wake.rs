@@ -81,12 +81,6 @@ pub fn wake_blocked_io() {
     }
 }
 
-/// Number of currently registered wakers. Diagnostics and tests only.
-#[must_use]
-pub fn registered_waker_count() -> usize {
-    wakers().lock().map(|list| list.len()).unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

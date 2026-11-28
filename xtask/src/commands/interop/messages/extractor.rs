@@ -81,30 +81,6 @@ pub fn extract_messages_from_output(stderr: &str) -> Vec<Message> {
         .collect()
 }
 
-/// Run rsync and capture stderr messages.
-#[allow(dead_code)]
-pub fn run_and_extract_messages(
-    rsync_binary: &Path,
-    args: &[String],
-    work_dir: &Path,
-) -> TaskResult<Vec<Message>> {
-    let mut cmd = Command::new(rsync_binary);
-    cmd.args(args)
-        .current_dir(work_dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    let output = cmd.output().map_err(|e| {
-        TaskError::Io(std::io::Error::new(
-            e.kind(),
-            format!("Failed to execute rsync: {}", e),
-        ))
-    })?;
-
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    Ok(extract_messages_from_output(&stderr))
-}
-
 /// Message test scenario for capturing specific messages.
 #[derive(Debug, Clone)]
 pub struct MessageScenario {

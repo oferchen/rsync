@@ -148,20 +148,3 @@ pub fn decode_end_marker<R: Read>(
         Ok(None)
     }
 }
-
-/// Returns `true` when the flag word from `decode_flags` is a
-/// safe-file-list IO-error end-of-list sentinel rather than a file entry.
-///
-/// After `decode_flags` returns `(flags, true)`, callers must check this
-/// to distinguish `flags == 0` (normal end) from the IO-error sentinel
-/// (which needs `decode_end_marker` to consume the trailing error varint).
-///
-/// # Upstream Reference
-///
-/// `flist.c:recv_file_list()` XMIT_IO_ERROR_ENDLIST branch (line 3203).
-#[must_use]
-pub fn is_io_error_end_marker(flags: u32) -> bool {
-    // Must match exact sentinel, not just the bit: XMIT_HLINK_FIRST shares
-    // the same bit position as XMIT_IO_ERROR_ENDLIST.
-    flags == (XMIT_EXTENDED_FLAGS as u32) | ((XMIT_IO_ERROR_ENDLIST as u32) << 8)
-}

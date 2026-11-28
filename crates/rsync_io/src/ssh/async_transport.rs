@@ -148,13 +148,12 @@ impl AsyncSshTransport {
     ///
     /// The returned reader wraps the child's stdout, and the writer wraps
     /// the child's stdin. The underlying [`tokio::process::Child`] is
-    /// dropped together with this method's `self`, so callers that need to
-    /// reap the child explicitly should call [`Self::wait`] first.
+    /// dropped together with this method's `self`, so the child's exit
+    /// status is not available after a split.
     ///
     /// # Panics
     ///
-    /// Panics if either pipe was already taken (e.g., by a prior call to
-    /// [`Self::take_stdin`] / [`Self::take_stdout`]).
+    /// Panics if a prior call to [`Self::wait`] already closed stdin.
     pub fn split(mut self) -> (impl AsyncRead, impl AsyncWrite) {
         let stdout = self
             .stdout
@@ -165,18 +164,6 @@ impl AsyncSshTransport {
             .take()
             .expect("AsyncSshTransport::split: stdin already taken");
         (stdout, stdin)
-    }
-
-    /// Removes the async stdin half from the transport, leaving the rest
-    /// of the connection intact.
-    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.stdin.take()
-    }
-
-    /// Removes the async stdout half from the transport, leaving the rest
-    /// of the connection intact.
-    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
-        self.stdout.take()
     }
 
     /// Waits for the spawned `ssh` child to exit and returns its exit

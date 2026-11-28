@@ -119,13 +119,6 @@ impl<'a> DeltaGeneratorConfig<'a> {
         self
     }
 
-    /// Attaches negotiated algorithms from protocol >= 30 capability exchange.
-    #[must_use]
-    pub fn with_negotiated_algorithms(mut self, algorithms: &'a NegotiationResult) -> Self {
-        self.negotiated_algorithms = Some(algorithms);
-        self
-    }
-
     /// Attaches compatibility flags from protocol setup.
     #[must_use]
     pub fn with_compat_flags(mut self, flags: &'a CompatibilityFlags) -> Self {

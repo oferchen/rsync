@@ -217,6 +217,6 @@ pub use config::{DaemonConfig, DaemonConfigBuilder};
 pub use daemon::run_async_daemon;
 #[cfg(windows)]
 pub use daemon::run_daemon_session_child;
-pub use daemon::{is_daemon_parameter, run_daemon, run_daemon_stdio, run_stdio_session};
+pub use daemon::{is_daemon_parameter, run_daemon, run_daemon_stdio};
 pub use daemon_stream::{DaemonStream, StdioPair};
 pub use error::DaemonError;

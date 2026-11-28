@@ -1202,32 +1202,8 @@ pub fn operator_link_confined_at(
     crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
 }
 
-/// Hard-link `old_path` to `new_path` with both endpoints resolved by the
-/// ownership walk.
-///
-/// The link tier runs *before* the rename tier in a backup, so confining only
-/// the rename would leave the escape wide open - upstream sets the
-/// operator-path mode around `link_or_rename()` as a whole, covering both.
-///
-/// # Upstream Reference
-///
-/// - `rsync-3.5.2/backup.c:226-247` `link_or_rename()` - `do_link_at` first,
-///   `do_rename_at` on failure.
-/// - `rsync-3.5.2/syscall.c:1169` `do_link_at()` under `operator_path_resolve` -
-///   `owner_walk_parent` on each side, then `linkat`.
-///
-/// # Errors
-///
-/// Propagates the walk's refusal (`ELOOP`) or the `linkat(2)` errno - notably
-/// `EXDEV` when the backup area is on another filesystem, which the caller
-/// treats as its signal to fall through to the next tier.
-pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
-    let (old_dirfd, old_leaf) = owner_trusted_parent(old_path)?;
-    let (new_dirfd, new_leaf) = owner_trusted_parent(new_path)?;
-    crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
-}
-
-/// [`operator_link`] additionally bound to the session's confinement root.
+/// Hard-links `old_path` to `new_path` through the ownership walk, bound to
+/// the session's confinement root.
 ///
 /// The `--backup-dir` link tier. Ownership alone cannot bound this: a
 /// non-chrooted daemon writes everything it creates as its own uid, so a
@@ -2900,7 +2876,7 @@ mod tests {
     /// `operator_open_write_create`/`operator_open_create_new` (`--write-batch`
     /// and its `.sh`), `operator_open_rw_create` (daemon `lock file`),
     /// `operator_open_recv` (`--partial-dir`/`--temp-dir` receiver open),
-    /// `operator_open_dir`, `operator_mkdir`, `operator_rename`, `operator_link`
+    /// `operator_open_dir`, `operator_mkdir`, `operator_rename`, `operator_link_confined`
     /// and `operator_symlink_metadata`, plus the config/`secrets file`/`motd`/
     /// `--password-file`/`--*clude-from`/`--files-from` reads - reach the SAME
     /// walk but carry no confinement root (they may legitimately point outside

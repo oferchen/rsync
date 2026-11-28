@@ -72,6 +72,31 @@ class ReexportTests(CensusFixture):
         self.assertEqual(rows["orphan"]["reexport"], 1)
 
 
+class UseAliasTests(CensusFixture):
+    def test_a_call_through_a_renamed_import_wires_the_function(self) -> None:
+        self.write("crates/demo/src/lib.rs", "pub fn original() {}\n")
+        self.write(
+            "crates/demo/src/api.rs",
+            "use crate::original as renamed;\n"
+            "pub fn caller() {\n    renamed();\n}\n",
+        )
+        self.assertNotIn("original", self.tier_names())
+
+    def test_a_rename_inside_a_use_group_is_followed(self) -> None:
+        self.write("crates/demo/src/lib.rs", "pub fn original() {}\n")
+        self.write(
+            "crates/demo/src/api.rs",
+            "pub use crate::{\n    other, original as renamed,\n};\n"
+            "pub fn caller() {\n    renamed();\n}\n",
+        )
+        self.assertNotIn("original", self.tier_names())
+
+    def test_a_renamed_import_alone_is_not_a_call_site(self) -> None:
+        self.write("crates/demo/src/lib.rs", "pub fn original() {}\n")
+        self.write("crates/demo/src/api.rs", "use crate::original as renamed;\n")
+        self.assertIn("original", self.tier_names())
+
+
 class CfgTestGranularityTests(CensusFixture):
     def test_a_test_only_reference_does_not_wire_a_function(self) -> None:
         # zero-caller-but-tested is OUTSIDE the gated tier: the tier is

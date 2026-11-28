@@ -53,13 +53,6 @@ impl SignatureBlock {
         self.strong.as_slice()
     }
 
-    /// Strong checksum as an owned digest buffer.
-    #[inline]
-    #[must_use]
-    pub const fn strong_digest(&self) -> DigestBuf {
-        self.strong
-    }
-
     /// Returns the number of bytes that contributed to the rolling checksum.
     #[inline]
     #[must_use]

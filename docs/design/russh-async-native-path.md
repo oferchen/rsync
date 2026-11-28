@@ -201,7 +201,7 @@ The dispatch trait is `pub(crate)` and lives behind the existing `embedded-ssh` 
 
 ### Channel buffer-size knob
 
-`AsyncSshDispatchConfig::outbound_capacity` / `inbound_capacity` plumb through to the existing `into_sync_halves_with_capacity` shape. Operator-facing exposure is via an env var on first delivery, with a CLI flag follow-up to be specced in RUSSH-10:
+`AsyncSshDispatchConfig::outbound_capacity` / `inbound_capacity` plumb through to the bounded-queue shape `connect_and_exec` uses (`DEFAULT_CHANNEL_CAPACITY`). Operator-facing exposure is via an env var on first delivery, with a CLI flag follow-up to be specced in RUSSH-10:
 
 - `OC_RSYNC_SSH_CHANNEL_CAP=N` overrides both directions. Default 32.
 - `OC_RSYNC_SSH_CHUNK_BYTES=N` overrides `max_chunk_bytes`. Default 32768.

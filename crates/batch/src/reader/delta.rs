@@ -127,29 +127,4 @@ impl BatchReader {
             Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
-
-    /// Read all delta operations from the batch file using internal format.
-    ///
-    /// This reads delta operations using the internal opcode-based format
-    /// (count prefix + individual operations). For batch files written with
-    /// the token format, use [`read_file_delta_tokens`](Self::read_file_delta_tokens)
-    /// instead.
-    pub fn read_all_delta_ops(&mut self) -> BatchResult<Vec<protocol::wire::DeltaOp>> {
-        if self.header.is_none() {
-            return Err(BatchError::Io(io::Error::other(
-                "Must read header before delta operations",
-            )));
-        }
-
-        if let Some(ref mut reader) = self.batch_file {
-            protocol::wire::delta::read_delta(reader).map_err(|e| {
-                BatchError::Io(io::Error::new(
-                    e.kind(),
-                    format!("Failed to read delta operations: {e}"),
-                ))
-            })
-        } else {
-            Err(BatchError::Io(io::Error::other("Batch file not open")))
-        }
-    }
 }
