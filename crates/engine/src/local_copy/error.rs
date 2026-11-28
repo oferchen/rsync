@@ -582,10 +582,8 @@ pub enum LocalCopyErrorKind {
     /// A destination directory the receiver must enter cannot be entered.
     /// Exits 3 (`RERR_FILESELECT`) before anything is transferred.
     #[error(
-        "change_dir#{} \"{}\" failed: {}",
-        entry.number(),
-        path.display(),
-        upstream_io_error(source)
+        "{}",
+        logging::ChangeDirFailed::new(entry.change_dir_step(), &logging::full_fname(path), source)
     )]
     DestinationEntryFailed {
         /// Which of upstream's `change_dir()` calls this entry mirrors.
@@ -698,13 +696,13 @@ pub enum DestinationEntry {
 }
 
 impl DestinationEntry {
-    /// The `#N` upstream prints after `change_dir`.
+    /// The `change_dir()` step whose `change_dir#N` line this entry prints.
     #[must_use]
-    pub const fn number(self) -> u8 {
+    pub const fn change_dir_step(self) -> logging::ChangeDirStep {
         match self {
-            Self::Existing => 1,
-            Self::Created => 2,
-            Self::Parent => 3,
+            Self::Existing => logging::ChangeDirStep::One,
+            Self::Created => logging::ChangeDirStep::Two,
+            Self::Parent => logging::ChangeDirStep::Three,
         }
     }
 }

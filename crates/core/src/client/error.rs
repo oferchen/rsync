@@ -529,12 +529,9 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             // upstream: main.c:777-781, :837-839, :865-868 get_local_name() -
             // `rsyserr(FERROR, errno, "change_dir#N %s failed",
             // full_fname(dest_path))`.
-            let line = format!(
-                "[Receiver] change_dir#{} {} failed: {}",
-                entry.number(),
-                entered_name(entry, &path),
-                upstream_io_error(&source)
-            );
+            let name = entered_name(entry, &path);
+            let failed = logging::ChangeDirFailed::new(entry.change_dir_step(), &name, &source);
+            let line = format!("[Receiver] {failed}");
             program_line_error(line, ExitCode::FileSelect, Role::PreForkReceiver)
         }
         LocalCopyErrorKind::DestinationConflict(conflict) => {
