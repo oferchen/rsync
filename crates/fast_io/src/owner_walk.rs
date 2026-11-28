@@ -907,7 +907,23 @@ fn owner_trusted_parent_from(
 /// Surfaces any walk error (including the refusal of a foreign-owned symlink)
 /// and any `mkdirat` error other than `EEXIST`.
 pub fn operator_mkdir(path: &Path, mode: u32) -> io::Result<()> {
-    operator_mkdir_kind(path, mode, crate::confinement::PathKind::Ancillary)
+    operator_mkdir_kind(
+        path,
+        mode,
+        crate::confinement::PathKind::Ancillary,
+        Exists::AnyEntry,
+    )
+}
+
+/// Which existing leaf an `EEXIST` from `mkdirat` accepts as success.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Exists {
+    /// Any entry, as `copy_valid_path()` and `handle_partial_dir()` take it
+    /// (backup.c:128, util1.c:1596).
+    AnyEntry,
+    /// Only a directory, as `make_path()` takes it (util1.c:244-246): an
+    /// existing file keeps the `EEXIST`.
+    DirectoryOnly,
 }
 
 /// The body behind [`operator_mkdir`] and the per-component step of
@@ -922,6 +938,7 @@ fn operator_mkdir_kind(
     path: &Path,
     mode: u32,
     kind: crate::confinement::PathKind,
+    exists: Exists,
 ) -> io::Result<()> {
     let (parent, leaf) = owner_trusted_parent_kind(path, kind)?;
     match rustix::fs::mkdirat(
@@ -932,7 +949,13 @@ fn operator_mkdir_kind(
         Mode::from_bits_truncate(mode as rustix::fs::RawMode),
     ) {
         Ok(()) => Ok(()),
-        Err(Errno::EXIST) => Ok(()),
+        Err(Errno::EXIST)
+            if exists == Exists::AnyEntry
+                || rustix::fs::statat(&parent, leaf.as_os_str(), rustix::fs::AtFlags::empty())
+                    .is_ok_and(|st| rustix::fs::FileType::from_raw_mode(st.st_mode).is_dir()) =>
+        {
+            Ok(())
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -956,7 +979,34 @@ fn operator_mkdir_kind(
 /// on; every other failure is reported as-is so a refused component stays
 /// refused rather than being retried unconfined.
 pub fn operator_create_dir_all(path: &Path, mode: u32) -> io::Result<()> {
-    operator_create_dir_all_kind(path, mode, crate::confinement::PathKind::Ancillary)
+    operator_create_dir_all_kind(
+        path,
+        mode,
+        crate::confinement::PathKind::Ancillary,
+        Exists::AnyEntry,
+    )
+}
+
+/// [`operator_create_dir_all`] with `make_path()`'s rule for an existing
+/// component: `EEXIST` is success only for a directory, so a regular file
+/// where a directory is needed fails with that `EEXIST`.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.2/util1.c:241-246` `make_path()` - `do_mkdir_at()`, then an
+///   `EEXIST` whose `do_stat()` is not a directory is an error, and `errno`
+///   is left as `EEXIST` for `main.c:818-821`'s `mkdir %s failed`.
+///
+/// # Errors
+///
+/// As [`operator_create_dir_all`], plus `EEXIST` for an existing non-directory.
+pub fn operator_make_path(path: &Path, mode: u32) -> io::Result<()> {
+    operator_create_dir_all_kind(
+        path,
+        mode,
+        crate::confinement::PathKind::Ancillary,
+        Exists::DirectoryOnly,
+    )
 }
 
 /// [`operator_create_dir_all`] additionally bound to the session's confinement
@@ -993,7 +1043,12 @@ pub fn operator_create_dir_all(path: &Path, mode: u32) -> io::Result<()> {
 /// As [`operator_create_dir_all`], plus the `ELOOP` reported when a resolved
 /// component lands outside the confinement root.
 pub fn operator_create_dir_all_confined(path: &Path, mode: u32) -> io::Result<()> {
-    operator_create_dir_all_kind(path, mode, crate::confinement::PathKind::Confined)
+    operator_create_dir_all_kind(
+        path,
+        mode,
+        crate::confinement::PathKind::Confined,
+        Exists::AnyEntry,
+    )
 }
 
 /// The shared body of the two `operator_create_dir_all*` spellings.
@@ -1001,16 +1056,17 @@ fn operator_create_dir_all_kind(
     path: &Path,
     mode: u32,
     kind: crate::confinement::PathKind,
+    exists: Exists,
 ) -> io::Result<()> {
     if path.as_os_str().is_empty() {
         return Ok(());
     }
-    match operator_mkdir_kind(path, mode, kind) {
+    match operator_mkdir_kind(path, mode, kind, exists) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let parent = path.parent().ok_or(error)?;
-            operator_create_dir_all_kind(parent, mode, kind)?;
-            operator_mkdir_kind(path, mode, kind)
+            operator_create_dir_all_kind(parent, mode, kind, exists)?;
+            operator_mkdir_kind(path, mode, kind, exists)
         }
         Err(error) => Err(error),
     }

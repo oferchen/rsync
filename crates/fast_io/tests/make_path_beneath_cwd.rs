@@ -81,3 +81,22 @@ fn an_absolute_path_is_refused_like_secure_relative_open() {
     assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "{error}");
     assert!(!tmp.path().join("new").exists());
 }
+
+/// A regular file as the last component keeps mkdir's EEXIST, as 3.5.2's
+/// make_path() does: EEXIST is success only for a directory (util1.c:244-246).
+#[test]
+fn a_regular_file_as_the_last_component_is_an_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(tmp.path().join("dst")).expect("mkdir dst");
+    fs::write(tmp.path().join("dst/dstfile"), b"b\n").expect("write dstfile");
+    let want = fs::create_dir(tmp.path().join("dst/dstfile"))
+        .expect_err("mkdir of a file")
+        .raw_os_error();
+    enter(tmp.path());
+
+    let error = make_path_beneath_cwd(Path::new("dst/dstfile"), 0o777)
+        .expect_err("a file is not a directory");
+
+    assert_eq!(error.raw_os_error(), want, "{error}");
+    assert!(tmp.path().join("dst/dstfile").is_file());
+}
