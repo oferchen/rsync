@@ -526,6 +526,8 @@ fn wildcard_star_suffixes_match_upstream() {
         b"a/b/***",
         b"***",
         b"a/***/",
+        b"\\/***",
+        b"a\\b/***",
     ] {
         assert_parity(&[arg]);
     }

@@ -99,9 +99,12 @@ impl CompiledRule {
         // "rejecting unrequested file-list name" (flist.c:1369). Escape each `\`
         // to `\\` for non-wild patterns so wildmatch reproduces upstream's
         // literal comparison. Wild patterns keep `\` as an escape, matching
-        // upstream's wildmatch_array path.
+        // upstream's wildmatch_array path. The test reads the whole pattern,
+        // as add_rule() does: a `/***` suffix stripped from the stem above still
+        // makes the rule wild, so its stem keeps `\` as an escape.
         let has_glob_wildcard = core_pattern.iter().any(|b| matches!(b, b'*' | b'?' | b'['));
-        let core_pattern = if !has_glob_wildcard && core_pattern.contains(&b'\\') {
+        let rule_is_wild = pattern.iter().any(|b| matches!(b, b'*' | b'?' | b'['));
+        let core_pattern = if !rule_is_wild && core_pattern.contains(&b'\\') {
             let mut escaped = Vec::with_capacity(core_pattern.len() + 4);
             for &b in core_pattern.iter() {
                 if b == b'\\' {
@@ -420,6 +423,22 @@ mod tests {
         assert!(compiled.matches(Path::new("back\\slash.txt"), false, true));
         // The escape must not make it match the escaped-away spelling.
         assert!(!compiled.matches(Path::new("backslash.txt"), false, true));
+    }
+
+    /// A `/***` suffix makes the whole rule wild (exclude.c:333-334 tests the
+    /// full pattern), so a `\` in its stem is an escape, not a name byte:
+    /// `a\b/***` excludes the directory `ab` and what is below it, and not a
+    /// directory named `a\b`. The stem alone holds no wildcard, which is why
+    /// the escape decision must read the whole pattern.
+    #[test]
+    fn wild3_stem_keeps_backslash_as_an_escape() {
+        use crate::FilterRule;
+
+        let compiled = CompiledRule::new(FilterRule::exclude("a\\b/***")).unwrap();
+        assert!(compiled.matches_bytes(b"ab", true, false, None));
+        assert!(compiled.matches_bytes(b"ab/x", false, false, None));
+        assert!(!compiled.matches_bytes(b"a\\b", true, false, None));
+        assert!(!compiled.matches_bytes(b"a\\b/x", false, false, None));
     }
 
     /// upstream: exclude.c:292-294 add_rule() counts the `/` inside `[/U]`
