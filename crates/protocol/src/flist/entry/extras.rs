@@ -59,6 +59,12 @@ pub(super) struct FileEntryExtras {
     /// On the receiver side this field is unused - the receiver uses
     /// `xattr_ndx` to look up data in the `XattrCache`.
     pub(super) xattr_list: Option<XattrList>,
+    /// The name exactly as read from the wire, kept only on non-Unix targets
+    /// and only when it is not valid UTF-8: the `PathBuf` there holds a lossy
+    /// copy, so this is the one place the received bytes survive. See
+    /// `FileEntry::wire_name`.
+    #[cfg(not(unix))]
+    pub(super) wire_name: Option<Box<[u8]>>,
 
     // 4-byte aligned fields.
     /// Access time nanoseconds (--atimes). Always 0 for entries decoded from the

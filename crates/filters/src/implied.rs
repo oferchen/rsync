@@ -25,7 +25,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::compiled::CompiledRule;
+use crate::compiled::{CompiledRule, path_match_bytes};
 use crate::{FilterError, FilterRule};
 
 /// Transfer options that shape how source args become implied-include rules.
@@ -229,11 +229,25 @@ impl ImpliedIncludes {
     /// requested and a non-match means it should be rejected. Matching uses
     /// `check_descendants = false`, giving exactly upstream `rule_matches()`
     /// semantics (no synthetic `pattern/**` descendant matchers).
+    ///
+    /// `path` is a local path: on Windows its `\` separators are folded to
+    /// `/` first. A received file-list name must go through
+    /// [`Self::covers_name`] instead.
     #[must_use]
     pub fn covers(&self, path: &Path, is_dir: bool) -> bool {
+        self.covers_name(&path_match_bytes(path), is_dir)
+    }
+
+    /// [`Self::covers`] for a name held as raw bytes - a received file-list
+    /// name. The bytes are matched exactly as given on every platform:
+    /// upstream runs this check on the received `thisname` before any path
+    /// translation (flist.c:1368-1374), so a `\` in a wire name is a name
+    /// byte, never a separator.
+    #[must_use]
+    pub fn covers_name(&self, name: &[u8], is_dir: bool) -> bool {
         self.rules
             .iter()
-            .any(|rule| rule.matches(path, is_dir, false))
+            .any(|rule| rule.matches_bytes(name, is_dir, false, None))
     }
 
     /// Returns `true` when `path` is only reachable as a *parent* of something
@@ -256,6 +270,14 @@ impl ImpliedIncludes {
     /// upstream: `exclude.c:1144` `is_implied_parent_dir()`.
     #[must_use]
     pub fn is_parent_only_dir(&self, path: &Path) -> bool {
+        self.is_parent_only_name(&path_match_bytes(path))
+    }
+
+    /// [`Self::is_parent_only_dir`] for a directory name held as raw bytes - a
+    /// received file-list name, matched exactly as given (see
+    /// [`Self::covers_name`]).
+    #[must_use]
+    pub fn is_parent_only_name(&self, name: &[u8]) -> bool {
         if self.rules.is_empty() {
             return false;
         }
@@ -263,16 +285,20 @@ impl ImpliedIncludes {
         // upstream: exclude.c:1151-1165 - the receiver's synthetic transfer-root
         // entry is exempt from the requested-name filter, so it is treated as
         // parent-only unless a root-content rule exists.
-        if path == Path::new(".") || path == Path::new("/.") {
+        if name == b"." || name == b"/." {
             return !self.root_content;
         }
 
         let mut parent_match = false;
         for rule in &self.rules {
-            if !rule.matches(path, true, false) {
+            if !rule.matches_bytes(name, true, false, None) {
                 continue;
             }
-            if rule.is_directory_only() {
+            // upstream: exclude.c:1174-1177 - only FILTRULE_DIRECTORY, set by a
+            // written trailing `/` (exclude.c:287-290), makes a match
+            // parent-only. A trailing `***` is FILTRULE_WILD3_SUFFIX
+            // (exclude.c:340-345) and names the directory itself as content.
+            if rule.has_trailing_slash() {
                 parent_match = true;
                 continue;
             }
@@ -296,14 +322,14 @@ impl ImpliedIncludes {
     fn push_rule(&mut self, pattern: &[u8], directory_only: bool) -> Result<(), FilterError> {
         if self.seen.insert(pattern.to_vec()) {
             let compiled = CompiledRule::new(FilterRule::include(pattern.to_vec()))?;
-            debug_assert_eq!(compiled.is_directory_only(), directory_only);
+            debug_assert_eq!(compiled.has_trailing_slash(), directory_only);
             self.rules.push(compiled);
         }
         if let Some(escaped) = escape_live_brackets(pattern)
             && self.seen.insert(escaped.clone())
         {
             let compiled = CompiledRule::new(FilterRule::include(escaped))?;
-            debug_assert_eq!(compiled.is_directory_only(), directory_only);
+            debug_assert_eq!(compiled.has_trailing_slash(), directory_only);
             self.rules.push(compiled);
         }
         Ok(())
@@ -618,6 +644,59 @@ mod tests {
         assert!(!covers(&implied, "mod", true));
     }
 
+    /// The three star suffixes under `-R -r`, from rsync 3.5.2's rules.
+    ///
+    /// upstream: exclude.c:340-345 gives `/a/***` FILTRULE_WILD3_SUFFIX and no
+    /// FILTRULE_DIRECTORY, rule_matches() appends `/` to a directory under it
+    /// (exclude.c:1034-1036), and is_implied_parent_dir() counts only
+    /// FILTRULE_DIRECTORY rules as parent-only (exclude.c:1174-1180). So `a` is
+    /// content under `a/***` and `a**`, but only the `/a/` parent under `a/**`.
+    #[test]
+    fn star_suffix_args_decide_parent_only_like_upstream() {
+        let opts = ImpliedIncludeOptions {
+            relative: true,
+            recurse: true,
+            ..Default::default()
+        };
+
+        let wild3 = ImpliedIncludes::from_args(opts, ["a/***"]).unwrap();
+        assert!(covers(&wild3, "a", true));
+        assert!(covers(&wild3, "a/x", false));
+        assert!(covers(&wild3, "a/y/z", false));
+        assert!(!covers(&wild3, "b", false));
+        assert!(!wild3.is_parent_only_dir(Path::new("a")));
+
+        let wild2 = ImpliedIncludes::from_args(opts, ["a/**"]).unwrap();
+        assert!(covers(&wild2, "a", true));
+        assert!(covers(&wild2, "a/x", false));
+        assert!(!covers(&wild2, "b", false));
+        assert!(wild2.is_parent_only_dir(Path::new("a")));
+
+        let joined = ImpliedIncludes::from_args(opts, ["a**"]).unwrap();
+        assert!(covers(&joined, "a", true));
+        assert!(covers(&joined, "ab/c", false));
+        assert!(!covers(&joined, "b", false));
+        assert!(!joined.is_parent_only_dir(Path::new("a")));
+    }
+
+    /// A received name is matched as its bytes on every platform: rsync 3.5.2
+    /// checks `thisname` before any path translation (flist.c:1368-1374), so a
+    /// `\` in it is a name byte even where the local path syntax would read a
+    /// separator. `a\` builds `/a\` and `/a\\/**` (exclude.c:640-646).
+    #[test]
+    fn wire_names_keep_their_backslash_bytes() {
+        let opts = ImpliedIncludeOptions {
+            recurse: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["a\\"]).unwrap();
+        assert!(implied.covers_name(b"a\\", true));
+        assert!(implied.covers_name(b"a\\/x", false));
+        assert!(!implied.covers_name(b"a/x", false));
+        assert!(!implied.covers_name(b"a", true));
+        assert!(!implied.is_parent_only_name(b"a\\"));
+    }
+
     #[test]
     fn empty_args_leave_set_inactive() {
         let implied =
@@ -777,3 +856,6 @@ mod tests {
         assert_eq!(escape_live_brackets(b"plain/name"), None);
     }
 }
+
+#[cfg(all(test, unix))]
+mod upstream_parity;

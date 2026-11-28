@@ -168,11 +168,17 @@ impl FileEntry {
             use std::os::unix::ffi::OsStrExt;
             PathBuf::from(OsStr::from_bytes(&name))
         };
+        // Non-Unix targets cannot hold arbitrary bytes in an `OsStr`: a UTF-8
+        // name moves in unchanged, and any other keeps a lossy display copy
+        // with the received bytes stored beside it for `wire_name`.
         #[cfg(not(unix))]
-        let path = {
-            // Non-Unix targets cannot use `OsStr::from_bytes`; lossy UTF-8
-            // conversion preserves displayability for non-UTF-8 names.
-            PathBuf::from(String::from_utf8_lossy(&name).into_owned())
+        let (path, raw_name) = match String::from_utf8(name) {
+            Ok(utf8) => (PathBuf::from(utf8), None),
+            Err(error) => {
+                let raw = error.into_bytes();
+                let lossy = String::from_utf8_lossy(&raw).into_owned();
+                (PathBuf::from(lossy), Some(raw.into_boxed_slice()))
+            }
         };
 
         let dirname = extract_dirname(&path);
@@ -194,6 +200,10 @@ impl FileEntry {
         entry.set_top_dir(flags.top_dir());
         entry.set_hlinked(flags.hlinked());
         entry.set_hlink_first(flags.hlink_first());
+        #[cfg(not(unix))]
+        if raw_name.is_some() {
+            entry.extras_mut().wire_name = raw_name;
+        }
         entry
     }
 }

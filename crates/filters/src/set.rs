@@ -269,6 +269,15 @@ impl FilterSet {
             .allows_transfer()
     }
 
+    /// [`Self::allows_during_traversal`] for a name held as raw bytes - a
+    /// received file-list name. The bytes are matched as given on every
+    /// platform: upstream's `check_server_filter()` sees the received
+    /// `thisname` itself (flist.c:1371), so a `\` in it is a name byte.
+    #[must_use]
+    pub fn allows_name_during_traversal(&self, name: &[u8], is_dir: bool) -> bool {
+        self.inner.transfer_allowed_name(name, is_dir)
+    }
+
     /// Returns `true` when any sender-side include/exclude or protect/risk
     /// rule matches the path, ignoring synthetic descendant matchers.
     ///

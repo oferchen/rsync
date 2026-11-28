@@ -179,13 +179,16 @@ fn run_pull_transfer(
     // forwards its bytes back to the remote sender via
     // `start_filesfrom_forwarding(filesfrom_fd)`. The remote sender consumes
     // the forwarded bytes through its protocol stream.
+    // Unconverted names when --iconv changed the forwarded list.
+    let mut local_files_from = None;
     if config
         .files_from()
         .resolve_for(false, config.from0())
         .stage_local_bytes
     {
         let data = read_local_files_from_for_forwarding(config)?;
-        server_config.connection.files_from_data = Some(data);
+        server_config.connection.files_from_data = Some(data.wire);
+        local_files_from = data.local;
     }
 
     // upstream: flist.c:1372 recv_file_entry() validates each received name
@@ -194,7 +197,9 @@ fn run_pull_transfer(
     server_config.connection.implied_source_args = implied_source_args_for_pull(
         config,
         source_paths,
-        server_config.connection.files_from_data.as_deref(),
+        local_files_from
+            .as_deref()
+            .or(server_config.connection.files_from_data.as_deref()),
     );
 
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));

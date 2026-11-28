@@ -346,6 +346,39 @@ fn a_requested_directory_keeps_its_content_flag() {
     );
 }
 
+/// A `/***` entry names its directory as content, not as a parent only. A
+/// written trailing `/` is what sets FILTRULE_DIRECTORY (exclude.c:287-290);
+/// `a/***` has none, and its WILD3 rule matches the directory `a` first, so
+/// `is_implied_parent_dir("a")` is false (exclude.c:1174-1177) and the entry
+/// keeps the content flag the sender sent. `a/**` adds the parent rule `a/`
+/// instead, so its `a` is downgraded.
+///
+/// upstream: `flist.c:1466-1488` `recv_file_entry()`.
+#[test]
+fn a_star_suffix_entry_decides_its_directory_like_upstream() {
+    for (entry, keeps_content) in [(&b"a/***"[..], true), (&b"a/**"[..], false)] {
+        let mut config = test_config();
+        config.flags.relative = true;
+        config.flags.recursive = true;
+        config.connection.implied_source_args = vec![entry.to_vec()];
+        let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+
+        let mut dir = FileEntry::new_directory("a".into(), 0o755);
+        dir.set_content_dir(true);
+        ctx.file_list.push(dir);
+
+        ctx.downgrade_implied_parent_dirs()
+            .expect("downgrade never fails on a well-formed list");
+
+        assert_eq!(
+            ctx.file_list[0].content_dir(),
+            keeps_content,
+            "entry {}",
+            String::from_utf8_lossy(entry)
+        );
+    }
+}
+
 /// A filename that failed `--iconv` conversion is cleared to "" (upstream
 /// flist.c:1067-1070 sets `thisname[0] = '\0'`) but the entry stays active with
 /// its real file-type bits, and upstream still runs it through
@@ -399,4 +432,80 @@ fn cleared_tombstone_empty_name_is_a_noop() {
 
     ctx.recheck_received_implied_includes()
         .expect("a mode-0 cleared tombstone is a no-op, not an unrequested name");
+}
+
+/// CVE-2026-70461 over-match direction: `--files-from` names `a\`, and a
+/// hostile sender also offers `a/x`. rsync 3.5.2 doubles the non-wild entry's
+/// backslash before appending `/**` (exclude.c:640-646), so its rules are
+/// `/a\` and `/a\\/**`, neither of which admits `a/x`; the receiver refuses it
+/// (flist.c:1372-1375) and exits RERR_UNSUPPORTED. A single, undoubled
+/// backslash would make the `/**` rule `/a\/**`, which wildmatch reads as
+/// `/a/**`, and accept the unrequested name.
+#[test]
+fn a_name_outside_a_trailing_backslash_entry_is_refused() {
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.connection.implied_source_args = vec![b"a\\".to_vec()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_directory("a\\".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("a\\/x".into(), 1, 0o644));
+    ctx.file_list
+        .push(FileEntry::new_file("a/x".into(), 1, 0o644));
+
+    let err = ctx.recheck_received_implied_includes().unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "ERROR: rejecting unrequested file-list name: a/x"
+    );
+    assert_eq!(crate::error::rerr_for_io_error(&err), 4, "RERR_UNSUPPORTED");
+}
+
+/// A name that is not valid UTF-8 is checked on its received bytes on every
+/// platform. `--files-from` names `caf\xe9` (Latin-1): its own entry and
+/// `caf\xe9/x` are requested, while `caf\xef/x` is not and is refused with
+/// RERR_UNSUPPORTED. A lossy rendering would turn both bytes into U+FFFD and
+/// the two names into one, so the second would be accepted.
+///
+/// upstream: flist.c:1368-1374 - the check runs on the raw `thisname`.
+#[test]
+fn a_non_utf8_name_is_checked_on_its_received_bytes() {
+    let received = |name: &[u8], mode: u32| {
+        FileEntry::from_raw_bytes(
+            name.to_vec(),
+            1,
+            mode,
+            0,
+            0,
+            protocol::flist::FileFlags::default(),
+        )
+    };
+    let config = || {
+        let mut config = test_config();
+        config.flags.recursive = true;
+        config.connection.implied_source_args = vec![b"caf\xe9".to_vec()];
+        config
+    };
+
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config());
+    ctx.file_list.push(received(b"caf\xe9", 0o040755));
+    ctx.file_list.push(received(b"caf\xe9/x", 0o100644));
+    ctx.recheck_received_implied_includes()
+        .expect("the requested non-UTF-8 entry and its child are covered");
+
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config());
+    ctx.file_list.push(received(b"caf\xe9", 0o040755));
+    ctx.file_list.push(received(b"caf\xef/x", 0o100644));
+    let err = ctx
+        .recheck_received_implied_includes()
+        .expect_err("a name the entry does not cover is refused");
+    assert!(
+        err.to_string()
+            .starts_with("ERROR: rejecting unrequested file-list name: "),
+        "{err}"
+    );
+    assert_eq!(crate::error::rerr_for_io_error(&err), 4, "RERR_UNSUPPORTED");
 }

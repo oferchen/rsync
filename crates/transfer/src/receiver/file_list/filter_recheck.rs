@@ -153,9 +153,10 @@ impl ReceiverContext {
             // basename strip) never matches a child against a slashless anchored
             // exclude like `- /bar`, so a name the sender legitimately sent
             // under an included parent (e.g. `bar/down` after `+ **/bar`) must
-            // NOT be rejected here. `!allows_during_traversal` is exactly
-            // upstream's `check_server_filter(...) < 0`.
-            if !filter_set.allows_during_traversal(path, entry.is_dir()) {
+            // NOT be rejected here. `!allows_name_during_traversal` is exactly
+            // upstream's `check_server_filter(...) < 0`, on the received name
+            // bytes (flist.c:1371), as the implied check below uses.
+            if !filter_set.allows_name_during_traversal(entry.wire_name(), entry.is_dir()) {
                 // upstream: flist.c:1369-1370 - rprintf(FERROR, ...) then
                 // exit_cleanup(RERR_UNSUPPORTED).
                 return Err(io::Error::new(
@@ -248,7 +249,9 @@ impl ReceiverContext {
                 // ...) <= 0 means no include rule matched, i.e. the name was
                 // never requested. `covers` reproduces `check_filter(...) > 0`
                 // with `rule_matches()` (check_descendants = false) semantics.
-                implied.covers(path, entry.is_dir())
+                // upstream: flist.c:1368 - the check sees the received name
+                // bytes; no platform rendering may fold a `\` in them.
+                implied.covers_name(entry.wire_name(), entry.is_dir())
             };
             if !covered {
                 // upstream: flist.c:1373-1374 - rprintf(FERROR, ...) then
@@ -347,7 +350,7 @@ impl ReceiverContext {
             if !entry.is_dir() || !entry.content_dir() {
                 continue;
             }
-            if implied.is_parent_only_dir(entry.path().as_path()) {
+            if implied.is_parent_only_name(entry.wire_name()) {
                 // upstream: flist.c:1478 - both flags, so the entry maps to
                 // FLAG_IMPLIED_DIR (oc: top_dir without content_dir).
                 entry.set_content_dir(false);

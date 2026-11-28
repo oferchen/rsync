@@ -24,7 +24,7 @@ upstream's 3.5.2 test suite. One entry per change; see the linked PRs for detail
 
 ### Security
 
-**CVE index.** Of the 33 rsync 3.5.0 CVEs, 29 are fixed, 1 is partially fixed, 1 is unverified and 2 do not apply. Status and evidence per CVE are in [SECURITY.md](./SECURITY.md); this table lists the merged PRs.
+**CVE index.** Of the 33 rsync 3.5.0 CVEs, 30 are fixed, 1 is partially fixed and 2 do not apply. Status and evidence per CVE are in [SECURITY.md](./SECURITY.md); this table lists the merged PRs.
 
 | CVE | Status | PRs |
 |---|---|---|
@@ -55,7 +55,7 @@ upstream's 3.5.2 test suite. One entry per change; see the linked PRs for detail
 | CVE-2026-70463 | Fixed | #7345 |
 | CVE-2026-70464 | Fixed | #7688, #7754, #8002 |
 
-The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are fixed, with their upstream testsuite cells passing; CVE-2026-53783 and 70454 do not apply; CVE-2026-70461 is unverified, because its testsuite cell skips on every leg.
+The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are fixed, with their upstream testsuite cells passing; CVE-2026-53783 and 70454 do not apply; CVE-2026-70461 is fixed, with its testsuite cell unable to run against oc-rsync (its only oracle is an AddressSanitizer report) and Rust cells pinning the escaping instead.
 
 **Path confinement (CVE-2026-53795 family)**
 - Confine destination writes and source reads against symlink races through one shared per-component resolver (#7393, #7349)

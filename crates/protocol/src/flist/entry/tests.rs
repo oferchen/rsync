@@ -1560,3 +1560,34 @@ fn reclaim_heap_data_on_minimal_entry_is_safe() {
     entry.reclaim_heap_data();
     assert_eq!(entry.name(), "");
 }
+
+/// `wire_name` is the name exactly as received, on every platform: a byte
+/// that is not UTF-8 survives, a `\\` is not turned into `/` (as
+/// `name_bytes` does on Windows), the `--relative` slash strip trims it the
+/// same way, and a rewritten name reports its new bytes.
+///
+/// upstream: flist.c:1368-1374 - both receiver checks see the raw `thisname`.
+#[test]
+fn wire_name_is_the_received_bytes() {
+    let raw = |name: &[u8]| {
+        FileEntry::from_raw_bytes(
+            name.to_vec(),
+            1,
+            0o100644,
+            0,
+            0,
+            crate::flist::flags::FileFlags::default(),
+        )
+    };
+    assert_eq!(raw(b"caf\xe9/x").wire_name(), b"caf\xe9/x");
+    assert_eq!(raw(b"a\\b").wire_name(), b"a\\b");
+    assert_eq!(raw(b"plain").wire_name(), b"plain");
+
+    let mut stripped = raw(b"//caf\xe9");
+    stripped.strip_leading_slashes();
+    assert_eq!(stripped.wire_name(), b"caf\xe9");
+
+    let mut renamed = raw(b"caf\xe9");
+    renamed.set_name("other".into());
+    assert_eq!(renamed.wire_name(), b"other");
+}
