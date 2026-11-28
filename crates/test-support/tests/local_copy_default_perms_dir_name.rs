@@ -13,7 +13,9 @@
 //! absolute new destinations, with and without `-p` - and compares exit code,
 //! stderr and the modes of the resulting tree. On Linux one more cell gives the
 //! destination's parent a default ACL, so the tree's modes show whether the
-//! ACL that was read was folded into `dest_mode()` (rsync.c:483-485).
+//! ACL that was read was folded into `dest_mode()` (rsync.c:483-485). That
+//! cell asserts 3.5.2's modes itself, so it needs no oracle and an oc-rsync
+//! built without ACL support fails it.
 
 #![cfg(unix)]
 
@@ -152,18 +154,30 @@ fn a_new_local_destination_reads_its_default_acl_like_rsync_3_5_2() {
 
 /// Gives `dir` the default ACL `d:u::rwx,d:g::r-x,d:o::---`.
 ///
+/// upstream: lib/acl.c:66-71 and acl_to_xattr() :119-151 store a POSIX ACL as
+/// the `system.posix_acl_default` xattr: a little-endian version 2 header,
+/// then one 8-byte entry per tag (tag, perm, id) in ascending tag order, with
+/// the undefined id for the unnamed entries. Writing that value directly
+/// needs no libacl, so the fixture links on every Linux target.
+///
 /// A filesystem without POSIX default ACLs fails the cell instead of skipping
 /// it: without the ACL the cell cannot tell a folded default from the umask.
-#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+#[cfg(target_os = "linux")]
 fn set_default_acl(dir: &Path) {
-    use exacl::{AclEntry, AclOption, Perm};
+    const ACL_EA_VERSION: u32 = 0x0002;
+    const UNDEFINED_ID: u32 = u32::MAX;
+    const USER_OBJ: u16 = 0x01;
+    const GROUP_OBJ: u16 = 0x04;
+    const OTHER: u16 = 0x20;
+    const ENTRIES: [(u16, u16); 3] = [(USER_OBJ, 0o7), (GROUP_OBJ, 0o5), (OTHER, 0o0)];
 
-    let entries = [
-        AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
-        AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
-        AclEntry::allow_other(Perm::empty(), None),
-    ];
-    if let Err(error) = exacl::setfacl(&[dir], &entries, Some(AclOption::DEFAULT_ACL)) {
+    let mut value = ACL_EA_VERSION.to_le_bytes().to_vec();
+    for (tag, perm) in ENTRIES {
+        value.extend_from_slice(&tag.to_le_bytes());
+        value.extend_from_slice(&perm.to_le_bytes());
+        value.extend_from_slice(&UNDEFINED_ID.to_le_bytes());
+    }
+    if let Err(error) = xattr::set(dir, "system.posix_acl_default", &value) {
         panic!(
             "cannot set a default ACL on {} ({error}); this cell needs a filesystem \
              with POSIX default ACLs, such as ext4",
@@ -172,37 +186,39 @@ fn set_default_acl(dir: &Path) {
     }
 }
 
+/// The tree rsync 3.5.2 leaves under `d:u::rwx,d:g::r-x,d:o::---`.
+///
 /// upstream: generator.c:1776-1777 reads the parent's default ACL only when
-/// `--perms` is off, and rsync.c:483-485 masks a new entry's mode with it, so
-/// `d:g::r-x,d:o::---` turns a 0644 source file into 0640 and a 0755 directory
-/// into 0750. A copy that ignored the ACL would land the umask's 0644 / 0755.
-#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+/// `--perms` is off, and rsync.c:483-485 masks a new entry's mode with it in
+/// place of the umask, so 0755 directories and `d/g` become 0750 and the 0644
+/// file `f` becomes 0640 whatever the umask is. A copy that ignored the ACL
+/// would land the umask's modes instead.
+#[cfg(target_os = "linux")]
+const DEFAULT_ACL_MODES: &[(&str, u32)] =
+    &[(".", 0o750), ("d", 0o750), ("d/g", 0o750), ("f", 0o640)];
+
+#[cfg(target_os = "linux")]
 #[test]
 fn a_relative_destination_folds_its_parents_default_acl_like_rsync_3_5_2() {
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
-        return;
-    };
-    let expected = run_in(upstream.binary(), Spelling::Relative, &[], set_default_acl);
-    assert_eq!(
-        (expected.exit, expected.stderr.as_str()),
-        (Some(0), ""),
-        "rsync 3.5.2 did not copy silently under a default ACL"
-    );
-    // The fixture must make the ACL visible, or the comparison below proves
-    // nothing about folding it.
-    let file_mode = expected
-        .modes
+    let expected: Vec<(PathBuf, u32)> = DEFAULT_ACL_MODES
         .iter()
-        .find(|(name, _)| name == Path::new("f"))
-        .map(|&(_, mode)| mode);
-    assert_eq!(
-        file_mode,
-        Some(0o640),
-        "rsync 3.5.2 did not apply the default ACL: {expected:?}"
-    );
+        .map(|&(name, mode)| (PathBuf::from(name), mode))
+        .collect();
+    // When the oracle is present, it must agree with the table, so the table
+    // stays 3.5.2's behaviour rather than oc's.
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
+        let oracle = run_in(upstream.binary(), Spelling::Relative, &[], set_default_acl);
+        assert_eq!(
+            (oracle.exit, oracle.stderr.as_str(), &oracle.modes),
+            (Some(0), "", &expected),
+            "rsync 3.5.2 did not land the default-ACL modes this cell asserts"
+        );
+    }
     let actual = run_in(&oc_rsync_bin(), Spelling::Relative, &[], set_default_acl);
     assert_eq!(
-        actual, expected,
-        "oc-rsync differs from rsync 3.5.2 under a default ACL on the destination's parent"
+        (actual.exit, actual.stderr.as_str(), &actual.modes),
+        (Some(0), "", &expected),
+        "oc-rsync did not fold the destination parent's default ACL like rsync 3.5.2; \
+         an oc-rsync built without the acl feature cannot pass this cell"
     );
 }

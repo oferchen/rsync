@@ -4024,7 +4024,6 @@ version = "0.6.4"
 dependencies = [
  "base64",
  "daemon",
- "exacl",
  "fast_io",
  "filetime",
  "libc",
@@ -4033,6 +4032,7 @@ dependencies = [
  "rustix",
  "socket2",
  "tempfile",
+ "xattr",
 ]
 
 [[package]]

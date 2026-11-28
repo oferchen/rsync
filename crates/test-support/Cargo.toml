@@ -56,12 +56,11 @@ libc = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["event", "process"] }
 
-# A default ACL on a fixture directory, for oracle cells that compare
-# ACL-derived modes with rsync 3.5.2, without a setfacl binary. Not on musl:
-# its targets have no libacl to link, and musl builds of oc-rsync carry no
-# ACL support for the cell to measure.
-[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dev-dependencies]
-exacl = { workspace = true }
+# A default ACL on a fixture directory, written as the raw
+# `system.posix_acl_default` xattr the way rsync 3.5.2's lib/acl.c does, so no
+# test links libacl on any Linux target.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+xattr = { workspace = true }
 
 # Rust port of upstream `support/lsh.sh`. Built as a workspace binary so tests
 # can resolve its path via `CARGO_BIN_EXE_lsh-stub` and drive oc-rsync's
