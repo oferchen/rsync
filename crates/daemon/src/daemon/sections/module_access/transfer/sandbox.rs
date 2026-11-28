@@ -77,6 +77,35 @@ fn apply_privilege_restrictions_with_upstream_errors(
 
     if !needs_chroot && !needs_privdrop {
         publish_module_confinement(module, &module.path, false);
+        // upstream: clientserver.c:1063 - `change_dir(module_chdir)` runs for
+        // every module session, privileged or not.
+        #[cfg(unix)]
+        {
+            let fallback_sink;
+            let log_sink: &SharedLogSink = match ctx.log_sink {
+                Some(log) => log,
+                None => {
+                    fallback_sink = open_privilege_fallback_sink();
+                    &fallback_sink
+                }
+            };
+            let Some(served_root) = enter_unchrooted_module_root(
+                ctx,
+                module,
+                &module.path,
+                log_sink,
+                auth_user,
+                client_args,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(PrivilegeOutcome {
+                served_root: Some(served_root),
+                ..PrivilegeOutcome::not_chrooted()
+            }));
+        }
+        #[cfg(not(unix))]
         return Ok(Some(PrivilegeOutcome::not_chrooted()));
     }
 
@@ -245,41 +274,18 @@ fn apply_privilege_restrictions_with_upstream_errors(
         }
         None
     } else {
-        // An unchrooted module is entered through the ownership walk, the arm
-        // upstream's `change_dir()` takes for `am_daemon && !am_chrooted`
-        // (util1.c:1351-1360): the operator's own symlinks are followed, any
-        // other uid's is refused. A refusal is upstream's `path_failure()` -
-        // the module is not served at all - never a fall back to the absolute
-        // path, which would reach the module through the very link the walk
-        // refused. upstream: clientserver.c:1063-1064, :688-695
-        let entered = fast_io::confinement::pin_session_root_fd(module_root)
-            .and_then(|()| enter_pinned_module_root(module_root));
-        if let Err(err) = entered {
-            let flog = format!(
-                "chdir {} failed: {}",
-                module_root.display(),
-                logging::upstream_errno_text(&err)
-            );
-            log_message(log_sink, &rsync_error!(1, flog).with_role(Role::Daemon));
-            send_error(
-                ctx.reader.get_mut(),
-                ctx.limiter,
-                &AtError::ChdirFailed,
-                SessionExit::Aborted,
-                ctx.session_exit_code,
-            )?;
-            let host_owned = ctx.host_display().to_owned();
-            run_post_xfer_finalizer(
-                ctx,
-                module,
-                &host_owned,
-                auth_user,
-                client_args,
-                MODULE_ABORT_EXIT_CODE,
-            );
+        let Some(served_root) = enter_unchrooted_module_root(
+            ctx,
+            module,
+            module_root,
+            log_sink,
+            auth_user,
+            client_args,
+        )?
+        else {
             return Ok(None);
-        }
-        Some(PathBuf::from("."))
+        };
+        Some(served_root)
     };
     #[cfg(not(unix))]
     let served_root = None;
@@ -323,6 +329,65 @@ fn apply_privilege_restrictions_with_upstream_errors(
         anchored_root,
         served_root,
     }))
+}
+
+/// Enters an unchrooted module's root through the ownership walk and returns
+/// the root the transfer is served from (`.`), or `None` once the refusal has
+/// been logged and sent to the client.
+///
+/// upstream: clientserver.c:1063 - `change_dir(module_chdir, CD_NORMAL)`, then
+/// `path_failure()` (clientserver.c:692-699) when it fails.
+#[cfg(unix)]
+fn enter_unchrooted_module_root(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    module_root: &Path,
+    log_sink: &SharedLogSink,
+    auth_user: Option<&str>,
+    client_args: &[String],
+) -> io::Result<Option<PathBuf>> {
+    // An unchrooted module is entered through the ownership walk, the arm
+    // upstream's `change_dir()` takes for `am_daemon && !am_chrooted`
+    // (util1.c:1351-1360): the operator's own symlinks are followed, any
+    // other uid's is refused. A refusal is upstream's `path_failure()` -
+    // the module is not served at all - never a fall back to the absolute
+    // path, which would reach the module through the very link the walk
+    // refused. upstream: clientserver.c:1063-1064, :688-695
+    let entered = fast_io::confinement::pin_session_root_fd(module_root)
+        .and_then(|()| enter_pinned_module_root(module_root));
+    if let Err(err) = entered {
+        // upstream: clientserver.c:695 - `rsyserr(FLOG, errno, "chdir %s
+        // failed", dir)`. who_am_i() is still "Receiver" here, before
+        // am_sender is known, for a push and a pull alike (rsync.c:987-995).
+        // The walk's own refusal notice (syscall.c:560-565) is logged first.
+        log_pending_diagnostics(log_sink);
+        let flog = format!(
+            "{}: [{}] chdir {} failed: {}",
+            core::version::PROGRAM_NAME,
+            Role::PreForkReceiver,
+            module_root.display(),
+            logging::upstream_errno_text(&err)
+        );
+        log_raw_line(log_sink, flog.as_bytes());
+        send_error(
+            ctx.reader.get_mut(),
+            ctx.limiter,
+            &AtError::ChdirFailed,
+            SessionExit::Aborted,
+            ctx.session_exit_code,
+        )?;
+        let host_owned = ctx.host_display().to_owned();
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            &host_owned,
+            auth_user,
+            client_args,
+            MODULE_ABORT_EXIT_CODE,
+        );
+        return Ok(None);
+    }
+    Ok(Some(PathBuf::from(".")))
 }
 
 /// Enters the pinned module root as the working directory, from which the

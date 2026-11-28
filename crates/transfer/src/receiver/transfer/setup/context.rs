@@ -1122,14 +1122,20 @@ impl ReceiverContext {
 
     /// How this receiver enters its destination.
     ///
-    /// upstream: util1.c:1351-1392 change_dir() - a non-daemon receiver walks
-    /// unless `--insecure-links` restores the plain chdir. The daemon server's
-    /// destination is anchored by its own confined walk, so it is searched
-    /// here and not walked.
+    /// upstream: util1.c:1351-1446 change_dir() - a non-daemon receiver walks
+    /// unless `--insecure-links` restores the plain chdir. A daemon serving an
+    /// unchrooted module is in the module root already (clientserver.c:1063)
+    /// and enters the client's destination beneath it through the confined
+    /// walk unless `insecure links = yes`; a chrooted one takes the plain
+    /// chdir.
     fn destination_entry(&self) -> Entry {
         #[cfg(unix)]
-        if self.config.connection.served_module_root().is_none() && !confinement_opted_out() {
-            return Entry::Walked;
+        if !confinement_opted_out() {
+            return match self.config.connection.served_module_root() {
+                None => Entry::Walked,
+                Some(_) if !fast_io::confinement::session_is_chrooted() => Entry::Confined,
+                Some(_) => Entry::Searched,
+            };
         }
         Entry::Searched
     }

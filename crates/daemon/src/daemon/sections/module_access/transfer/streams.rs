@@ -346,6 +346,8 @@ fn run_daemon_transfer(
     read_stream: &mut dyn Read,
     write_stream: &mut dyn Write,
     daemon_log: Option<DaemonLog>,
+    log_sink: Option<&SharedLogSink>,
+    fatal_logged: &AtomicBool,
 ) -> ServerResult {
     // upstream: clientserver.c:1182 - a socket daemon clears `msgs2stderr`, so
     // its fatal cause and log_exit() trailer travel to the client as MSG_ERROR
@@ -353,7 +355,18 @@ fn run_daemon_transfer(
     // fatal stat and %stat errors come from. The brand is the daemon binary's
     // own, from argv[0].
     let role = config.role;
-    let fatal_report = move |error: &io::Error, code: i32| fatal_lines(error, code, role);
+    // upstream: log.c:390-407 - rwrite() hands a daemon's message to logit()
+    // before it frames it for the peer, so the log keeps the cause and trailer
+    // even when the client exits on the first frame and its remote shell
+    // takes this process down with it (cleanup.c:203-204 kill_all()).
+    let fatal_report = move |error: &io::Error, code: i32| {
+        let lines = fatal_lines(error, code, role);
+        if let Some(log) = log_sink {
+            log_fatal_lines(log, &lines);
+            fatal_logged.store(true, Ordering::Relaxed);
+        }
+        lines
+    };
     run_server_with_handshake_adopting(
         config,
         handshake,
@@ -365,6 +378,13 @@ fn run_daemon_transfer(
             ..ServerTransferHooks::default()
         },
     )
+}
+
+/// Writes a fatal report's lines to the daemon log, each without its newline.
+fn log_fatal_lines(log: &SharedLogSink, lines: &[Vec<u8>]) {
+    for line in lines {
+        log_raw_line(log, line.strip_suffix(b"\n").unwrap_or(line));
+    }
 }
 
 /// The lines a daemon server reports for a transfer that `error` ended with
@@ -559,7 +579,16 @@ fn execute_transfer(
     // exchanges (NDX_DONE, stats, goodbye) when TCP backpressure occurs,
     // causing 10-second hangs. Standard I/O handles partial writes correctly,
     // matching upstream rsync's socket I/O model.
-    let result = run_daemon_transfer(config, handshake, read_stream, write_stream, daemon_log);
+    let fatal_logged = AtomicBool::new(false);
+    let result = run_daemon_transfer(
+        config,
+        handshake,
+        read_stream,
+        write_stream,
+        daemon_log,
+        ctx.log_sink,
+        &fatal_logged,
+    );
 
     // Diagnostics emitted while the transfer ran go to the daemon log.
     //
@@ -579,20 +608,7 @@ fn execute_transfer(
     // instead of the log. Widening here can only add deliveries, never move
     // one.
     if let Some(log) = ctx.log_sink {
-        for event in logging::drain_events_for_daemon_log() {
-            let message = match event {
-                logging::DiagnosticEvent::Info { message, .. }
-                | logging::DiagnosticEvent::Debug { message, .. } => message,
-                // A byte-faithful notice degrades to a lossy string on this
-                // daemon-log path; the log-file sink applies the log-file
-                // escape at write time. Byte-exact daemon-log fidelity is a
-                // follow-up (see the notice-channel migration inventory).
-                logging::DiagnosticEvent::Bytes { message, .. } => {
-                    String::from_utf8_lossy(&message).into_owned()
-                }
-            };
-            log_message(log, &rsync_info!(message).with_role(Role::Daemon));
-        }
+        log_pending_diagnostics(log);
     }
 
     match result {
@@ -647,10 +663,9 @@ fn execute_transfer(
                 .unwrap_or_else(|| core::server::error::rerr_for_io_error(&err));
             if let Some(log) = ctx.log_sink
                 && code != 0
+                && !fatal_logged.load(Ordering::Relaxed)
             {
-                for line in fatal_lines(&err, code, role) {
-                    log_raw_line(log, line.strip_suffix(b"\n").unwrap_or(&line));
-                }
+                log_fatal_lines(log, &fatal_lines(&err, code, role));
             }
             Err(code)
         }

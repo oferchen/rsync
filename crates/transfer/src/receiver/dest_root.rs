@@ -349,9 +349,16 @@ pub(in crate::receiver) enum Entry {
     /// plain `chdir()` would. oc never chdirs, so nothing is entered.
     ///
     /// upstream: util1.c:1393-1402 change_dir() - the plain `chdir()` arm
-    /// (`--insecure-links`). A daemon module's destination is anchored by its
-    /// own confined walk instead.
+    /// (`--insecure-links`, `insecure links = yes`, a chrooted module).
     Searched,
+    /// Through the confined walk beneath the cwd, the root of an unchrooted
+    /// daemon module: an in-tree relative symlink is followed, one that
+    /// leaves the module is refused with `ELOOP`, and no owner is judged.
+    ///
+    /// upstream: util1.c:1430-1446 change_dir() - the `am_daemon &&
+    /// (!am_chrooted || module_dirlen) && !symlink_optout_allowed()` arm,
+    /// `secure_relative_dirfd()` then `fchdir()`.
+    Confined,
 }
 
 /// The walked descriptor of the directory the receiver entered.
@@ -396,6 +403,12 @@ fn enter(dir: &Path, entry: Entry) -> io::Result<Option<Anchor>> {
         searchable(dir)?;
         return Ok(Some(anchor));
     }
+    // The daemon's destination is confined later by its own anchored sandbox;
+    // the walk here is the change_dir() that refuses an escape.
+    #[cfg(unix)]
+    if entry == Entry::Confined {
+        fast_io::open_dir_beneath_cwd(dir)?;
+    }
     #[cfg(not(unix))]
     let _ = entry;
     searchable(dir).map(|()| None)
@@ -405,27 +418,47 @@ fn searchable(dir: &Path) -> io::Result<()> {
     dir.join(".").metadata().map(drop)
 }
 
-/// Whether `error` is the ownership walk refusing a foreign-owned symlink.
+/// Whether `error` is a walk refusing a symlink: the ownership walk's
+/// foreign-owned one, or the confined walk's escape.
 ///
-/// The walk prints upstream's refusal line and fails with `ELOOP`; upstream
-/// reports the same refusal from the `change_dir()` that follows its mkdir.
+/// The ownership walk prints upstream's refusal line and fails with `ELOOP`;
+/// the confined walk prints nothing and fails with `ELOOP`
+/// (syscall.c:3279-3281). Upstream reports either from the `change_dir()`
+/// that follows its mkdir.
 fn is_refusal(entry: Entry, error: &io::Error) -> bool {
-    entry == Entry::Walked && fast_io::is_symlink_refusal(error)
+    (entry == Entry::Walked && fast_io::is_symlink_refusal(error))
+        || (entry == Entry::Confined && is_escape(error))
+}
+
+/// Whether `error` is the confined walk's `ELOOP`. No platform but Unix
+/// confines a destination, so there is nothing to refuse elsewhere.
+fn is_escape(error: &io::Error) -> bool {
+    #[cfg(unix)]
+    return error.raw_os_error() == Some(fast_io::errno::ELOOP);
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
+    }
 }
 
 /// Creates the destination root, refusing a foreign-owned symlink among its
-/// leading directories before anything is created.
+/// leading directories, or one that leaves a daemon module, before anything is
+/// created.
 ///
 /// Deliberate deviation: upstream's `do_mkdir()` (main.c:817) follows such a
 /// symlink, creates the directory wherever it points, and only the
 /// `change_dir#2` that follows (main.c:836-840) refuses it. Here the parent is
-/// reached through the ownership walk first, so nothing is left behind; the
-/// refusal keeps upstream's `change_dir#2` line and exit code.
+/// reached through the ownership or the confined walk first, so nothing is
+/// left behind; the refusal keeps upstream's `change_dir#2` line and exit
+/// code.
 fn create_root(path: &Path, entry: Entry) -> io::Result<()> {
     const ACCESSPERMS: u32 = 0o777;
     #[cfg(unix)]
-    if entry == Entry::Walked {
-        return fast_io::operator_mkdir(path, ACCESSPERMS);
+    match entry {
+        Entry::Walked => return fast_io::operator_mkdir(path, ACCESSPERMS),
+        Entry::Confined => return fast_io::create_dir_beneath_cwd(path, ACCESSPERMS),
+        Entry::Searched => {}
     }
     #[cfg(not(unix))]
     let _ = (entry, ACCESSPERMS);
@@ -617,11 +650,11 @@ fn make_path(path: &Path, drop_name: bool, dry_run: bool, entry: Entry) -> io::R
         path
     };
     #[cfg(unix)]
-    if entry == Entry::Walked && !dry_run {
+    if entry != Entry::Searched && !dry_run {
         const ACCESSPERMS: u32 = 0o777;
         let missing = count_missing(target)?;
         if missing > 0 {
-            if target.is_absolute() {
+            if entry == Entry::Walked && target.is_absolute() {
                 fast_io::operator_make_path(target, ACCESSPERMS)?;
             } else {
                 fast_io::make_path_beneath_cwd(target, ACCESSPERMS)?;
