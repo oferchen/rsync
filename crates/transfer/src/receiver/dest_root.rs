@@ -617,7 +617,7 @@ fn make_path(path: &Path, drop_name: bool, dry_run: bool, entry: Entry) -> io::R
         let missing = count_missing(target)?;
         if missing > 0 {
             if target.is_absolute() {
-                fast_io::operator_create_dir_all(target, ACCESSPERMS)?;
+                fast_io::operator_make_path(target, ACCESSPERMS)?;
             } else {
                 fast_io::make_path_beneath_cwd(target, ACCESSPERMS)?;
             }
@@ -626,35 +626,57 @@ fn make_path(path: &Path, drop_name: bool, dry_run: bool, entry: Entry) -> io::R
     }
     #[cfg(not(unix))]
     let _ = entry;
-    count_or_make(target, dry_run)
+    count_or_make(target, if dry_run { Pass::DryRun } else { Pass::Make })
 }
 
 /// How many directories of `target` are missing, without making any.
 #[cfg(unix)]
 fn count_missing(target: &Path) -> io::Result<usize> {
-    count_or_make(target, true)
+    count_or_make(target, Pass::Count)
+}
+
+/// What [`count_or_make`] does with each missing directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// upstream's `dry_run` arm (util1.c:233-239): stat only.
+    DryRun,
+    /// Count for a real run whose directories another walk then makes.
+    #[cfg(unix)]
+    Count,
+    /// Make each one with `mkdir`.
+    Make,
 }
 
 /// make_path()'s own loop: find the deepest existing directory of `target`,
-/// then make each one below it, or only count them under `dry_run`.
-fn count_or_make(target: &Path, dry_run: bool) -> io::Result<usize> {
+/// then make each one below it, or only count them.
+fn count_or_make(target: &Path, pass: Pass) -> io::Result<usize> {
     let mut missing = Vec::new();
     let mut made = 0;
     let mut dir = target;
     loop {
-        let attempt = if dry_run {
-            match dir.metadata() {
+        let attempt = match pass {
+            Pass::Make => std::fs::create_dir(dir),
+            _ => match dir.metadata() {
                 Ok(meta) if meta.is_dir() => break,
-                // The real ENOTDIR, from asking the file for a directory entry.
-                Ok(_) => Err(dir
+                // upstream: util1.c:234-239 - a dry run sets ENOTDIR for any
+                // non-directory; this is the real ENOTDIR, from asking the
+                // file for a directory entry.
+                Ok(_) if pass == Pass::DryRun => Err(dir
                     .join(".")
                     .metadata()
                     .err()
                     .unwrap_or_else(|| io::Error::from(io::ErrorKind::NotADirectory))),
+                // upstream: util1.c:241-246 - a real run's mkdir of an existing
+                // non-directory fails with EEXIST. Only the deepest directory
+                // can be one here: below a non-directory the stat already
+                // failed with ENOTDIR. The walk that makes the chain issues
+                // that mkdir and reports the kernel's errno.
+                Ok(_) => {
+                    missing.push(dir);
+                    break;
+                }
                 Err(err) => Err(err),
-            }
-        } else {
-            std::fs::create_dir(dir)
+            },
         };
         match attempt {
             Ok(()) => {
@@ -679,10 +701,62 @@ fn count_or_make(target: &Path, dry_run: bool) -> io::Result<usize> {
         }
     }
     for dir in missing.into_iter().rev() {
-        if !dry_run {
+        if pass == Pass::Make {
             std::fs::create_dir(dir)?;
         }
         made += 1;
     }
     Ok(made)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{Entry, make_path};
+    use std::fs;
+    use std::path::Path;
+
+    /// The error a plain mkdir of `deepest` gives: the errno 3.5.2's
+    /// make_path() reports, since it tries the deepest directory first
+    /// (util1.c:231-247).
+    fn mkdir_errno(deepest: &Path) -> Option<i32> {
+        fs::create_dir(deepest)
+            .expect_err("mkdir must fail")
+            .raw_os_error()
+    }
+
+    /// `dst/dstfile` is a regular file. Each case names the destination, whether
+    /// make_path() drops its last name, and the deepest directory it tries.
+    #[test]
+    fn a_regular_file_in_the_chain_reports_the_deepest_mkdirs_errno() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dst = tmp.path().join("dst");
+        fs::create_dir(&dst).expect("mkdir dst");
+        fs::write(dst.join("dstfile"), b"b\n").expect("write dstfile");
+        // (destination, drop_name, deepest directory make_path() tries first)
+        let cases = [
+            ("dstfile/x", true, "dstfile"),
+            ("dstfile/x/y", true, "dstfile/x"),
+            ("dstfile/x", false, "dstfile/x"),
+        ];
+        for (dest, drop_name, deepest) in cases {
+            let want = mkdir_errno(&dst.join(deepest));
+            let error = make_path(&dst.join(dest), drop_name, false, Entry::Walked)
+                .expect_err("a regular file blocks the chain");
+            assert_eq!(
+                error.raw_os_error(),
+                want,
+                "{dest} (drop_name={drop_name}): {error}"
+            );
+            assert!(
+                dst.join("dstfile").is_file(),
+                "{dest}: nothing replaced the file"
+            );
+        }
+        // The two shapes the interop matrix separates: EEXIST where the file is
+        // the deepest directory itself, ENOTDIR where it sits above it.
+        assert_ne!(
+            mkdir_errno(&dst.join("dstfile")),
+            mkdir_errno(&dst.join("dstfile/x"))
+        );
+    }
 }

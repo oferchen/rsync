@@ -406,22 +406,30 @@ pub fn mkdirat_via_sandbox_or_fallback(
 /// # Errors
 ///
 /// `EINVAL` for an absolute `path`, the walk's `ELOOP` for an escaping
-/// component, or the first `mkdirat` error other than `EEXIST`.
+/// component, or the first `mkdirat` error other than `EEXIST` on an existing
+/// directory (util1.c:244-246).
 pub fn make_path_beneath_cwd(path: &Path, mode: u32) -> io::Result<()> {
     if path.is_absolute() {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     }
     let mut parent = std::path::PathBuf::new();
     for name in path.iter() {
-        let created = if parent.as_os_str().is_empty() {
-            mkdirat(rustix::fs::CWD, name, mode)
+        let dirfd = if parent.as_os_str().is_empty() {
+            None
         } else {
-            let dirfd = crate::dir_sandbox::walk_beneath(rustix::fs::CWD, &parent)?;
-            mkdirat(dirfd.as_fd(), name, mode)
+            Some(crate::dir_sandbox::walk_beneath(rustix::fs::CWD, &parent)?)
         };
-        match created {
-            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
-            _ => {}
+        let at = dirfd.as_ref().map_or(rustix::fs::CWD, AsFd::as_fd);
+        match mkdirat(at, name, mode) {
+            Ok(()) => {}
+            // upstream: util1.c:244-246 - EEXIST is success only when the
+            // existing entry is a directory; a file keeps the EEXIST.
+            Err(e)
+                if e.kind() == io::ErrorKind::AlreadyExists
+                    && rustix::fs::statat(at, name, rustix::fs::AtFlags::empty()).is_ok_and(
+                        |st| rustix::fs::FileType::from_raw_mode(st.st_mode).is_dir(),
+                    ) => {}
+            Err(e) => return Err(e),
         }
         parent.push(name);
     }
