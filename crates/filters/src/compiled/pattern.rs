@@ -39,7 +39,13 @@ impl CompiledPattern {
     /// matching is identical across platforms (rsync transfer paths are always
     /// `/`-separated and relative).
     pub(super) fn is_match(&self, path: &Path) -> bool {
-        let body = path_match_bytes(path);
+        self.is_match_bytes(&path_match_bytes(path))
+    }
+
+    /// Tests whether the already-rendered candidate `body` matches this
+    /// pattern. Callers that hold a name as bytes (a received file-list name)
+    /// use this directly so no platform path rendering touches it.
+    pub(super) fn is_match_bytes(&self, body: &[u8]) -> bool {
         // upstream: exclude.c:1028-1031 rule_matches() - a WILD2_PREFIX rule
         // matches the candidate with a leading "/" prepended, so `**/bar`
         // matches a top-level `bar` (via `/bar`) as well as `a/b/bar`. Our
@@ -48,10 +54,10 @@ impl CompiledPattern {
         if self.wild2_prefix {
             let mut candidate = Vec::with_capacity(body.len() + 1);
             candidate.push(b'/');
-            candidate.extend_from_slice(&body);
+            candidate.extend_from_slice(body);
             wildmatch(&self.bytes, &candidate)
         } else {
-            wildmatch(&self.bytes, &body)
+            wildmatch(&self.bytes, body)
         }
     }
 }
@@ -70,19 +76,23 @@ impl CompiledPattern {
 /// implied-include check into a false-accept. On Windows (no upstream daemon;
 /// paths are WTF-16) the name is rendered as UTF-8 with backslashes folded to
 /// `/` so matching is consistent across platforms.
-fn path_match_bytes(path: &Path) -> Vec<u8> {
+///
+/// The result borrows the path on Unix, and on Windows unless the name is not
+/// valid UTF-8 or holds a `\`, so the per-entry match allocates nothing in
+/// the common case.
+pub(crate) fn path_match_bytes(path: &Path) -> Cow<'_, [u8]> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        path.as_os_str().as_bytes().to_vec()
+        Cow::Borrowed(path.as_os_str().as_bytes())
     }
     #[cfg(not(unix))]
     {
-        let rendered = path.to_string_lossy();
-        if rendered.contains('\\') {
-            rendered.replace('\\', "/").into_bytes()
-        } else {
-            rendered.into_owned().into_bytes()
+        match path.to_string_lossy() {
+            Cow::Borrowed(rendered) if !rendered.contains('\\') => {
+                Cow::Borrowed(rendered.as_bytes())
+            }
+            rendered => Cow::Owned(rendered.replace('\\', "/").into_bytes()),
         }
     }
 }

@@ -55,6 +55,7 @@ impl FileEntry {
     pub fn prepend_dir(&mut self, parent: &Path) {
         self.name = parent.join(&self.name);
         self.dirname = extract_dirname(&self.name);
+        self.forget_wire_name();
     }
 
     /// Replaces the relative path name of the entry.
@@ -75,6 +76,17 @@ impl FileEntry {
     pub fn set_name(&mut self, name: PathBuf) {
         self.name = name;
         self.dirname = extract_dirname(&self.name);
+        self.forget_wire_name();
+    }
+
+    /// Drops the received-bytes copy once the name no longer is the one read
+    /// from the wire. Only non-Unix targets keep one.
+    #[inline]
+    fn forget_wire_name(&mut self) {
+        #[cfg(not(unix))]
+        if let Some(extras) = self.extras.as_mut() {
+            extras.wire_name = None;
+        }
     }
 
     /// Replaces the dirname with an interned `Arc<Path>`.
@@ -129,6 +141,17 @@ impl FileEntry {
                 };
                 self.dirname = extract_dirname(&self.name);
             }
+            // The received bytes take the Unix arm's trim: wire names use `/`.
+            if let Some(extras) = self.extras.as_mut()
+                && let Some(raw) = extras.wire_name.as_mut()
+            {
+                let start = raw.iter().position(|&b| b != b'/').unwrap_or(raw.len());
+                if start == raw.len() {
+                    extras.wire_name = None;
+                } else if start > 0 {
+                    *raw = raw[start..].into();
+                }
+            }
         }
     }
 
@@ -152,6 +175,38 @@ impl FileEntry {
     #[must_use]
     pub fn name_bytes(&self) -> Cow<'_, [u8]> {
         path_bytes_to_wire(&self.name)
+    }
+
+    /// Returns the name exactly as it was read from the wire: the bytes the
+    /// receiver's server-filter and implied-include checks test.
+    ///
+    /// Never folded or converted, on every platform, and always borrowed. On
+    /// Unix these are the name's own bytes. On other targets a valid-UTF-8
+    /// name's encoded bytes are the received bytes; a name that is not valid
+    /// UTF-8 is stored lossily, so the received bytes are kept beside it and
+    /// returned here. A name rewritten after it was read (`set_name`,
+    /// `prepend_dir`) returns its new bytes. Unlike [`Self::name_bytes`],
+    /// no `\` is translated to `/`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1368-1374` `recv_file_entry()` - `check_server_filter()` and
+    ///   the implied-include `check_filter()` both run on the raw `thisname`.
+    #[inline]
+    #[must_use]
+    pub fn wire_name(&self) -> &[u8] {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            self.name.as_os_str().as_bytes()
+        }
+        #[cfg(not(unix))]
+        {
+            self.extras
+                .as_ref()
+                .and_then(|extras| extras.wire_name.as_deref())
+                .unwrap_or_else(|| self.name.as_os_str().as_encoded_bytes())
+        }
     }
 
     /// Returns the file size in bytes.

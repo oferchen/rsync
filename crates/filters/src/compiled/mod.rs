@@ -19,6 +19,7 @@ use crate::{FilterAction, FilterError, FilterRule};
 
 pub(crate) use clear::apply_clear_rule;
 pub use matcher::{RuleMatcher, XattrMatcher};
+pub(crate) use pattern::path_match_bytes;
 use pattern::{compile_patterns, has_wild3_suffix, normalise_pattern};
 pub(crate) use rule::CompiledRule;
 pub(crate) use xattr::CompiledXattrRule;

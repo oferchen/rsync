@@ -1,5 +1,6 @@
 //! A pull whose `--files-from` list names a directory ending in a backslash
-//! accepts the names below it.
+//! accepts the names below it, and a list entry spelled with `*` bytes builds
+//! the receiver's rules rsync 3.5.2 builds.
 //!
 //! upstream: exclude.c:476-670 `add_implied_include()`. For `-r` it adds the
 //! entry's `/**` rule; a non-wild entry's backslashes are doubled first
@@ -8,6 +9,11 @@
 //! CVE-2026-70461 mis-counted (NEWS.md, 3.5.2): left single, the rule would be
 //! `/a\/**`, which wildmatch reads as `/a/**`, so the receiver would refuse
 //! `a\/x` as an unrequested file-list name (flist.c:1368).
+//!
+//! The sender reads a `--files-from` entry literally, but the receiver's rule
+//! for it turns wild on a `*` (exclude.c:509-516). `a/***` then carries
+//! FILTRULE_WILD3_SUFFIX rather than FILTRULE_DIRECTORY (exclude.c:287-290,
+//! :340-345), which oc confused before, aborting the client.
 //!
 //! Every cell asserts the exit code and tree measured with rsync 3.5.2. When
 //! the 3.5.2 oracle resolves (`OC_RSYNC_UPSTREAM_BIN_3_5_2`), it runs the same
@@ -39,12 +45,20 @@ struct Fixture {
 impl Fixture {
     /// `src/a\/x`, a list naming `a\`, and a remote shell that drops the host.
     fn new() -> Self {
+        Self::with(&[format!("{DIR}/x").as_str()], DIR)
+    }
+
+    /// `files` below `src/`, a list holding only `entry`, and the remote shell.
+    fn with(files: &[&str], entry: &str) -> Self {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().canonicalize().expect("canonical tempdir");
         let src = root.join("src");
-        fs::create_dir_all(src.join(DIR)).expect("mkdir src/a\\");
-        fs::write(src.join(DIR).join("x"), "x\n").expect("write x");
-        fs::write(root.join("list"), format!("{DIR}\n")).expect("write list");
+        for file in files {
+            let path = src.join(file);
+            fs::create_dir_all(path.parent().expect("below src")).expect("mkdir source parent");
+            fs::write(&path, format!("{file}\n")).expect("write source file");
+        }
+        fs::write(root.join("list"), format!("{entry}\n")).expect("write list");
         let rsh = root.join("lsh");
         fs::write(&rsh, "#!/bin/sh\nshift\nexec \"$@\"\n").expect("write rsh");
         fs::set_permissions(&rsh, fs::Permissions::from_mode(0o755)).expect("chmod rsh");
@@ -136,6 +150,35 @@ fn a_pull_over_a_remote_shell_accepts_names_below_a_trailing_backslash_entry() {
         let (source, extra) = fx.rsh_args(upstream.binary());
         let reference = fx.pull(upstream.binary(), &source, &extra);
         assert_eq!(reference, (code, tree), "oc differs from rsync 3.5.2");
+    }
+}
+
+/// Each star-suffixed entry, pulled over a remote shell, against the tree and
+/// exit code rsync 3.5.2 gives. The source holds all three names and an
+/// unrequested `a/x`.
+#[test]
+fn a_pull_over_a_remote_shell_accepts_star_suffixed_entries() {
+    const FILES: &[&str] = &["a/***", "a/**", "a**", "a/x"];
+    for (entry, want) in [
+        ("a/***", &["a", "a/***"][..]),
+        ("a/**", &["a", "a/**"]),
+        ("a**", &["a**"]),
+    ] {
+        let fx = Fixture::with(FILES, entry);
+        let oc = oc_rsync_bin();
+        let (source, extra) = fx.rsh_args(&oc);
+        let (code, tree) = fx.pull(&oc, &source, &extra);
+        let want: Vec<String> = want.iter().map(|name| (*name).to_owned()).collect();
+        assert_eq!((code, &tree), (Some(0), &want), "oc, entry {entry}");
+        if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
+            let (source, extra) = fx.rsh_args(upstream.binary());
+            let reference = fx.pull(upstream.binary(), &source, &extra);
+            assert_eq!(
+                reference,
+                (code, tree),
+                "oc differs from rsync 3.5.2, entry {entry}"
+            );
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use logging::debug_log;
 
 use crate::{
     FilterAction,
-    compiled::{CompiledRule, CompiledXattrRule, XattrSide},
+    compiled::{CompiledRule, CompiledXattrRule, XattrSide, path_match_bytes},
 };
 
 /// Internal rule storage shared by [`FilterSet`](crate::FilterSet) instances.
@@ -50,6 +50,21 @@ impl FilterSetInner {
 }
 
 impl FilterSetInner {
+    /// The transfer verdict of a sender-walk query
+    /// ([`Self::decision_with_traversal`] with `traversal`) for a candidate
+    /// held as name bytes - a received file-list name, matched exactly as given.
+    pub(crate) fn transfer_allowed_name(&self, name: &[u8], is_dir: bool) -> bool {
+        first_name_match(
+            &self.include_exclude,
+            name,
+            is_dir,
+            |rule| rule.applies_to_sender,
+            true,
+            false,
+        )
+        .is_none_or(|rule| report_transfer_match(rule, &String::from_utf8_lossy(name)))
+    }
+
     /// Evaluates a path against both the include/exclude and protect/risk
     /// chains, returning a composite decision.
     ///
@@ -178,36 +193,7 @@ impl FilterSetInner {
         };
 
         if let Some(rule) = transfer_rule {
-            let allowed = matches!(rule.action, FilterAction::Include);
-            decision.transfer_allowed = allowed;
-
-            // upstream: exclude.c:1099 report_filter_result() names the matched
-            // pattern in the `--debug=FILTER` line, but routes it through
-            // `rule_text()` first - the same redaction `add_rule` applies. This
-            // one fires at MATCH time, so the provenance has to come off the
-            // rule; the parse that supplied it is long finished. Without the
-            // redaction a peer-chosen per-directory merge file's contents are
-            // echoed at plain `-vv`, because upstream sets this trace's level
-            // to 1 for a sender or generator (`exclude.c:1087`).
-            let pattern_text = String::from_utf8_lossy(&rule.pattern);
-            let shown = rule.source.as_source().rule_text(&pattern_text);
-            if allowed {
-                debug_log!(
-                    Filter,
-                    1,
-                    "including {:?} because of pattern {}",
-                    path,
-                    shown
-                );
-            } else {
-                debug_log!(
-                    Filter,
-                    1,
-                    "excluding {:?} because of pattern {}",
-                    path,
-                    shown
-                );
-            }
+            decision.transfer_allowed = report_transfer_match(rule, &path);
         }
 
         let protection_rule = match context {
@@ -440,15 +426,75 @@ fn first_matching_rule<'a, F>(
 where
     F: FnMut(&CompiledRule) -> bool,
 {
+    if !for_deletion {
+        return first_name_match(
+            rules,
+            &path_match_bytes(path),
+            is_dir,
+            applies,
+            include_perishable,
+            check_descendants,
+        );
+    }
     rules.iter().find(|rule| {
         (include_perishable || !rule.perishable)
             && applies(rule)
-            && if for_deletion {
-                rule.matches_for_deletion(path, is_dir, check_descendants)
-            } else {
-                rule.matches(path, is_dir, check_descendants)
-            }
+            && rule.matches_for_deletion(path, is_dir, check_descendants)
     })
+}
+
+/// [`first_matching_rule`] for a non-deletion query on a candidate already
+/// rendered as name bytes (see [`CompiledRule::matches_bytes`]).
+fn first_name_match<'a, F>(
+    rules: &'a [CompiledRule],
+    name: &[u8],
+    is_dir: bool,
+    mut applies: F,
+    include_perishable: bool,
+    check_descendants: bool,
+) -> Option<&'a CompiledRule>
+where
+    F: FnMut(&CompiledRule) -> bool,
+{
+    rules.iter().find(|rule| {
+        (include_perishable || !rule.perishable)
+            && applies(rule)
+            && rule.matches_bytes(name, is_dir, check_descendants, None)
+    })
+}
+
+/// Logs the include/exclude rule that decided a transfer query and returns
+/// whether it allows the candidate.
+///
+/// upstream: exclude.c:1099 report_filter_result() names the matched pattern
+/// in the `--debug=FILTER` line, but routes it through `rule_text()` first -
+/// the same redaction `add_rule` applies. This one fires at MATCH time, so the
+/// provenance has to come off the rule; the parse that supplied it is long
+/// finished. Without the redaction a peer-chosen per-directory merge file's
+/// contents are echoed at plain `-vv`, because upstream sets this trace's level
+/// to 1 for a sender or generator (`exclude.c:1087`).
+fn report_transfer_match(rule: &CompiledRule, subject: &dyn std::fmt::Debug) -> bool {
+    let allowed = matches!(rule.action, FilterAction::Include);
+    let pattern_text = String::from_utf8_lossy(&rule.pattern);
+    let shown = rule.source.as_source().rule_text(&pattern_text);
+    if allowed {
+        debug_log!(
+            Filter,
+            1,
+            "including {:?} because of pattern {}",
+            subject,
+            shown
+        );
+    } else {
+        debug_log!(
+            Filter,
+            1,
+            "excluding {:?} because of pattern {}",
+            subject,
+            shown
+        );
+    }
+    allowed
 }
 
 /// Merges the include/exclude and protect/risk first-matches into the single

@@ -11,7 +11,9 @@
 //! upstream: `exclude.c:409-447` `maybe_add_literal_brackets_rule()`,
 //! `exclude.c:476-667` `add_implied_include()`, `exclude.c:1002-1069`
 //! `rule_matches()` (anchored rules: `wildmatch` when `FILTRULE_WILD`,
-//! `strcmp` otherwise; `FILTRULE_DIRECTORY` matches directories only).
+//! `strcmp` otherwise; `FILTRULE_DIRECTORY` matches directories only; a
+//! directory gains a trailing `/` under `FILTRULE_WILD3_SUFFIX`),
+//! `exclude.c:1144-1182` `is_implied_parent_dir()`.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -224,23 +226,60 @@ fn model_add(list: &mut Vec<ModelRule>, arg: &[u8], opts: ImpliedIncludeOptions)
     }
 }
 
-/// upstream: `exclude.c:1002-1069` `rule_matches()` for an anchored include
+/// upstream: `exclude.c:1002-1069` `rule_matches()` for one anchored include
 /// against a received (relative, non-empty) file-list name.
-fn model_covers(list: &[ModelRule], name: &[u8], is_dir: bool) -> bool {
-    !name.is_empty()
-        && list.iter().any(|rule| {
-            let body = &rule.pattern[1..];
-            (is_dir || !rule.directory)
-                && if rule.wild {
-                    wildmatch(body, name)
-                } else {
-                    body == name
-                }
-        })
+fn model_rule_matches(rule: &ModelRule, name: &[u8], is_dir: bool) -> bool {
+    if !is_dir && rule.directory {
+        return false;
+    }
+    let body = &rule.pattern[1..];
+    if !rule.wild {
+        return body == name;
+    }
+    // upstream: exclude.c:340-345 sets FILTRULE_WILD3_SUFFIX on a wild pattern
+    // ending in `***`, and exclude.c:1034-1036 then appends `/` to a directory
+    // name so `a/***` matches the directory `a` itself.
+    if is_dir && rule.pattern.ends_with(b"***") {
+        return wildmatch(body, &[name, b"/"].concat());
+    }
+    wildmatch(body, name)
 }
 
+fn model_covers(list: &[ModelRule], name: &[u8], is_dir: bool) -> bool {
+    !name.is_empty()
+        && list
+            .iter()
+            .any(|rule| model_rule_matches(rule, name, is_dir))
+}
+
+/// upstream: `exclude.c:1144-1182` `is_implied_parent_dir()` for a received
+/// directory name other than the transfer root: the first matching rule
+/// without `FILTRULE_DIRECTORY` makes the directory requested content.
+fn model_is_parent_only(list: &[ModelRule], name: &[u8]) -> bool {
+    let mut parent_match = false;
+    for rule in list {
+        if !model_rule_matches(rule, name, true) {
+            continue;
+        }
+        if !rule.directory {
+            return false;
+        }
+        parent_match = true;
+    }
+    parent_match
+}
+
+/// The receiver checks wire names through the byte API (flist.c:1368 sees
+/// `thisname` itself), so parity is held on that API.
 fn oc_covers(implied: &ImpliedIncludes, name: &[u8], is_dir: bool) -> bool {
-    implied.covers(Path::new(OsStr::from_bytes(name)), is_dir)
+    let by_name = implied.covers_name(name, is_dir);
+    assert_eq!(
+        by_name,
+        implied.covers(Path::new(OsStr::from_bytes(name)), is_dir),
+        "covers_name and covers disagree on {:?}",
+        String::from_utf8_lossy(name),
+    );
+    by_name
 }
 
 fn all_option_sets() -> impl Iterator<Item = ImpliedIncludeOptions> {
@@ -419,6 +458,16 @@ fn assert_parity_with_probes(args: &[&[u8]], extra: &[Vec<u8>]) {
                 .collect::<Vec<_>>(),
         );
         for name in &names {
+            assert_eq!(
+                implied.is_parent_only_name(name),
+                model_is_parent_only(&model, name),
+                "parent-only verdict differs for directory {:?} from args {:?} under \
+                 {opts:?}; upstream rules {model:?}",
+                String::from_utf8_lossy(name),
+                args.iter()
+                    .map(|a| String::from_utf8_lossy(a))
+                    .collect::<Vec<_>>(),
+            );
             for is_dir in [false, true] {
                 assert_eq!(
                     oc_covers(&implied, name, is_dir),
@@ -460,6 +509,23 @@ fn backslash_escaping_matches_upstream() {
         b"a\\/c*",
         b"x\\]/y*",
         b"d/a\\b\\",
+    ] {
+        assert_parity(&[arg]);
+    }
+}
+
+/// A trailing `***` is FILTRULE_WILD3_SUFFIX, not FILTRULE_DIRECTORY
+/// (exclude.c:287-290, :340-345): `a/***` names the directory `a` as content.
+/// `a/**` and `a**` are the neighbours without the suffix.
+#[test]
+fn wildcard_star_suffixes_match_upstream() {
+    for arg in [
+        &b"a/***"[..],
+        b"a/**",
+        b"a**",
+        b"a/b/***",
+        b"***",
+        b"a/***/",
     ] {
         assert_parity(&[arg]);
     }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use logging::debug_log;
 
-use super::pattern::CompiledPattern;
+use super::pattern::{CompiledPattern, path_match_bytes};
 use crate::FilterAction;
 use crate::rule_source::OwnedRuleSource;
 
@@ -134,12 +134,47 @@ impl CompiledRule {
         check_descendants: bool,
         root: Option<&Path>,
     ) -> bool {
+        self.matches_bytes(&path_match_bytes(path), is_dir, check_descendants, root)
+    }
+
+    /// The match core: `name` is the candidate as upstream's `rule_matches()`
+    /// sees it, a `/`-separated byte string. A received file-list name is
+    /// passed as its own bytes, so no platform rendering folds a `\` in it:
+    /// upstream runs `check_filter()` on the received `thisname` itself
+    /// (flist.c:1368-1374), on every platform.
+    pub(crate) fn matches_bytes(
+        &self,
+        name: &[u8],
+        is_dir: bool,
+        check_descendants: bool,
+        root: Option<&Path>,
+    ) -> bool {
         self.negated_directory_rule_hits_non_dir(is_dir)
             || self.matches_ignoring_directory_flag(
-                &self.subject(path, root),
+                &self.subject_bytes(name, root),
                 is_dir,
                 check_descendants,
             )
+    }
+
+    /// [`Self::subject`] for a byte candidate: an absolute-path rule matches the
+    /// directory joined to a relative name (exclude.c:1022-1027). Allocates only
+    /// for such a rule.
+    fn subject_bytes<'a>(&self, name: &'a [u8], root: Option<&Path>) -> Cow<'a, [u8]> {
+        if !self.abs_path || name.first() == Some(&b'/') {
+            return Cow::Borrowed(name);
+        }
+        match root.or(self.abs_root.as_deref()) {
+            Some(root) => {
+                let mut joined = path_match_bytes(root).into_owned();
+                if joined.last() != Some(&b'/') {
+                    joined.push(b'/');
+                }
+                joined.extend_from_slice(name);
+                Cow::Owned(joined)
+            }
+            None => Cow::Borrowed(name),
+        }
     }
 
     /// Returns `true` when this is a `!`-negated rule written with a trailing
@@ -158,11 +193,11 @@ impl CompiledRule {
     /// short-circuit.
     fn matches_ignoring_directory_flag(
         &self,
-        path: &Path,
+        body: &[u8],
         is_dir: bool,
         check_descendants: bool,
     ) -> bool {
-        let pattern_matched = self.pattern_matches_impl(path, is_dir, check_descendants);
+        let pattern_matched = self.pattern_matches_impl(body, is_dir, check_descendants);
 
         // upstream: exclude.c:1005 - ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1
         if self.negate {
@@ -196,7 +231,7 @@ impl CompiledRule {
         let keeps_directory_flag = matches!(self.action, FilterAction::Include);
         (keeps_directory_flag && self.negated_directory_rule_hits_non_dir(is_dir))
             || self.matches_ignoring_directory_flag(
-                &self.subject(path, None),
+                &path_match_bytes(&self.subject(path, None)),
                 is_dir,
                 self.directory_only,
             )
@@ -237,8 +272,9 @@ impl CompiledRule {
             return true;
         }
         let path = self.subject(path, root);
-        let pattern_matched = self.pattern_matches_impl(&path, is_dir, check_descendants)
-            || self.deletion_descendant_matches(&path);
+        let pattern_matched =
+            self.pattern_matches_impl(&path_match_bytes(&path), is_dir, check_descendants)
+                || self.deletion_descendant_matches(&path);
 
         if self.negate {
             !pattern_matched
@@ -255,7 +291,7 @@ impl CompiledRule {
     }
 
     /// Internal pattern matching without negate logic.
-    fn pattern_matches_impl(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
+    fn pattern_matches_impl(&self, body: &[u8], is_dir: bool, check_descendants: bool) -> bool {
         // upstream: exclude.c:1005/1062 - a `!`-negated rule inverts ONE
         // wildmatch of the whole pattern. For a `/***` (WILD3) rule that
         // wildmatch spans the directory stem AND every descendant, so the
@@ -273,8 +309,13 @@ impl CompiledRule {
         let wild3_reach = self.wild3_suffix && (is_dir || !self.trailing_slash);
         let check_descendants = check_descendants || wild3_reach;
         for matcher in &self.direct_matchers {
-            if matcher.is_match(path) && (!self.directory_only || is_dir) {
-                debug_log!(Filter, 2, "direct pattern matched: {:?}", path);
+            if matcher.is_match_bytes(body) && (!self.directory_only || is_dir) {
+                debug_log!(
+                    Filter,
+                    2,
+                    "direct pattern matched: {:?}",
+                    String::from_utf8_lossy(body)
+                );
                 return true;
             }
         }
@@ -286,14 +327,24 @@ impl CompiledRule {
         // evaluates paths individually without traversal.
         if check_descendants && !self.descendant_matchers.is_empty() {
             for matcher in &self.descendant_matchers {
-                if matcher.is_match(path) {
-                    debug_log!(Filter, 2, "descendant pattern matched: {:?}", path);
+                if matcher.is_match_bytes(body) {
+                    debug_log!(
+                        Filter,
+                        2,
+                        "descendant pattern matched: {:?}",
+                        String::from_utf8_lossy(body)
+                    );
                     return true;
                 }
             }
         }
 
-        debug_log!(Filter, 3, "no pattern match for: {:?}", path);
+        debug_log!(
+            Filter,
+            3,
+            "no pattern match for: {:?}",
+            String::from_utf8_lossy(body)
+        );
         false
     }
 
@@ -301,6 +352,14 @@ impl CompiledRule {
     /// (one with a trailing `/`).
     pub(crate) const fn is_directory_only(&self) -> bool {
         self.directory_only
+    }
+
+    /// Returns `true` if the source pattern was written with a trailing `/`
+    /// (upstream `FILTRULE_DIRECTORY`, exclude.c:287-290). Unlike
+    /// [`Self::is_directory_only`], a stripped `/***` suffix
+    /// (`FILTRULE_WILD3_SUFFIX`, exclude.c:340-345) does not set it.
+    pub(crate) const fn has_trailing_slash(&self) -> bool {
+        self.trailing_slash
     }
 
     /// Clears applicability flags for this rule based on context.
