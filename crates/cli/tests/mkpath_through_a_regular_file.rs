@@ -103,14 +103,21 @@ const CELLS: [Cell; 6] = [
     },
 ];
 
+/// A fixture whose root is reached through a symlink (`<tmp>/link` ->
+/// `<tmp>/real`), so the spelled root and the canonical cwd differ on every
+/// platform, as `/var` -> `/private/var` makes them differ on macOS.
 struct Fixture {
-    dir: TempDir,
+    _dir: TempDir,
+    root: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
         let dir = TempDir::new().expect("tempdir");
-        let base = dir.path();
+        fs::create_dir(dir.path().join("real")).expect("mkdir real");
+        let root = dir.path().join("link");
+        symlink(dir.path().join("real"), &root).expect("symlink the fixture root");
+        let base = root.as_path();
         fs::create_dir_all(base.join("src/sub")).expect("mkdir src");
         fs::write(base.join("src/f"), b"a\n").expect("write src/f");
         fs::write(base.join("src/sub/g"), b"b\n").expect("write src/sub/g");
@@ -119,11 +126,11 @@ impl Fixture {
         fs::write(base.join("rsh"), "#!/bin/sh\nshift\nexec \"$@\"\n").expect("write shell");
         fs::set_permissions(base.join("rsh"), fs::Permissions::from_mode(0o755))
             .expect("chmod shell");
-        Self { dir }
+        Self { _dir: dir, root }
     }
 
     fn base(&self) -> &Path {
-        self.dir.path()
+        &self.root
     }
 
     /// `mkdir "<the destination as the receiver names it>" failed: <strerror> (<n>)`.
@@ -258,6 +265,34 @@ fn check(leg: Leg) {
             }
         }
     }
+}
+
+/// The expected line follows full_fname(): a relative destination is named
+/// from the canonical cwd, an absolute one exactly as spelled.
+#[test]
+fn expected_line_names_a_relative_destination_from_the_canonical_root() {
+    let fixture = Fixture::new();
+    let spelled = fixture.base().display().to_string();
+    let canonical = fs::canonicalize(fixture.base())
+        .expect("canonical fixture root")
+        .display()
+        .to_string();
+    assert_ne!(
+        spelled, canonical,
+        "the fixture root must be reached through a symlink"
+    );
+
+    let relative = fixture.expected_line("dst/dstfile/x", Errno::Exists, Spelling::Relative);
+    assert!(
+        relative.starts_with(&format!("mkdir \"{canonical}/dst/dstfile/x\" failed: ")),
+        "{relative}"
+    );
+
+    let absolute = fixture.expected_line("dst/dstfile/x", Errno::Exists, Spelling::Absolute);
+    assert!(
+        absolute.starts_with(&format!("mkdir \"{spelled}/dst/dstfile/x\" failed: ")),
+        "{absolute}"
+    );
 }
 
 #[test]
