@@ -448,13 +448,15 @@ jobs:
         targets: x86_64-unknown-linux-musl
     - name: Install musl toolchain
       run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
+    - name: Install musl libacl (release image packages)
+      run: sudo bash tools/ci/install_musl_libacl.sh docker/Dockerfile.x86_64-musl tools/ci/musl-libacl.sha256 /usr/local/x86_64-linux-musl
     - name: Rust cache
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         shared-key: ci-musl-x86_64-stable-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
         key: linux-musl-quic
     - name: Build oc-rsync (musl, --features quic)
-      run: cargo build --locked --bin oc-rsync --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range,quic"
+      run: cargo build --locked --bin oc-rsync --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,acl,xattr,iconv,parallel,copy_file_range,quic"
     - name: Check the binary reports quic:// support
       run: target/x86_64-unknown-linux-musl/debug/oc-rsync --help | grep -q 'quic://'
   windows-test:
@@ -788,6 +790,9 @@ jobs:
     - name: Install musl toolchain
       if: needs.changes.outputs.docs_only != 'true'
       run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
+    - name: Install musl libacl (release image packages)
+      if: needs.changes.outputs.docs_only != 'true'
+      run: sudo bash tools/ci/install_musl_libacl.sh docker/Dockerfile.x86_64-musl tools/ci/musl-libacl.sha256 /usr/local/x86_64-linux-musl
     - name: Rust cache
       if: needs.changes.outputs.docs_only != 'true'
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
@@ -800,12 +805,12 @@ jobs:
         tool: cargo-nextest
     - name: Build
       if: needs.changes.outputs.docs_only != 'true'
-      run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+      run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,acl,xattr,iconv,parallel,copy_file_range"
     - name: Test
       if: needs.changes.outputs.docs_only != 'true'
       shell: bash
       run: |
-        cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range" 2>&1 | tee nextest-run.log
+        cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,acl,xattr,iconv,parallel,copy_file_range" 2>&1 | tee nextest-run.log
         bash tools/ci/nextest_flaky_summary.sh nextest-run.log
     - name: Verify static linking
       if: needs.changes.outputs.docs_only != 'true'

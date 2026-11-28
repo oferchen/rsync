@@ -211,11 +211,11 @@ jobs:
           #
           # The feature list is the musl job's (ci.yml), which is the only other
           # place in the repo that builds with defaults off. Bare
-          # `--no-default-features` would also drop zstd/lz4/xattr and test a
-          # different question.
+          # `--no-default-features` would also drop zstd/lz4/acl/xattr and test
+          # a different question. `acl` links libacl, hence libacl1-dev.
           - name: no-incremental-flist
-            args: "--workspace --no-default-features --features zstd,lz4,xattr,iconv,parallel,copy_file_range"
-            apt: ""
+            args: "--workspace --no-default-features --features zstd,lz4,acl,xattr,iconv,parallel,copy_file_range"
+            apt: "libacl1-dev"
             needs_bin: true
           - name: compression
             args: "-p compress -p protocol -p engine -p transfer --features zstd,lz4"
