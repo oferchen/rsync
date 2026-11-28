@@ -41,7 +41,7 @@ The default flips to `async_native` only after RUSSH-14 confirms rollback criter
 | `crates/rsync_io/src/ssh/dispatch/spawn_blocking.rs` | `SpawnBlockingDispatch` - wraps the existing subprocess `Child`-based path into the new trait |
 | `crates/rsync_io/src/ssh/dispatch/async_native.rs` | `AsyncNativeDispatch` - the new `std::thread` + shared-runtime + russh-channel path (cfg-gated on `russh-async-native`) |
 | `crates/rsync_io/src/ssh/dispatch/config.rs` | `DispatchConfig::from_env()` implementation, env-var parsing, feature-gate validation |
-| `crates/rsync_io/src/ssh/dispatch/sync_halves.rs` | Consolidated `SyncReader` / `SyncWriter` pair backed by `tokio::sync::mpsc`, replacing the duplicates in `sync_bridge.rs` and `async_ssh_transport.rs` |
+| `crates/rsync_io/src/ssh/dispatch/sync_halves.rs` | Consolidated `SyncReader` / `SyncWriter` pair backed by `tokio::sync::mpsc`, replacing the duplicates in `async_ssh_transport.rs` and `embedded/connect.rs` |
 | `crates/rsync_io/tests/ssh_dispatch_shim_compat.rs` | Public-surface compile + behaviour tests per RUSSH-10 Section 7 |
 | `crates/rsync_io/tests/ssh_async_native_stress.rs` | Rapid open/close, mid-transfer abort, goodbye-phase ordering tests (feature-gated) |
 
@@ -55,7 +55,6 @@ The default flips to `async_native` only after RUSSH-14 confirms rollback criter
 | `crates/rsync_io/src/ssh/builder.rs` | `SshCommand::spawn()` reads `DispatchConfig::from_env()` and routes to `spawn_via_subprocess` or `spawn_via_russh` |
 | `crates/rsync_io/src/ssh/connect.rs` | `SshConnection::connect_with_config()` follows the same dispatch factory |
 | `crates/rsync_io/src/ssh/embedded/connect.rs` | Extract the `connect_and_exec_async` core into a reusable `open_russh_channel()` that `AsyncNativeDispatch` can call directly, avoiding runtime construction duplication |
-| `crates/rsync_io/src/ssh/embedded/sync_bridge.rs` | Deprecate the standalone `SyncReader`/`SyncWriter` in favor of the consolidated pair under `dispatch/sync_halves.rs`; re-export from `sync_bridge` for backward compat within the crate |
 | `crates/core/src/client/remote/async_ssh_transport.rs` | Remove the private `SyncReader`/`SyncWriter`/`SyncWriter::Drop` duplicates; import from `rsync_io::ssh::dispatch::sync_halves` instead. The `writer_fanin` and `server_handle` `spawn_blocking` calls become the `SpawnBlockingDispatch` implementation, extracted out of inline code |
 
 ## 5. Async Channel Bridge Design
@@ -87,11 +86,10 @@ Both directions use bounded `tokio::sync::mpsc` channels. Default capacity: 32 c
 
 ### 5.3 SyncReader / SyncWriter consolidation
 
-Today there are three independent `SyncReader`/`SyncWriter` implementations:
+Today there are two independent sync reader/writer pairs:
 
-1. `crates/rsync_io/src/ssh/embedded/sync_bridge.rs` (backed by `std::sync::mpsc`)
-2. `crates/core/src/client/remote/async_ssh_transport.rs` (backed by `std::sync::mpsc`)
-3. `crates/rsync_io/src/ssh/embedded/connect.rs` (`ChannelReader`/`ChannelWriter`)
+1. `crates/core/src/client/remote/async_ssh_transport.rs` (`SyncReader`/`SyncWriter`, backed by `std::sync::mpsc`)
+2. `crates/rsync_io/src/ssh/embedded/connect.rs` (`ChannelReader`/`ChannelWriter`)
 
 RUSSH-11 consolidates these into a single `SyncReader`/`SyncWriter` pair under `dispatch/sync_halves.rs`, backed by `tokio::sync::mpsc`. The old types are deprecated and re-exported as type aliases pointing to the new location.
 
@@ -351,7 +349,7 @@ The bench harness gains a `--dispatch` flag (`spawn_blocking` | `async_native`) 
 1. **Dispatch trait + config** (`dispatch/mod.rs`, `dispatch/config.rs`): Define `AsyncSshDispatch`, `DispatchKind`, `DispatchConfig::from_env()`. No functional change yet.
 2. **SpawnBlockingDispatch** (`dispatch/spawn_blocking.rs`): Extract the existing `Child`-based logic from `connection.rs` into the trait impl. Verify all existing tests pass.
 3. **SshConnection/SshChildHandle refactor** (`connection.rs`): Replace fields with `Box<dyn AsyncSshDispatch>`. Wire `SshReader`/`SshWriter` enum dispatch. Verify all existing tests and callers compile.
-4. **SyncReader/SyncWriter consolidation** (`dispatch/sync_halves.rs`): Unify the three duplicated reader/writer pairs. Update imports in `async_ssh_transport.rs` and `sync_bridge.rs`.
+4. **SyncReader/SyncWriter consolidation** (`dispatch/sync_halves.rs`): Unify the two duplicated reader/writer pairs. Update imports in `async_ssh_transport.rs` and `embedded/connect.rs`.
 5. **AsyncNativeDispatch** (`dispatch/async_native.rs`): Implement the new path - shared runtime, `std::thread` for transfer, tokio tasks for pumps, goodbye barrier, exit status synthesis. Feature-gated.
 6. **Builder + connect wiring** (`builder.rs`, `connect.rs`): Wire `DispatchConfig` into `spawn()` and `connect_with_config()`. Both paths functional.
 7. **Shim compat tests** (`ssh_dispatch_shim_compat.rs`): Validate public surface under both backends.
