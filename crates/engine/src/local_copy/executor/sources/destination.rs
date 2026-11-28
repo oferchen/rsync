@@ -234,7 +234,8 @@ fn creation_error(path: &Path, mkpath: bool, error: io::Error) -> LocalCopyError
         // before the trailing slash is cut, so the operand is named as given.
         LocalCopyError::destination_mkdir_failed(path, error)
     } else {
-        // upstream: main.c:815 - the plain do_mkdir() runs after `*cp = '\0'`.
+        // upstream: main.c:810 - `*cp = '\0'` lops the trailing slash before the
+        // plain do_mkdir() at main.c:817.
         LocalCopyError::destination_mkdir_failed(path.components().collect::<PathBuf>(), error)
     }
 }

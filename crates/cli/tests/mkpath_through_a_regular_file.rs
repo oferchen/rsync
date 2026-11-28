@@ -127,11 +127,20 @@ impl Fixture {
     }
 
     /// `mkdir "<the destination as the receiver names it>" failed: <strerror> (<n>)`.
-    fn expected_line(&self, destination: &str, errno: Errno) -> String {
+    ///
+    /// upstream: util1.c:1540-1547 full_fname() prefixes a relative name with
+    /// curr_dir, which util1.c:1321 fills from getcwd() and so is the canonical
+    /// directory (on macOS /var is a symlink to /private/var). An absolute name
+    /// is printed as given.
+    fn expected_line(&self, destination: &str, errno: Errno, spelling: Spelling) -> String {
+        let base = match spelling {
+            Spelling::Relative => fs::canonicalize(self.base()).expect("canonical fixture root"),
+            Spelling::Absolute => self.base().to_path_buf(),
+        };
         format!(
             "mkdir \"{}/{destination}\" failed: {}",
-            self.base().display(),
-            upstream_strerror(&self.kernel_error(errno))
+            base.display(),
+            logging::upstream_errno_text(&self.kernel_error(errno))
         )
     }
 
@@ -194,16 +203,6 @@ impl Fixture {
     }
 }
 
-/// Renders an OS error as upstream's rsyserr() does: `strerror (errno)`.
-fn upstream_strerror(error: &io::Error) -> String {
-    let code = error.raw_os_error().expect("an OS error");
-    let text = error.to_string();
-    let strerror = text
-        .strip_suffix(&format!(" (os error {code})"))
-        .expect("std renders OS errors as `<strerror> (os error N)`");
-    format!("{strerror} ({code})")
-}
-
 /// The client/server pairs a cell runs: oc at both ends, then every pairing
 /// with 3.5.2 when its binary resolves.
 fn pairs(leg: Leg) -> Vec<(String, PathBuf, PathBuf)> {
@@ -243,7 +242,7 @@ fn check(leg: Leg) {
                     cell.recursive, cell.destination
                 );
                 assert_eq!(code, Some(11), "{case}: {stderr}");
-                let line = fixture.expected_line(cell.destination, errno);
+                let line = fixture.expected_line(cell.destination, errno, spelling);
                 assert!(
                     stderr.contains(&line),
                     "{case}: expected {line:?} in {stderr}"
