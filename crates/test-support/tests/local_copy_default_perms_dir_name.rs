@@ -154,7 +154,7 @@ fn a_new_local_destination_reads_its_default_acl_like_rsync_3_5_2() {
 ///
 /// A filesystem without POSIX default ACLs fails the cell instead of skipping
 /// it: without the ACL the cell cannot tell a folded default from the umask.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn set_default_acl(dir: &Path) {
     use exacl::{AclEntry, AclOption, Perm};
 
@@ -176,7 +176,7 @@ fn set_default_acl(dir: &Path) {
 /// `--perms` is off, and rsync.c:483-485 masks a new entry's mode with it, so
 /// `d:g::r-x,d:o::---` turns a 0644 source file into 0640 and a 0755 directory
 /// into 0750. A copy that ignored the ACL would land the umask's 0644 / 0755.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 #[test]
 fn a_relative_destination_folds_its_parents_default_acl_like_rsync_3_5_2() {
     let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
