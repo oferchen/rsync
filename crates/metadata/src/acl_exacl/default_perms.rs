@@ -31,6 +31,10 @@ use super::perms::exacl_perms_to_rsync;
 /// (`acls.c:1466-1488`). Upstream's dry-run `ENOENT` exemption needs no
 /// counterpart: oc's callers never read a default ACL under `--dry-run`.
 ///
+/// An empty `dir` - the parent of a relative top-level name - is read as `.`,
+/// as upstream reads a NULL dirname (`acls.c:1460-1461`). Consecutive calls
+/// for one directory read its default ACL once (see `LastDirAcl`).
+///
 /// On platforms that do not expose POSIX default ACLs (e.g. macOS), this
 /// function returns the umask-derived default and never emits, matching the
 /// `#ifdef SUPPORT_ACLS` gating at `generator.c:1738-1741`.
@@ -43,33 +47,21 @@ use super::perms::exacl_perms_to_rsync;
 #[allow(clippy::module_name_repetitions)]
 #[must_use]
 pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
+    // upstream: acls.c:1460-1461 - a missing directory name means ".". The
+    // callers pass `file->dirname ? file->dirname : "."` (generator.c:1729,
+    // receiver.c:1201); oc's equivalent of a NULL dirname is the empty parent
+    // of a relative top-level name such as `dst`.
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
     // upstream: acls.c:1462 - perms = ACCESSPERMS & ~orig_umask
     let default_perms = 0o777u32 & !(orig_umask & 0o777);
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
-        // upstream: acls.c:1460-1464 reads the default ACL of a name relative to
-        // the cwd change_dir() entered, so the lookup resolves from the held
-        // destination rather than re-resolving `dir` from `/`.
-        let read = fast_io::destination_at::with_anchored_path(dir, |spelling| match spelling {
-            Some(spelling) => default_acl_at(spelling),
-            None => default_acl_beneath_pin(dir),
-        });
-        let object = match read {
-            Ok(object) => object,
-            Err(error) => {
-                warn_unreadable_default_acl(dir, &error);
-                return default_perms;
-            }
-        };
-        let Some(perms) = object.perms() else {
-            return default_perms;
-        };
-        // upstream: acls.c:1502-1503 - DEBUG_GTE(ACL, 1) emission
-        if logging::debug_gte(logging::DebugFlag::Acl, 1) {
-            trace_default_perms_for_dir(perms, &upstream_dir_name(dir));
-        }
-        perms
+        LastDirAcl::lookup(dir).unwrap_or(default_perms)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -81,6 +73,89 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
         let _ = dir;
         default_perms
     }
+}
+
+/// The last directory whose default ACL this thread read, and the permission
+/// bits that ACL implies (`None`: no ACL, no `user_obj`, or a failed read).
+///
+/// upstream: generator.c keeps one `dflt_perms` (:1398) for one last
+/// `parent_dirname`, recomputes it only when an entry's directory differs from
+/// that one (:1731), and then calls `default_perms_for_dir(dn)` (:1777);
+/// receiver.c:1201-1205 does the same. It is a single entry, not a map: memory
+/// stays constant however many files there are, and children of two
+/// directories that alternate re-read at every switch. oc has no per-thread
+/// metadata context to own it, so it lives in a `thread_local`; concurrent
+/// workers never share it. The ACL result is kept rather than the
+/// umask-applied bits, so callers passing different umasks for the same
+/// directory share one read.
+///
+/// A change to a directory's default ACL while its children are created is
+/// not seen until another directory is read: 3.5.2's `dflt_perms` is reused
+/// until `dn` changes, so it has the same window.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+struct LastDirAcl {
+    dir: std::path::PathBuf,
+    perms: Option<u32>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+thread_local! {
+    static LAST_DIR_ACL: std::cell::RefCell<Option<LastDirAcl>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
+thread_local! {
+    /// Default-ACL reads this thread made; exists only in test builds.
+    pub(super) static DEFAULT_ACL_READS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+impl LastDirAcl {
+    /// The default-ACL bits for `dir`, read only when `dir` is not the
+    /// directory this thread read last.
+    fn lookup(dir: &Path) -> Option<u32> {
+        LAST_DIR_ACL.with_borrow_mut(|last| match last {
+            Some(entry) if entry.dir == dir => entry.perms,
+            _ => {
+                let perms = read_default_acl_perms(dir);
+                *last = Some(Self {
+                    dir: dir.to_path_buf(),
+                    perms,
+                });
+                perms
+            }
+        })
+    }
+}
+
+/// Reads the default ACL of `dir` and returns the permission bits it implies,
+/// warning on a read error as upstream does.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn read_default_acl_perms(dir: &Path) -> Option<u32> {
+    #[cfg(test)]
+    DEFAULT_ACL_READS.set(DEFAULT_ACL_READS.get() + 1);
+    // upstream: acls.c:1460-1464 reads the default ACL of a name relative to
+    // the cwd change_dir() entered, so the lookup resolves from the held
+    // destination rather than re-resolving `dir` from `/`.
+    let read = fast_io::destination_at::with_anchored_path(dir, |spelling| match spelling {
+        Some(spelling) => default_acl_at(spelling),
+        None => default_acl_beneath_pin(dir),
+    });
+    let object = match read {
+        Ok(object) => object,
+        Err(error) => {
+            warn_unreadable_default_acl(dir, &error);
+            return None;
+        }
+    };
+    let perms = object.perms()?;
+    // upstream: acls.c:1502-1503 - DEBUG_GTE(ACL, 1) emission
+    if logging::debug_gte(logging::DebugFlag::Acl, 1) {
+        trace_default_perms_for_dir(perms, &upstream_dir_name(dir));
+    }
+    Some(perms)
 }
 
 /// Warns that the default ACL of `dir` could not be read, unless the error

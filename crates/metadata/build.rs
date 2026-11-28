@@ -36,8 +36,12 @@ fn main() {
             let arch = target.split('-').next().unwrap_or("x86_64");
             println!("cargo:rustc-link-search=native=/usr/local/{arch}-linux-musl/lib");
         }
-        // Native musl (e.g. Alpine) stores libs in /usr/lib
-        println!("cargo:rustc-link-search=native=/usr/lib");
+        // Native musl (e.g. Alpine) stores libs in /usr/lib. On a glibc host
+        // that directory holds glibc's libc.a, which the linker would then
+        // take in place of musl's, so it is searched only on a musl host.
+        if !target_triplet_mismatch() {
+            println!("cargo:rustc-link-search=native=/usr/lib");
+        }
         println!("cargo:rustc-link-lib=static=acl");
         println!("cargo:rustc-link-lib=static=attr");
         return;

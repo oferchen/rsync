@@ -4032,6 +4032,7 @@ dependencies = [
  "rustix",
  "socket2",
  "tempfile",
+ "xattr",
 ]
 
 [[package]]
